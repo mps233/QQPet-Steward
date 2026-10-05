@@ -1,0 +1,251 @@
+/* ==========================================================================
+   总览页 V2 · 正常文档流布局（实验版，与现有 .home 绝对定位版并存）
+   --------------------------------------------------------------------------
+   目的：现有总览页是"照 1080×2412 官方截图用绝对坐标画出来的"——24 处
+   position:absolute、199 处手算 calc(var(--u)*N)。代价：
+     · 改一颗圆钮位置要重算功能栏的 top（两者相隔 470 行）
+     · 必须靠 S0 高度锁续命（同一错犯过 3 次）
+     · 内容多时列表被裁 / 内滚；一屏高度写死，短屏靠断点 display:none 打补丁
+   本版把**内容区**改为正常流（flex/grid），装饰性圆钮保留绝对定位
+   （它们本来就是"覆盖在背景图上的锚点"，官方也是这么做的）。
+
+   命名空间全部 `v2-` 前缀，**不覆盖也不依赖现有 .home 的规则** ——
+   两版可同时存在、随时切回。稳定后再替换。
+
+   坐标来源：qqpet_assets/web/UI_TREE_OFFICIAL.md（官方 480×853 dp 画布）。
+   ========================================================================== */
+
+/* ---------- 容器：三行 grid ---------- */
+/* ⚠ 单位基准在 V2 里加了上限。
+   `--u` 原本是裸的 `calc(100vw / 360)`（无上限）—— 平板 768 宽时 `--u = 2.13`，
+   所有元素等比放大 2.13 倍：侧边圆钮列从 46px 变成 98px，两条 rail 吃掉 230px，
+   把中间的任务卡挤到只剩 131px（实测）。这正是 docs/review/04 的 E 节问题。
+   这里在 V2 作用域内限死上限（432px 视口 ≈ iPhone Pro Max 430 正好在上限内）。
+   注：只改 V2，不动 V1 —— V1 的视觉是按无上限调的。 */
+.v2-home{
+  --u:clamp(0.9px, var(--vu, calc(100vw / 360)), 1.2px);
+}
+.v2-home{
+  display:grid;
+  /* 顶（资料卡+胶囊）· 中（内容，撑满剩余）· 底（状态卡） */
+  grid-template-rows:auto 1fr auto;
+  /* 单列，且列宽锁死 —— 不写的话 grid 列宽 = max-content，会被内部内容撑开 */
+  grid-template-columns:minmax(0, 1fr);
+  height:100%;
+  min-height:0;               /* 让中间行能真的收缩，否则内容会把 grid 撑高 */
+  padding:calc(var(--u) * 8) calc(var(--u) * 8) 0;
+  box-sizing:border-box;
+  /* 背景由 html 提供（沿用现有 --qp-room），这里不重复画 */
+}
+
+/* ⚠ grid/flex 的经典陷阱：子项默认 `min-width:auto`，会被内容撑开而溢出容器。
+   实测：不写这两条时，.v2-home 是 390px 而内部各行被撑到 523px（溢出 133px，
+   右侧圆钮与功能栏被推到屏幕外）。所有 grid/flex 的中间层都要显式 min-width:0。 */
+.v2-home > *{
+  min-width:0;
+  min-height:0;
+}
+
+/* ---------- 行 1：顶部信息 ---------- */
+.v2-top{
+  display:flex;
+  flex-direction:column;
+  gap:calc(var(--u) * 6);
+  /* ⚠ 这里**不留**左右圆钮位。
+     V1 的顶部要 `padding:0 62u` 是因为圆钮是绝对定位的浮动层、会压在内容上，
+     必须给它们"让位"。V2 的圆钮已经在 .v2-mid 的 flex 列里、占据真实宽度，
+     再让位一次就会把内容挤扁 —— 实测平板下这么写会让资料卡只剩 131px、
+     状态卡内部溢出 90px。 */
+  padding:calc(var(--u) * 4) 0 0;
+  min-width:0;
+}
+
+/* ---------- 行 2：内容区（两侧圆钮 + 中间任务列表）---------- */
+.v2-mid{
+  display:flex;
+  align-items:stretch;
+  /* 圆钮列与卡片之间要留明显间隙 —— 11u 时视觉上"糊在一起"（实测），
+     收到 16u 让两侧圆钮与卡片分开。 */
+  gap:calc(var(--u) * 16);
+  padding:calc(var(--u) * 6) 0 0;
+  min-width:0;
+  min-height:0;               /* 关键：没有它，flex 子项不会收缩，列表永远溢出 */
+}
+
+/* 左右圆钮列：从"绝对定位的浮动层"改成正常流的列。
+   它们是装饰锚点，位置本来就固定，但用 flex 列后**窄屏自动收拢**、
+   且不需要给每颗手写 nth-child 的 left/top。 */
+.v2-rail{
+  display:flex;
+  flex-direction:column;
+  gap:calc(var(--u) * 10);
+  flex:0 0 auto;
+  width:calc(var(--u) * 46);
+  padding-top:calc(var(--u) * 4);
+}
+.v2-rail.left{ align-items:flex-start }
+.v2-rail.right{ align-items:flex-end }
+
+/* 中间的座位：任务列表 + 功能栏 */
+.v2-seat{
+  flex:1 1 auto;
+  min-width:0;
+  min-height:0;               /* 让内部的 .qpanel 能滚 */
+  display:flex;
+  flex-direction:column;
+  gap:calc(var(--u) * 8);
+}
+/* 任务卡撑满中间行的可用高度。
+   先按内容高（flex:0 1 auto）→ 实测卡片下多出 143px 空白；
+   改成撑满后，功能栏横排省下的高度会被列表用上，**不需要内滚**。
+   两者配合才对：只撑满会让内容少的卡片内部空；只按内容高会让面板下方空。
+   这里选"撑满" —— 任务卡是主内容，让它占满更符合"内容区"的语义。 */
+.v2-seat .qpanel{
+  flex:1 1 auto;
+  min-height:0;
+}
+/* 任务列表：V1 用「负 margin-right + 等量 padding-right」把滚动条贴到卡片边框上，
+   那套在**固定宽度**下成立；V2 里宽度由 flex 决定，负边距会把内容推出卡片
+   （实测：右侧"待结算/按住拖动排序"被裁到卡片外）。V2 里取消这个技巧。 */
+.v2-seat .tasklist{
+  overflow-y:auto;
+  overscroll-behavior:none;
+  margin-right:0;
+  padding-right:0;
+  /* flex:0 1 auto 时会被 flex 的默认收缩压掉一点高度（实测内容 311 → 可视 307），
+     于是本来放得下的列表出现内滚。改 flex-shrink:0：按内容高，
+     真的放不下时（内容 > 卡片可用高）才由 overflow-y:auto 兜底滚动。 */
+  flex:0 0 auto;
+  max-height:100%;
+}
+/* 但滚动条仍要细、且别把行推宽 */
+.v2-seat .tasklist::-webkit-scrollbar{width:3px}
+
+/* ---------- 行 3：底部状态 ---------- */
+.v2-bottom{
+  display:flex;
+  align-items:stretch;
+  gap:calc(var(--u) * 8);
+  padding:calc(var(--u) * 8) 0 calc(var(--u) * 10);
+}
+/* 功能栏**横排**放在状态卡右侧。
+   测过竖排：三个按钮 3×(50×70u)+间距 ≈ 170px，会把底行撑到 256px，
+   而中间行只剩 456px —— 任务列表因此差 4px 触发内滚（本可以用正常流避免的滚动）。
+   横排只占约 76px 高，底行回到 ~165px。 */
+.v2-bottom .funcbar{
+  flex:0 0 auto;
+  flex-direction:row;
+  align-items:flex-end;
+  gap:calc(var(--u) * 8);
+  align-self:flex-end;
+}
+.v2-bottom .funcbar .fb-group{ flex-direction:row }
+/* ⚠ 覆盖 app.css 的 `.funcbar .fb-group:nth-child(2){display:none}`。
+   那条规则在 `@media(min-aspect-ratio:360/620)` 里，意图是"屏太扁时隐藏画面按钮"，
+   但 `min-aspect-ratio` 表示**宽高比 ≥ 该值**，而 360/620 ≈ 0.58 是个很小的比值 ——
+   几乎所有屏幕（含平板 768×1024 = 0.75）都满足，于是它**几乎总是命中**，
+   表现为"画面按钮莫名消失"（实测：btnShot 父级 display=none、宽 0）。
+   V2 是正常流布局，空间够就显示；真的放不下时由下面的窄屏断点收拢间距，
+   不需要靠"隐藏功能"来适配。 */
+.v2-bottom .funcbar .fb-group{
+  display:flex !important;
+}
+
+/* ---------- 复用现有子组件的根元素 ----------
+   IdCard / Capsules / Deck / FuncBar 的根元素带 `.flt`（position:absolute）。
+   在 V2 里它们应该参与正常流，所以**在 V2 作用域内取消绝对定位** ——
+   不改那些类本身的定义，只在本层覆盖，两个版本互不影响。 */
+.v2-home .flt{
+  position:static;
+  left:auto;top:auto;right:auto;bottom:auto;
+  width:auto;max-width:none;
+  transform:none;
+}
+/* ⚠ 光覆盖 .flt 不够：`.rbtn` **自己**也带 position:absolute（它不在 .flt 上），
+   而它的坐标由 `.col-l .rbtn:nth-child(N){left/top}` 逐颗写死。
+   实测（漏了这条时）：7 颗圆钮全部 `pos=absolute` 且坐标**完全重合**在
+   (9,143)，视觉上只剩一颗 —— 这正是"绝对定位渗透到组件内部"的典型症状。
+   这里在 V2 作用域内把圆钮也拉回正常流。 */
+.v2-home .rbtn{
+  position:static;
+  left:auto;top:auto;
+  width:calc(var(--u) * 42);
+  height:calc(var(--u) * 42);
+}
+/* 圆钮里的图标必须限制在按钮内。
+   实测：漏了这条时图标按自身固有尺寸渲染成 96×96，而圆钮只有 50px ——
+   图标溢出按钮、彼此重叠，视觉上像"图标错位/串行"。
+   42u 的 55% ≈ 23u，与 V1 的观感一致。 */
+.v2-home .rbtn img{
+  width:55%;
+  height:55%;
+  object-fit:contain;
+}
+/* 功能栏按钮在 V2 的 flex 行里必须**不可压缩**。
+   实测：漏了这条时第三个按钮被压成 width=0（看不见"画面"）。 */
+.v2-bottom .funcbar .fab{ flex:0 0 auto }
+
+/* 资料卡/胶囊在 V2 里占满 top 行的可用宽度（原先写死 207u） */
+.v2-top .idcard,
+.v2-top .caps{ width:100% }
+
+/* 状态卡（Deck）在 V2 里是底行的主内容，占满宽度 */
+.v2-bottom .deck{
+  flex:1 1 auto;
+  min-width:0;
+  border-radius:calc(var(--u) * 16);
+}
+/* 状态卡里的「今日：学习 60 分 · 打工 315 分 · 合计 375 分 · 效率 100%」是
+   white-space:nowrap —— V2 里它旁边多了功能栏、可用宽度变窄，实测横向溢出 23px
+   （末尾"效率 100%"被裁）。允许换行。 */
+.v2-bottom .deck .dsub{
+  white-space:normal;
+  overflow:visible;
+  text-overflow:clip;
+}
+/* V2 的底栏不需要官方那条弧形轮廓（那是绝对定位贴底时的形） */
+.v2-bottom .deck{
+  background:var(--panel-bg);
+  backdrop-filter:var(--panel-blur);
+}
+/* drawer 原为 62u 宽的窄列（因为要挤在弧形面板里），V2 里横向展开 */
+.v2-bottom .drawer{
+  flex-direction:row;
+  align-items:center;
+  justify-content:flex-start;
+  gap:calc(var(--u) * 10);
+  width:auto;
+  text-align:left;
+  padding:calc(var(--u) * 8) calc(var(--u) * 12);
+}
+.v2-bottom .dcol{ align-items:flex-start }
+.v2-bottom .dtitle{ justify-content:flex-start }
+/* 状态灯原为绝对定位到文字左侧，横排后改为参与流 */
+.v2-bottom .dtitle .dot{ position:static; transform:none }
+
+/* ---------- 窄屏 ---------- */
+@media(max-width:360px){
+  /* 正常流的好处：不用"隐藏功能"，收拢间距即可 */
+  .v2-home{ padding:calc(var(--u) * 6) calc(var(--u) * 6) 0 }
+  .v2-rail{ width:calc(var(--u) * 40); gap:calc(var(--u) * 8) }
+  .v2-mid{ gap:calc(var(--u) * 4) }
+}
+
+/* ---------- 平板/宽屏：限宽居中 ---------- */
+@media(min-width:640px){
+  /* 绝对定位版在这里是"整页横向拉满"；正常流可以直接限宽 */
+  .v2-home{
+    max-width:430px;
+    margin:0 auto;
+    box-shadow:0 0 0 1px rgba(0,0,0,.06), 0 8px 40px rgba(0,0,0,.18);
+  }
+}
+
+/* ---------- 横屏（矮屏）---------- */
+@media(orientation:landscape) and (max-height:520px){
+  /* 正常流下横屏仍可用：把顶/底压扁，中间内容吃满剩余高度。
+     绝对定位版这里需要"伪两栏"重排，正常流只需要调 grid 行高比例。 */
+  .v2-home{ grid-template-rows:auto 1fr auto; padding:calc(var(--u) * 4) }
+  .v2-top{ padding-top:0 }
+  .v2-bottom{ padding:calc(var(--u) * 4) 0 }
+}

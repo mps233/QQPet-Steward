@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { TASK_GROUP, TASK_NAME, isLoopTask, keyOfTaskName, runnerStart, runnerStop, saveSettings, type Data } from './api'
 import { Overview, type PageKey } from './components/Overview'
+import { OverviewV2 } from './components/OverviewV2'
 import { AdvPage } from './components/AdvPage'
 import { LivePage } from './components/LivePage'
 import { LogPage } from './components/LogPage'
@@ -391,8 +392,14 @@ export default function App() {
   const renderView = (v: View, d: Data) => {
     const p = v.page
     if (p === 'main') {
+      // 总览页两版并存：默认仍是绝对定位版（V1），带 `?ui=v2` 切到正常流版（V2）。
+      // V2 验证稳定后再把默认切过去、删掉 V1（见 docs/review 的布局重构计划）。
+      const useV2 =
+        typeof window !== 'undefined' &&
+        new URLSearchParams(window.location.search).get('ui') === 'v2'
+      const OverviewView = useV2 ? OverviewV2 : Overview
       return (
-        <Overview
+        <OverviewView
           data={d}
           busy={busy}
           scene={scene}
