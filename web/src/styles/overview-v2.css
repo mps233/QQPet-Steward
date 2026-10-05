@@ -52,13 +52,18 @@
   height:100%;
   min-height:0;
   box-sizing:border-box;
-  column-gap:calc(var(--u) * 11);   /* V1：左圆钮 x68 → 内容列 x80 = 12px ≈ 11u */
+  /* V1 实测：左圆钮 x22..67、内容列 x80.2..304.4 → 两者间隙 13.2px ≈ 12u。
+     （先前用 11u 时内容列落在 x82.9，比 V1 偏右 2.7px。） */
+  column-gap:calc(var(--u) * 12);
   padding:0;
 }
 .v2-rail.left{ grid-column:1; grid-row:1 }
 .v2-center   { grid-column:2; grid-row:1; display:flex; flex-direction:column; min-width:0; min-height:0 }
 .v2-rail.right{ grid-column:3; grid-row:1 }
-.v2-bottom   { grid-column:1 / -1; grid-row:2 }
+/* ⚠ 底栏**不要**写 grid-column/grid-row：它是接下去那条 position:absolute 的元素，
+   而绝对定位的 grid 子项，其包含块是**它所属的 grid area**（不是整个容器）——
+   实测写了之后 left:0/right:0 只铺满那个 area（339px），而 V1 的底栏是满宽 390。
+   去掉 grid placement 后它相对 .v2-home（position:relative）定位，才是满宽。 */
 /* ⚠ grid/flex 的经典陷阱：子项默认 min-width:auto，会被内容撑开而溢出容器。
    实测：不写时 .v2-home 是 390px 而内部各行被撑到 523px（溢出 133px，
    右侧圆钮与功能栏被推到屏幕外）。 */
@@ -131,46 +136,54 @@
 }
 .v2-seat .tasklist::-webkit-scrollbar{ width:3px }
 
-/* ---------- 行 3：底栏（弧形面板 + 居中状态卡）----------
-   V1 的底栏是**弧形轮廓**（border-radius:50% 50% / 56px）+ 半透明白玻璃，
-   状态卡居中在它上面（x161..229 宽 67）。V2 保住这个形。 */
+/* ---------- 行 3：底栏 ----------
+   ⚠ 关键：**不要让容器自己画底栏**。
+   首版我给 `.v2-bottom` 加了弧形 + 半透明底，而里面的 `<Deck>` 渲染出的 `.deck`
+   **自己也带弧形与背景** —— 于是两层叠加：背景被叠两遍、弧形被画两次，
+   且内层 `.deck` 固定高 146 会溢出容器（实测内层 bottom 857 > 容器 844）。
+   V1 里 `.deck` 本身就是底栏，没有外层容器。
+   这里让 `.v2-bottom` 只做 grid 的定位单元（不画任何东西），
+   视觉全部由 `.deck` 承担 —— 与 V1 完全一致。 */
+/* V1 的底栏是**满宽、贴屏幕底**的弧形面板（x0..390 y698..844），
+   不受内容列约束。V2 的 grid 三列总宽只有 339，所以底栏不能用列宽算 ——
+   直接绝对定位贴底（它本来就是"覆盖在背景上的装饰层"，这点用绝对定位是合理的）。
+   ⚠ 曾用 `margin-left:calc((100% - 总宽)/-2)` 试图突破列宽：那个 100% 是**列宽**
+   不是容器宽，结果把底栏推到 x-364（实测）。 */
 .v2-bottom{
-  position:relative;
-  height:calc(var(--u) * 135);          /* V1：146px ≈ 135u */
+  position:absolute;
+  left:0;right:0;bottom:0;
   display:flex;
-  align-items:flex-start;
-  justify-content:space-between;
-  padding:calc(var(--u) * 12) calc(var(--u) * 12) 0;
-  box-sizing:border-box;
-  background:var(--panel-bg);
-  backdrop-filter:var(--panel-blur);
-  -webkit-backdrop-filter:var(--panel-blur);
-  border-radius:50% 50% 0 0 / calc(var(--u) * 52) calc(var(--u) * 52) 0 0;
-  box-shadow:var(--sh-1);
+  align-items:stretch;
+  background:none;
+  border-radius:0;
+  box-shadow:none;
+  backdrop-filter:none;
+  -webkit-backdrop-filter:none;
+  padding:0;
 }
-/* 状态卡居中（V1 宽 67px）。V2 保留居中，但不锁死 67px ——
-   正常流下让它按内容宽度居中更合理，且窄屏不会挤扁文字。 */
+/* 绝对定位后它脱离了 grid 流 —— 用 grid-area 让它仍占第 2 行的位置，
+   给中间内容留出底部空间（避免任务卡被底栏盖住）。 */
+.v2-home{ position:relative }
+/* 中间列的底部留出底栏高度，等价 V1 里 .scene 的 max-height 减去底栏 + 16u 缝 */
+.v2-center{ padding-bottom:calc(var(--u) * 135) }
+/* `.deck` 在 V2 里重新成为底栏本体（它在 V1 里就是）。
+   位置：V1 是 absolute bottom:0 / height:135u —— V2 用正常流表达同一结果。 */
 .v2-bottom .deck{
+  position:relative;
+  left:auto;top:auto;right:auto;bottom:auto;
+  width:100%;
+  transform:none;
+  align-self:flex-end;
+}
+/* 状态卡（Deck 内部的 .drawer）在 V1 里是**居中在弧形面板上**的窄列（宽 67px、
+   top 12u）。V2 的 grid 布局下它仍应居中，所以对 .drawer 单独恢复绝对定位。 */
+.v2-bottom .deck .drawer{
   position:absolute;
   left:50%;transform:translateX(-50%);
   top:calc(var(--u) * 12);
-  width:min(calc(var(--u) * 240), 62%);
-  align-self:auto;
+  width:calc(var(--u) * 62);      /* V1 实测 67px ≈ 62u */
+  margin:0;
 }
-/* 底栏内浮动层（Deck 的根是 .flt）要恢复绝对定位 —— 上面那条 universal
-   规则把 .v2-home .flt 都改成了 static，这里把状态卡单独改回绝对定位，
-   因为它确实要叠在弧形面板上。 */
-.v2-bottom .deck.flt{ position:absolute }
-.v2-bottom .drawer{
-  align-items:center;
-  text-align:center;
-  flex-direction:column;
-  gap:calc(var(--u) * 2);
-  width:auto;
-  padding:0;
-}
-.v2-bottom .dcol{ align-items:center }
-.v2-bottom .dtitle{ justify-content:center }
 
 /* 功能栏：V1 在右列圆钮下方竖排（x319..373 y259..508，与右列圆钮同一 x）。
    V2 里让右列成为「圆钮组 + 功能栏」的竖排容器，功能栏自然落在圆钮下方。 */
@@ -243,6 +256,8 @@
   --v2-rail-w:calc(var(--u) * 42);                    /* 圆钮列宽 = 圆钮宽 */
   /* 内容列宽：V1 实测 224px @390 宽 = 207u。窄屏按同一 u 值缩，宽屏由版心兜住。 */
   --v2-seat-w:calc(var(--u) * 207);
+  /* 三列 + 两个 column-gap 的总宽 —— 底栏要突破它到满宽（见 .v2-bottom）。 */
+  --v2-total-w:calc(var(--u) * 42 * 2 + var(--u) * 207 + var(--u) * 11 * 2);
 }
 
 /* ---------- 窄屏 ---------- */
