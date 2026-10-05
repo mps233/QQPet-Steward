@@ -80,7 +80,8 @@
 .v2-top{
   display:flex;
   flex-direction:column;
-  gap:calc(var(--u) * 12);      /* 官方：胶囊行 y86.2 − 资料卡底 ≈ 12dp */
+  /* 官方：资料卡 y26.2 高46.2 → 底 72.4；胶囊 y86.2 → 间隙 **13.8dp** */
+  gap:calc(var(--u) * 13.8);
   padding:0;
   min-width:0;
 }
@@ -102,13 +103,19 @@
 .v2-rail{
   display:flex;
   flex-direction:column;
-  gap:calc(var(--u) * 18);          /* 官方：圆钮步进 60dp − 钮高 42.2 ≈ 17.8dp */
+  /* 官方圆钮纵向：y = 28.0 / 86.2 / 146.2 / 206.2
+     → 步进 **58.2 然后 60.0 / 60.0**（官方数据本身首项略紧，不是等距）。
+     用 gap 16u 得到统一 58.2；再给第 3 颗起补 1.8u，凑出后面的 60.0。
+     （先前统一 18u 时是 28/88/148/208，越往后偏得越多。） */
+  gap:calc(var(--u) * 16);
   flex:0 0 auto;
   width:calc(var(--u) * 42.2);      /* 官方圆钮 42.2dp */
   /* 官方：左圆钮 y = 28dp（画布顶），左边距 20dp */
   padding-top:calc(var(--u) * 28);
   margin-left:calc(var(--u) * 20);
 }
+/* 第 3 颗起各补 1.8u 的额外间距 → 步进回到官方的 60.0 */
+.v2-rail .rbtn:nth-child(n+3){ margin-top:calc(var(--u) * 1.8) }
 /* 右栏：官方右圆钮 x = 418.2dp、右边距 19.6dp → 用 margin-right 顶到右边 */
 .v2-rail.right{
   margin-left:0;
@@ -118,12 +125,17 @@
 }
 /* 中间内容列：官方 x = 74.2dp（= 20 + 42.2 + 12），宽 331.8dp。
    宽度由 grid 的 `minmax(0, 1fr)` 决定（480dp 屏上正好 331.8 —— 与官方一致），
-   小屏自动收缩。这里只给它左右 margin（官方 12 / 12.2dp）。 */
+   小屏自动收缩。这里只给它左右 margin（官方 12 / 12.2dp）与**顶部对齐**。 */
 .v2-center{
   grid-column:2; grid-row:1;
   display:flex; flex-direction:column;
   margin-left:calc(var(--u) * 12);
   margin-right:calc(var(--u) * 12.2);
+  /* 官方：资料卡 y = 26.2dp（**不是 0**）—— 与左圆钮 y=28.0 基本齐平
+     （资料卡比圆钮高 1.8dp，因为它的高度 46.2 含图标外凸）。
+     漏了这条时资料卡从 y=0 起，看起来"顶部没和左右按钮对齐"。
+     胶囊随之落到官方 y=86.2（= 26.2 + 46.2 资料卡高 + 13.8 间隙）。 */
+  padding-top:calc(var(--u) * 26.2);
   min-width:0; min-height:0;
 }
 /* 任务卡**按内容自适应 + 上限**，与 V1 一致。
@@ -278,7 +290,10 @@
 
 /* ---------- 窄屏 ---------- */
 @media(max-width:360px){
-  .v2-top{ padding-top:calc(var(--u) * 28) }
+  /* ⚠ 别在这里给 `.v2-top` 加 padding-top —— 顶部对齐由 `.v2-center` 的
+     padding-top:26.2u 统一负责（资料卡与圆钮都要从那一条线上开始）。
+     曾经误加 `.v2-top{padding-top:28u}`，导致窄屏下资料卡顶到 y54.2
+     （= 28 + 26.2，被加了两次），而圆钮还在 y28 —— 顶部就错开了。 */
   .v2-rail{ padding-top:calc(var(--u) * 28); gap:calc(var(--u) * 12) }
   .v2-seat{ margin-top:calc(var(--u) * 10) }
 }
