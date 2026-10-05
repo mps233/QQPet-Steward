@@ -10,6 +10,7 @@ import {
 import { restrictToParentElement, restrictToVerticalAxis } from '@dnd-kit/modifiers'
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { useEffect, useState } from 'react'
+import { applyOptim, effectiveValue, reconcile, rollbackOptim } from '../lib/optimistic'
 import {
   TASK_GROUP,
   TASK_NAME,
@@ -55,7 +56,8 @@ function RowBody({
   activeKey: string
   nowDate: string
   /** 点勾选框切换该任务启用状态（写回 `<k>_enabled`） */
-  onToggle: (k: string, on: boolean) => void
+  /** 返回 Promise —— 失败时调用方要回滚乐观值（见 handleToggle），不能丢弃 */
+  onToggle: (k: string, on: boolean) => Promise<unknown>
   /** 当前是否启用 —— 由 TaskList 算好（含"刚点下去、请求还没回来"的乐观值） */
   on: boolean
 }) {
@@ -114,7 +116,8 @@ function SortableRow(props: {
   pendingKey: string
   activeKey: string
   nowDate: string
-  onToggle: (k: string, on: boolean) => void
+  /** 返回 Promise —— 失败时调用方要回滚乐观值（见 handleToggle），不能丢弃 */
+  onToggle: (k: string, on: boolean) => Promise<unknown>
   on: boolean
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -146,7 +149,8 @@ function StaticRow(props: {
   pendingKey: string
   activeKey: string
   nowDate: string
-  onToggle: (k: string, on: boolean) => void
+  /** 返回 Promise —— 失败时调用方要回滚乐观值（见 handleToggle），不能丢弃 */
+  onToggle: (k: string, on: boolean) => Promise<unknown>
   on: boolean
 }) {
   return (
@@ -166,7 +170,8 @@ export function TaskList({
   data: Data
   onReorder: (order: string[]) => void
   /** 点勾选框切启用 —— 对应 旧版 里挂在 #taskList 上的那个 click 委托 */
-  onToggle: (k: string, on: boolean) => void
+  /** 返回 Promise —— 失败时调用方要回滚乐观值（见 handleToggle），不能丢弃 */
+  onToggle: (k: string, on: boolean) => Promise<unknown>
 }) {
   const qt = data.queue.tasks || {}
   const nowDate = (data.now || '').slice(0, 10)
@@ -194,22 +199,31 @@ export function TaskList({
   const [optim, setOptim] = useState<Record<string, boolean>>({})
   const serverOn = (k: string) => (qt[k]?.state ?? '') !== 'disabled'
   useEffect(() => {
-    setOptim((prev) => {
-      const next: Record<string, boolean> = {}
-      let dropped = false
-      for (const k of Object.keys(prev)) {
-        if (serverOn(k) === prev[k]) dropped = true
-        else next[k] = prev[k]!
-      }
-      return dropped ? next : prev
-    })
+    // 规则抽到 lib/optimistic.ts（可独立验证）；这里只接 React 状态
+    setOptim((prev) => reconcile(prev, serverOn))
     // serverOn 依赖 qt，qt 每次 data 更新都会换引用；这里只在"已一致"时清理
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [qt])
-  const effectiveOn = (k: string) => optim[k] ?? serverOn(k)
-  const handleToggle = (k: string, on: boolean) => {
-    setOptim((p) => ({ ...p, [k]: on }))
-    onToggle(k, on)
+  const effectiveOn = (k: string) => effectiveValue(optim, k, serverOn)
+  /**
+   * 点勾选框：本地先翻转（乐观），成功由轮询对齐后自动清除；**失败必须回滚**。
+   *
+   * 历史坑：原实现只在"服务端状态与本地一致"时清除覆盖 —— 保存失败时服务端永远不变，
+   * 于是 optim[k] **永不消解**，勾选状态与真实配置长期不符，直到整页刷新才暴露。
+   * 见 docs/review/05-前端设计系统.md H 节。
+   */
+  const handleToggle = (k: string, on: boolean): Promise<unknown> => {
+    setOptim((p) => applyOptim(p, k, on))
+    const rollback = () => setOptim((p) => rollbackOptim(p, k))
+    // 超时兜底：请求悬挂（网络半死）时不能让它一直挂在错误的勾选态上
+    const timer = window.setTimeout(rollback, 8000)
+    return Promise.resolve(onToggle(k, on))
+      .then(() => window.clearTimeout(timer))   // 成功：交给轮询在"已一致"时清除
+      .catch((e) => {
+        window.clearTimeout(timer)
+        rollback()
+        throw e
+      })
   }
 
   const handleDragEnd = (e: DragEndEvent) => {

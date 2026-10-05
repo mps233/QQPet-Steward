@@ -216,6 +216,10 @@ export function LivePage() {
     // 这是状态机而不是取数（数据轮询统一在 lib/usePoll.ts）。
     timerRef.current = window.setInterval(async () => {
       if (!onRef.current) return
+      // 页面切到后台就停心跳：PWA 切后台不会触发 unmount（`stop()` 只在离开页面时调），
+      // 于是原先会一直每 3 秒打 ping + status —— 白耗电，也让服务端误判"还有人在看"。
+      // lib/usePoll.ts 早就有这个判断，这里补齐（见 docs/review/05 的 H 节）。
+      if (document.hidden) return
       try {
         await fetch('/api/stream/ping', { method: 'POST' })
       } catch {

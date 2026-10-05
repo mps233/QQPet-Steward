@@ -31,8 +31,8 @@ export function Overview({
   onStart: () => void
   onStop: () => void
   onReorder: (order: string[]) => void
-  /** 点任务行勾选框切启用（写回 `<k>_enabled`） */
-  onToggle: (k: string, on: boolean) => void
+  /** 点任务行勾选框切启用（写回 `<k>_enabled`）。返回 Promise 供 TaskList 回滚乐观值。 */
+  onToggle: (k: string, on: boolean) => Promise<unknown>
 }) {
   const [petOpen, setPetOpen] = useState(false)
   const [bgOpen, setBgOpen] = useState(false)

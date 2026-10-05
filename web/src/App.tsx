@@ -333,16 +333,26 @@ export default function App() {
   }, [reload])
 
   /** 单字段保存（通知页的开关/文本框、设置页的表单都走这里）。
-   *  与 旧版 的「改动即自动保存」一致：后端 ruamel 往返写 config.yaml，下一轮生效。 */
+   *  与 旧版 的「改动即自动保存」一致：后端 ruamel 往返写 config.yaml，下一轮生效。
+   *
+   *  **失败时向外抛**（而不是吞掉）：TaskList 的乐观更新要靠它回滚
+   *  （见 TaskList.handleToggle）。原先这里 catch 后不 rethrow，导致调用方的
+   *  .catch 永远不触发、乐观值永不消解 —— 与 01 缺陷 2 同一个模式。
+   *  失败信息也**不自动清除**，保证用户来得及读。 */
   const saveOne = useCallback(
     async (updates: Record<string, unknown>) => {
       try {
         const r = await saveSettings(updates)
-        setOrderMsg(r.ok ? '已保存' : `保存失败：${r.rejected.join('、')}`)
+        if (!r.ok) {
+          setOrderMsg(`保存失败：${r.rejected.join('、') || '后端拒绝'}`)
+          throw new Error(r.rejected.join('、') || '后端拒绝')
+        }
+        setOrderMsg('已保存')
+        window.setTimeout(() => setOrderMsg(''), 1800)
       } catch (e) {
         setOrderMsg(`保存失败：${String(e)}`)
+        throw e
       } finally {
-        window.setTimeout(() => setOrderMsg(''), 1800)
         reload()
       }
     },
@@ -390,7 +400,8 @@ export default function App() {
           onStart={() => void start()}
           onStop={() => void stop()}
           onReorder={(o) => void onReorder(o)}
-          onToggle={(k, on) => void saveOne({ [`${k}_enabled`]: on })}
+          // 不写 void —— TaskList 要靠这个 Promise 决定是否回滚乐观值
+          onToggle={(k, on) => saveOne({ [`${k}_enabled`]: on })}
         />
       )
     }

@@ -1,6 +1,7 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
+import { ErrorBoundary } from './components/ErrorBoundary'
 import { installStageUnit } from './lib/stage'
 // 旧界面那 1499 行 CSS 原样搬过来（class 名保持不变 → 样式直接生效，一行没改）
 import './styles/app.css'
@@ -9,6 +10,10 @@ installStageUnit()
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <App />
+    {/* 渲染期异常的兜底：原先任何异常都是整页白屏（用户不在电脑前时等于失联）。
+        放在 App 外层，保证连外壳出错时也能给出"托管仍在运行 + 重新加载"。 */}
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   </React.StrictMode>,
 )
