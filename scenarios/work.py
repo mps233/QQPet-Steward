@@ -40,6 +40,7 @@ from datetime import datetime, timedelta
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.fatigue import mark_fatigue
+from src.hire_quota import add_hire, duration_minutes, is_full, used_minutes
 from src.locators import LOCATORS, OCR_MIN_SCORE, locate_cached, see_bounds
 from src.ocr import (find_text, ocr_fullscreen, ocr_texts,
                      parse_countdown_seconds, parse_panel_location)
@@ -254,10 +255,25 @@ class WorkScenario(DeviceScenario):
         self.hire_name = str(getattr(self.cfg.work, 'hire_name', '') or '').strip()
         # 等好友空闲再雇佣：目标好友"出门中/被雇佣中"时不换人，读剩余时间延后到结束
         self.hire_wait = bool(getattr(self.cfg.work, 'hire_wait', False))
+        # 「等他空闲」时干什么（只在 hire_wait 开启时生效，设置页关着时置灰）：
+        #   不做任何事情 = 原地等 / 去冒险 = 先让出调度器做别的（默认）/ 继续打工 = 不等
+        self.hire_wait_action = str(
+            getattr(self.cfg.work, 'hire_wait_action', '去冒险') or '去冒险')
+        # ── 顺路雇好友（原「雇佣好友」任务已并入打工，不再是独立任务）──
+        # 行为是固定的，**没有开关也没有策略选项**（用户明确不要"迷惑人的选项"）：
+        #   配了 hire_name → 每次打工先去他家点 hire；CD 没好/他不在轮播里 → 直接去
+        #   打工地点用面板挑人（不空等、不延后）；留空 → 完全不做这一步。
+        # hire_daily_hours：每个好友每天最多被雇的时长（游戏机制，默认 4 小时；0 = 不限制）
+        self.hire_daily_hours = float(getattr(self.cfg.work, 'hire_daily_hours', 4) or 0)
+        # 本轮实际雇到的人（配额记账用；空 = 这次没雇，或雇的是面板自动挑的人）
+        self._hired_name = ''
         log(f'打工地点: {self.location}，打工时长: {self.duration}，每天打工次数: '
             f'{self.times_per_day if self.times_per_day else "不限"}'
-            + (f'，优先雇佣: {self.hire_name}' if self.hire_name else '，雇佣策略: 自动选收益最高')
-            + ('，忙就等好友空闲' if self.hire_wait and self.hire_name else ''))
+            + (f'，优先雇佣: {self.hire_name}（先顺路去他家雇，CD 没好就直接打工）'
+               if self.hire_name else '，雇佣策略: 面板自动选收益最高')
+            + ('，忙就等好友空闲' if self.hire_wait and self.hire_name else '')
+            + (f'，每人每天最多被雇 {self.hire_daily_hours:g} 小时'
+               if self.hire_daily_hours > 0 else ''))
 
     # ---- 各阶段 ----
 
@@ -349,9 +365,13 @@ class WorkScenario(DeviceScenario):
             return False
         return loc == self.location.replace(' ', '')
 
-    def select_job(self) -> None:
+    def select_job(self, open_employ: bool = True) -> None:
         """先把第一框拖到第三框归位（两次），按配置 work.duration 点对应工作选择框
         （10分钟/45分钟/2小时 -> select_box_1/2/3），再点 work_outworker 进雇佣界面。
+
+        **`open_employ=False` 时只选时长、不进雇佣面板**：走"好友家 hire"路径时人已经雇
+        好了，面板里的"雇佣好友"按钮会被"已雇佣"顶掉/消失，再点必然找不到 —— 实测报
+        「未找到雇佣好友按钮」→ 主任务失败 → 重启恢复也救不回来 → 告警退出（用户实报）。
 
         轮播有 4 个（打工）/7 个（学园）选择框、xpath 只认可见 3 个，
         必须归位到第一页再选，否则可能选到绝对第几个不是第 2 个；
@@ -370,8 +390,113 @@ class WorkScenario(DeviceScenario):
             raise RuntimeError(f'未定位到工作选择框: {box}')
         time.sleep(CLICK_INTERVAL)
         self.click(hit[0], hit[1])
+        if not open_employ:
+            return
         # work_outworker 是独立按钮，不依赖选框结果，点完直接进雇佣面板
         self._open_employ_panel(source)
+
+    # ---- 顺路雇好友（原「雇佣好友」任务并入打工）----
+
+    def _work_via_friend_hire(self) -> bool:
+        """走"去好友家雇他 → 直接进打工面板开工"这条路径。
+
+        好友导航与 CD 经验全部复用 FriendHireScenario（同一个类，只是不再独立调度）。
+        **收尾/计数登记在本实例上**——pending 必须在 runner 持有的场景实例里，
+        否则调度器收尾时看不到，活动结束就不会计数。
+
+        返回 True = 这次已开工并处理完收尾（本轮结束）；False = 没走通，
+        落回普通打工路径（雇好友只是打工的附加步骤，不该让主任务因此失败）。
+        """
+        from scenarios.hire_friend import FriendHireScenario
+
+        hire = FriendHireScenario(self.dev)
+        log(f'顺路雇好友: 去「{self.hire_name}」家看看能不能雇')
+        try:
+            hire.ensure_main_page()
+            try:
+                hire.goto_friend_home(self.hire_name)
+            except RuntimeError as e:
+                if '未找到' in str(e):
+                    log(f'好友轮播里没有「{self.hire_name}」，改走面板路径')
+                    self.ensure_main_page()
+                    return False
+                raise
+            # 好友家 hire 还在 CD 里时怎么办，跟「等他空闲」用同一个选项（work.hire_wait_action）：
+            #   不做任何事情 → 'wait'（原地等 CD 走完）/ 去冒险 → 'defer'（交给调度层到点再来）
+            #   继续打工 → 'panel'（回主页面走普通打工）
+            policy = {'不做任何事情': 'wait', '去冒险': 'defer',
+                      '继续打工': 'panel'}.get(self.hire_wait_action, 'defer')
+            note = (f'打工要雇的「{self.hire_name}」还在雇佣 CD，先去冒险；到点回去雇他'
+                    if self.hire_wait_action == '去冒险' else '')
+            if not hire.wait_hire_ready(policy, prefer='adventure', note=note):
+                log('好友家 hire 还在 CD 中，这次直接去打工（不空等）')
+                self.ensure_main_page()
+                return False
+            hire._enter_work_panel()      # 点 hire → 等打工面板出现（弹窗处理也在里面）
+        except TaskDeferred:
+            # 防御：TaskDeferred 是 Exception 的子类，若被下面的"降级落回面板"吞掉，
+            # 延后语义就失效了（踩过：CD 没好却直接去打工，日志写着"没走通…落回面板路径"）。
+            # 现在的流程不再产生 defer（CD 没好就是落回面板），这里只保证语义不被误吞。
+            raise
+        except Exception as e:  # noqa: BLE001 - 这条支路失败一律降级，不拖垮打工
+            log(f'好友家雇佣没走通（{e}），落回面板路径')
+            try:
+                self.ensure_main_page()
+            except Exception:
+                pass
+            return False
+
+        # 已经在打工面板上了：后面完全按打工流程走（**不再进面板雇人**——已经雇好了）。
+        # 注意 select_job 必须传 open_employ=False：它默认还会点 work_outworker 进雇佣
+        # 面板，而此刻面板里的"雇佣好友"按钮已被"已雇佣"顶掉 → 找不到就抛异常
+        # （2026-09-30 实报：告警"打工 恢复后重试仍失败: 未找到雇佣好友按钮"）
+        self._hired_name = self.hire_name
+        self.select_place()
+        if self._screen_has_fatigue():
+            mark_fatigue('work')
+            log('检测到游戏疲劳提示"学习/打工太久"（已记录，'
+                '是否停止由调度层按合计时长分层判定）')
+        self.select_job(open_employ=False)
+        if not self._has_work_start():
+            self._recover_work_start()
+        if not self._has_work_start():
+            log('未回到工作面板，重新进入打工地点再选一次')
+            self.select_place()
+            self.select_job(open_employ=False)
+        self._start_work()
+        log('已开始雇佣打工（好友家路径），等待结束...')
+        if self.defer_wait:
+            self.defer_busy_end('work_in', 'work_end', self._count_work_and_hire,
+                                '雇佣打工', encourage=True)
+            self.ensure_main_page()
+            return True
+        self.wait_work_end()
+        today, done, history = load_progress(PROGRESS_FILE)
+        done += 1
+        save_progress(PROGRESS_FILE, today, done, history)
+        record_work_finish()
+        log(f'已完成第 {done} 次打工（好友家雇佣路径）')
+        self._record_hire_usage()
+        return True
+
+    def _count_work_and_hire(self) -> None:
+        """延时收尾的计数：一次打工 + 把这次雇佣记进好友当日配额。"""
+        count_cross('work')
+        self._record_hire_usage()
+
+    def _record_hire_usage(self) -> None:
+        """把这次打工记到"雇了谁"的当天配额（每人每天 hire_daily_hours 小时，游戏机制）。
+
+        只记**配置的目标名**：面板路径自动挑的人身份不可靠（行文字里可能带"金币+6%"），
+        记错会把配额算到别人头上，所以那种情况 `_hired_name` 是空的、不记账。
+        """
+        name, limit = self._hired_name, self.hire_daily_hours
+        if not name or limit <= 0:
+            return
+        total = add_hire(name, duration_minutes(self.duration), log)
+        if total >= limit * 60:
+            log(f'{name} 今天已被雇到 {total} 分钟（上限 {limit:g} 小时），'
+                f'接下来不再雇他，改走面板挑别人')
 
     def _open_employ_panel(self, source=None) -> None:
         """点 work_outworker 进雇佣面板；点击后用 OCR 标题确认面板弹出。
@@ -414,6 +539,9 @@ class WorkScenario(DeviceScenario):
             self._close_employ_panel()
             return
         bx, by, row_text, mode, bonus = picked
+        # 配额记账：只有"真雇到配置里那个人"才算他今天的账
+        # （自动挑的人身份不可靠——行文字里还混着"金币+6%"，记错就把配额算到别人头上）
+        self._hired_name = self.hire_name if mode == 'name' else ''
         if mode == 'name':
             prefix = f'优先雇佣「{self.hire_name}」'
         elif mode == 'bonus':
@@ -526,41 +654,71 @@ class WorkScenario(DeviceScenario):
         log(f'好友忙碌剩余 {mins} 分 {s} 秒，延后到 {until:%H:%M:%S} 再雇佣')
         return until
 
+    def _sleep_until(self, until: datetime) -> None:
+        """原地睡到 until（切片睡眠：不会一次睡死太久，便于中断/暂停信号响应）。"""
+        while True:
+            left = (until - datetime.now()).total_seconds()
+            if left <= 0:
+                return
+            time.sleep(min(left, 15))
+
     def _hire_target_or_wait(self) -> None:
-        """等好友空闲再雇佣：目标忙（出门中/被雇佣中）就延后到活动结束。
+        """等好友空闲再雇佣：目标忙（出门中/被雇佣中）时按 `work.hire_wait_action` 决定等待期干什么。
 
         - 目标是"雇佣"（可雇）：直接点掉；
         - 目标"对方今天很累了"：当天不可雇，换收益最高的人（等也没用）；
-        - 目标"出门中/被雇佣中"：读剩余时间抛 TaskDeferred（调度层到点再调度）；
-        - 目标状态没读出来且没有雇佣按钮：按忙碌处理（宁可等，不擅自换人）——
-          可雇的行必定有按钮（classify_hire_status 认按钮判 free），
-          没按钮又读不出状态说明多半在忙（面板加载中/OCR 抖动）；
+        - 目标"出门中/被雇佣中"：按配置 ——
+            「不做任何事情」原地等到他能雇为止再点（不释放调度器）；
+            「去冒险」读剩余时间抛 TaskDeferred（调度层到点再回来雇）；
+            「继续打工」不等，直接换收益最高的人；
+        - 目标状态没读出来且没有雇佣按钮：按忙碌处理（宁可等，不擅自换人）；
         - 面板里没有目标：回落老逻辑（收益最高），日志说明。
         """
-        row, kind = self._find_employ_row(self.hire_name)
-        if row is not None and kind == 'free':
-            btn = row['button'] or (row['x'], row['y'])
-            log(f'优先雇佣「{self.hire_name}」可雇 [{row["text"]}]，点击 {btn}')
-            self.click(btn[0], btn[1])
-            time.sleep(CLICK_INTERVAL)
-            return
-        if row is not None and kind in ('busy', 'unknown'):
-            if kind == 'unknown':
-                log(f'「{self.hire_name}」状态未识别到且没有雇佣按钮，按忙碌处理（不换人）')
-            until = self._friend_busy_until(row)
-            # 收掉雇佣面板回到打工面板（离开页面状态干净，调度层回主页面更稳）；
-            # 关闭失败只记日志，不影响延后本身
-            try:
-                self._close_employ_panel()
-            except Exception as e:
-                log(f'延后前关闭雇佣面板失败（忽略）: {e}')
-            raise TaskDeferred(
-                until, f'想雇的「{self.hire_name}」正{row["status"] or "忙碌"}'
-                       f'（不换人，等到空闲再雇）')
-        if row is not None:
-            log(f'优先雇佣「{self.hire_name}」{row["status"]}（今天不可雇），等也没用，换收益最高的人')
-        else:
-            log(f'雇佣面板里没找到「{self.hire_name}」，回落收益最高的人')
+        while True:
+            row, kind = self._find_employ_row(self.hire_name)
+            if row is not None and kind == 'free':
+                btn = row['button'] or (row['x'], row['y'])
+                log(f'优先雇佣「{self.hire_name}」可雇 [{row["text"]}]，点击 {btn}')
+                self.click(btn[0], btn[1])
+                time.sleep(CLICK_INTERVAL)
+                self._hired_name = self.hire_name   # 配额记账用
+                return
+            if row is not None and kind in ('busy', 'unknown'):
+                if kind == 'unknown':
+                    log(f'「{self.hire_name}」状态未识别到且没有雇佣按钮，按忙碌处理（不换人）')
+                until = self._friend_busy_until(row)
+                left_min = max(1, round((until - datetime.now()).total_seconds() / 60))
+                if self.hire_wait_action == '不做任何事情':
+                    log(f'想雇的「{self.hire_name}」正{row["status"] or "忙碌"}，'
+                        f'原地等约 {left_min} 分钟（配置：不做任何事情）')
+                    try:
+                        self._close_employ_panel()
+                    except Exception as e:
+                        log(f'等待前关闭雇佣面板失败（忽略）: {e}')
+                    self._sleep_until(until)
+                    log('预计空闲时间到，重新打开雇佣面板再试')
+                    self._open_employ_panel()
+                    continue                      # 回到循环顶部重读状态（对方可能还没空）
+                if self.hire_wait_action == '继续打工':
+                    log(f'想雇的「{self.hire_name}」正{row["status"] or "忙碌"}，'
+                        f'配置是「继续打工」→ 不等了，改换收益最高的人')
+                    break                         # 落到下面的回落选人
+                # 默认「去冒险」：让出调度器，并**要求它优先去冒险**（prefer），到点再回来雇。
+                # note 是给仪表盘的一句话说明（"冒险中"下面那行）
+                busy = row['status'] or '忙碌'
+                try:
+                    self._close_employ_panel()
+                except Exception as e:
+                    log(f'延后前关闭雇佣面板失败（忽略）: {e}')
+                raise TaskDeferred(
+                    until, f'想雇的「{self.hire_name}」正{busy}（配置：先去冒险，等到空闲再雇）',
+                    prefer='adventure',
+                    note=f'打工要雇的「{self.hire_name}」正{busy}，先去冒险；到点回去雇他')
+            if row is not None:
+                log(f'优先雇佣「{self.hire_name}」{row["status"]}（今天不可雇），等也没用，换收益最高的人')
+            else:
+                log(f'雇佣面板里没找到「{self.hire_name}」，回落收益最高的人')
+            break
         # 回落选人只要整屏 OCR（不必再 dump 控件树）
         items = ocr_fullscreen(self.screen())
         picked = pick_employ_button(items, self.screen().shape[1], '')
@@ -693,6 +851,17 @@ class WorkScenario(DeviceScenario):
             round_no += 1
             log(f'===== 第 {round_no} 轮 =====')
             self.ensure_main_page()
+            self._hired_name = ''
+            # ── 顺路雇好友：先去指定好友家点 hire（原「雇佣好友」任务并入打工）──
+            # 没配 hire_name 就跳过；今天配额满了、或机会不成立，一律落回普通打工路径
+            # ——**不空等、不延后**（行为固定，没有策略选项）。
+            if self.hire_name:
+                limit = self.hire_daily_hours
+                if limit > 0 and is_full(self.hire_name, limit):
+                    log(f'{self.hire_name} 今天已被雇 {used_minutes(self.hire_name)} 分钟'
+                        f'（上限 {limit:g} 小时），再雇也没收益 → 走面板挑别人')
+                elif self._work_via_friend_hire():
+                    return True
             finished = self.goto_town()
             if finished:
                 if self.pending is not None:

@@ -556,6 +556,8 @@ def config_summary() -> dict:
                     if stop_h else '不限')],
         ['福袋', f"{'启用' if (cfg.get('gift_bag') or {}).get('enabled', True) else '未启用'}"
                  f" · 每 {(cfg.get('gift_bag') or {}).get('interval_seconds', '-')} 秒扫描"],
+        ['结算补贴', '每次打工/雇佣好友结束自动领「看视频 +N」金币补贴'
+                     if (sched.get('claim_ad_bonus', True)) else '已关闭'],
         ['踩踩', f"{visit.get('times_per_day', '-')} 次/天 @ {visit.get('start_time', '')}"],
         ['PK', f"{pk.get('times_per_day', '-')} 次/天 @ {pk.get('start_time', '')}"],
         ['冒险', f"{adv.get('times_per_day', '-')} 次/天 @ {adv.get('start_time', '')}"],
@@ -1099,7 +1101,17 @@ def editable_snapshot() -> dict:
         # 连接层：ADB 路径与设备序列号（设置页「连接手机」卡片；改完需重启调度器）
         'adb_path': str((cfg.get('adb') or {}).get('path') or ''),
         'adb_serial': str((cfg.get('adb') or {}).get('device_serial') or ''),
+        # 各任务的「启用」开关（设置页表单回填）：**必须逐个列出**，不能只给 school。
+        # 前端 schema 里 work/care/visit/pk/adventure 都有开关，拿不到值就被
+        # `boolOf()` 当成 false —— 表现为"设置页显示关闭、任务列表里却是勾选的"
+        # （用户实报：打工页显示关闭、首页打工行是开着的）。保存侧 mapping 一直都有
+        # 这些键，漏的是回填这一半，所以两个界面长期对不上。
         'school_enabled': bool((tasks.get('school') or {}).get('enabled', True)),
+        'work_enabled': bool((tasks.get('work') or {}).get('enabled', True)),
+        'care_enabled': bool((tasks.get('care') or {}).get('enabled', True)),
+        'visit_enabled': bool((tasks.get('visit') or {}).get('enabled', True)),
+        'pk_enabled': bool((tasks.get('pk') or {}).get('enabled', True)),
+        'adventure_enabled': bool((tasks.get('adventure') or {}).get('enabled', True)),
         'school_attribute': str(school.get('attribute') or '力量'),
         'school_duration': str(school.get('duration') or '10分钟'),
         'school_times': school.get('times_per_day', 0),
@@ -1108,6 +1120,10 @@ def editable_snapshot() -> dict:
         'work_duration': work.get('duration'),
         'hire_name': str(work.get('hire_name') or ''),
         'hire_wait': bool(work.get('hire_wait', False)),
+        # 「等他空闲」时干什么（设置页在 hire_wait 关闭时置灰）
+        'hire_wait_action': str(work.get('hire_wait_action') or '去冒险'),
+        # 顺路雇好友的每日配额（原「雇佣好友」任务并入打工；行为固定，没有策略选项）
+        'hire_daily_hours': work.get('hire_daily_hours', 4),
         'coin_threshold': sched.get('coin_threshold', 2000),
         # 设置页「合计满则停止」= 唯一入口（stop_total_hours 由下面三个键折算，
         # 保存时三键一起写同一个值）。三个原键仍回填给前端：用于"三项不一致"
@@ -1152,6 +1168,8 @@ def editable_snapshot() -> dict:
         'gift_bag_enabled': bool((cfg.get('gift_bag') or {}).get('enabled', True)),
         'gift_bag_range': str((cfg.get('gift_bag') or {}).get('time_range') or ''),
         'gift_bag_interval': (cfg.get('gift_bag') or {}).get('interval_seconds', 1800),
+        # 每次打工（含雇佣好友打工）结束时在结算页上顺手领「看视频 +N」金币补贴
+        'claim_ad_bonus': bool(sched.get('claim_ad_bonus', True)),
         'career_watch': bool(career.get('watch', True)),
         'career_stop_study': bool(career.get('stop_study_on_unlock', True)),
         'career_interval': career.get('check_interval_min', 60),
@@ -1209,6 +1227,8 @@ def apply_settings(updates: dict) -> dict:
         'work_duration': ('work.duration', None),
         'hire_name': ('work.hire_name', None),
         'hire_wait': ('work.hire_wait', 'bool'),
+        'hire_wait_action': ('work.hire_wait_action', None),
+        'hire_daily_hours': ('work.hire_daily_hours', 'int'),
         'coin_threshold': ('schedule.coin_threshold', 'int'),
         # 合计停止点：映射到 work_stop_hours 只为过 validate_field（0..24 校验），
         # 实际写入见 stop_total_keys 的三键同值分支
@@ -1253,6 +1273,7 @@ def apply_settings(updates: dict) -> dict:
         'employed_interval': ('employed.interval_seconds', 'int'),
         'gift_bag_range': ('gift_bag.time_range', 'str'),
         'gift_bag_interval': ('gift_bag.interval_seconds', 'int'),
+        'claim_ad_bonus': ('schedule.claim_ad_bonus', 'bool'),
         'career_watch': ('career.watch', 'bool'),
         'career_stop_study': ('career.stop_study_on_unlock', 'bool'),
         'career_interval': ('career.check_interval_min', 'int'),

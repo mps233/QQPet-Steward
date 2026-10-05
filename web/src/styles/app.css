@@ -723,7 +723,7 @@ body{
      算一下：第三钮 top 154.3u + 高 42u = 196.3u；圆钮之间的空隙
      16u（第 1→2）/ 18u（第 2→3），取 17u → 2.5 倍 42.5u → 196.3 + 42.5 ≈ 238.8u。
      （调这个值时只改这一个数即可：几倍间距 = (top − 196.3) / 17。）
-     原来这里是 190u（legacy CSS 里的默认值，运行时由 place() 覆盖），
+     原来这里是 190u（旧版 CSS 里的默认值，运行时由 place() 覆盖），
      而 190 < 196.3，所以会压住第三颗圆钮。 */
   top:calc(var(--u) * 238.8);
   width:calc(var(--u) * 50);
@@ -1141,11 +1141,18 @@ body{
 }
 .form input[type=number]{width:calc(var(--u) * 70)}
 .form input[type=text]{width:calc(var(--u) * 140)}
+/* 依赖字段没开时置灰（FieldDef.enabledWhen）：如"等他空闲时"依赖"等TA空闲" */
+.form select:disabled,.form input:disabled{opacity:.42}
 .form .two{display:flex;gap:calc(var(--u) * 6)}
 .form .two input{width:calc(var(--u) * 56)}
 /* 行内右侧控件组：状态文字在左、按钮靠右（与开关行的右对齐一致）。
-   不加 .ctrl 时按钮会被 frow 的 space-between 摊到中间（通知页"测试"行实测） */
-.form .ctrl{display:flex;align-items:center;gap:calc(var(--u) * 8);min-width:0}
+   不加 .ctrl 时按钮会被 frow 的 space-between 摊到中间（通知页"测试"行实测）。
+   两个对齐相关的属性都是必需的，少一个就不齐（真机实测过）：
+   - margin-left:auto → 让**整组**被顶到行右端（否则紧贴标签停住）；
+   - justify-content:flex-end → 让**组内内容**贴右。input 的显式 width(140u) 与
+     max-width:58% 叠加后，.ctrl 会比 input 本身宽几十像素，靠左放就会在右侧留白，
+     看起来"输入框没右对齐"（用户真机截图实报 "优先雇佣"）。 */
+.form .ctrl{display:flex;align-items:center;justify-content:flex-end;gap:calc(var(--u) * 8);min-width:0;margin-left:auto}
 .form .ctrl #notifyTestMsg{
   color:var(--sub);font-size:calc(var(--u) * 12);
   text-align:right;overflow-wrap:anywhere;

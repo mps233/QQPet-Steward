@@ -2,12 +2,12 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   fetchLogs,
   fetchRewards,
-  type LogsData,
   type RewardBucket,
   type RewardRow,
   type RewardsData,
   type Shot,
 } from '../api'
+import { usePoll } from '../lib/usePoll'
 
 const RW_ICON: Record<string, string> = {
   school: '/qp-icons/official/study_book.png',
@@ -113,30 +113,10 @@ function RewardRowItem({ r, tsLab }: { r: RewardRow; tsLab: boolean }) {
 
 /** 收益记录子页：统计范围下拉 + 汇总 + 按次记录 */
 function RewardTab({ shots }: { shots: Shot[] }) {
-  const [d, setD] = useState<RewardsData | null>(null)
   const [date, setDate] = useState<string>('')
-  const [err, setErr] = useState('')
 
-  useEffect(() => {
-    let alive = true
-    const run = async () => {
-      try {
-        const r = await fetchRewards(date || undefined)
-        if (alive) {
-          setD(r)
-          setErr('')
-        }
-      } catch (e) {
-        if (alive) setErr(String(e))
-      }
-    }
-    void run()
-    const t = window.setInterval(run, 15000)
-    return () => {
-      alive = false
-      window.clearInterval(t)
-    }
-  }, [date])
+  // 15 秒轮询；切换统计范围（date）时立刻重拉
+  const { data: d, error: err } = usePoll(() => fetchRewards(date || undefined), 15000, [date])
 
   if (err) return <div className="empty">读取收益记录失败：{err}</div>
   if (!d) return <div className="empty">加载中…</div>
@@ -219,28 +199,13 @@ function RewardTab({ shots }: { shots: Shot[] }) {
 
 /** 实时日志子页：工具栏（自动滚动 + 过滤）+ 输出 + 异常截图 */
 function LiveTab({ shots }: { shots: Shot[] }) {
-  const [logs, setLogs] = useState<LogsData | null>(null)
   const [auto, setAuto] = useState(true)
   const [filter, setFilter] = useState('')
   const boxRef = useRef<HTMLPreElement>(null)
 
-  useEffect(() => {
-    let alive = true
-    const run = async () => {
-      try {
-        const r = await fetchLogs()
-        if (alive) setLogs(r)
-      } catch {
-        /* 调度器没在跑时日志可能读不到，静默保持上一份 */
-      }
-    }
-    void run()
-    const t = window.setInterval(run, 3000)
-    return () => {
-      alive = false
-      window.clearInterval(t)
-    }
-  }, [])
+  // 3 秒轮询。**失败静默**（不渲染 error）：调度器没在跑时日志读不到是常态，
+  // 保持上一份即可，不该显示成一次"读取失败"
+  const { data: logs } = usePoll(fetchLogs, 3000)
 
   const text = useMemo(() => {
     const lines = logs?.lines ?? []
@@ -299,30 +264,41 @@ function LiveTab({ shots }: { shots: Shot[] }) {
 }
 
 /** 日志页：两个子页（实时日志 / 收益记录），切换条常驻上方。
- *  层级同设置页二级 —— 切子页是一次"同级互切"，不涉及 history 压栈。 */
-export function LogPage({ shots }: { shots: Shot[] }) {
-  const [sub, setSub] = useState<'index' | 'reward'>('index')
+ *  层级同设置页二级：子页是历史栈里的**真一层**（URL `?tab=log&sub=reward`），
+ *  所以侧滑返回退回"实时日志"、再滑才回总览；`sub` 由 App 从 URL 派生后传进来
+ *  （早先这里自持 state 不压栈，右滑会直接退出日志页）。 */
+export function LogPage({
+  shots,
+  sub,
+  onSub,
+}: {
+  shots: Shot[]
+  /** 当前子页键（URL 的 sub 参数；null = 默认实时日志） */
+  sub: string | null
+  onSub: (k: 'index' | 'reward') => void
+}) {
+  const cur = sub === 'reward' ? 'reward' : 'index'
   return (
     <>
       <div className="logctl" id="logSubtabs">
         <button
           data-lsub="index"
-          className={sub === 'index' ? 'on' : ''}
+          className={cur === 'index' ? 'on' : ''}
           title="调度器全部输出"
-          onClick={() => setSub('index')}
+          onClick={() => onSub('index')}
         >
           实时日志
         </button>
         <button
           data-lsub="reward"
-          className={sub === 'reward' ? 'on' : ''}
+          className={cur === 'reward' ? 'on' : ''}
           title="每次学习/打工结算拿到的学分·属性·金币"
-          onClick={() => setSub('reward')}
+          onClick={() => onSub('reward')}
         >
           收益记录
         </button>
       </div>
-      {sub === 'index' ? <LiveTab shots={shots} /> : <RewardTab shots={shots} />}
+      {cur === 'index' ? <LiveTab shots={shots} /> : <RewardTab shots={shots} />}
     </>
   )
 }

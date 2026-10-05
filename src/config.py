@@ -113,12 +113,24 @@ class WorkConfig:
     # 已不再使用：旧流程"下滑找雇佣按钮"已移除（当前页没有雇佣按钮时直接关闭面板开工），
     # 保留字段仅为兼容已有 config.yaml
     employ_scroll_limit: int = 5
-    # 打工时优先雇佣的名字（宠物名/主人名，部分匹配）；空 = 雇佣列表最上面一个
+    # 想雇的那个好友（宠物名/主人名，部分匹配）。**配了就先顺路去他家点 hire**
+    # （原「雇佣好友」任务已并入打工，不再是独立任务）：雇到就直接进打工面板开工；
+    # CD 没好、或他不在好友轮播里 → 照常去打工地点用面板挑人，**不空等也不延后**。
+    # 留空 = 不做这一步，每次都在面板里自动挑金币加成最高的。
     hire_name: str = ""
     # 等好友空闲再雇佣：hire_name 指定好友在雇佣面板里"出门中/被雇佣中"（正忙着
     # 打工/学习）时不换人——点头像进主页读剩余时间，延后到好友空闲再雇佣
     # （期间调度器跑其他任务）；"对方今天很累了"是当天不可雇，等待无意义仍换人
     hire_wait: bool = False
+    # **「等他空闲」时干什么**（只有 hire_wait 开启时才生效；设置页在关着时会置灰）：
+    # 想雇的那个好友正忙着 / 还在雇佣 CD 里的时候，这段等待期怎么办：
+    #   「不做任何事情」= 原地等（占着调度器，不做别的）
+    #   「去冒险」      = 先让出调度器去做别的（冒险等任务），到点再回来雇（默认）
+    #   「继续打工」    = 不等了，直接去打工地点用面板挑人
+    hire_wait_action: str = "去冒险"
+    # 每个好友每天最多被雇的时长（小时，游戏机制）：满了就不再雇他（再雇也没收益）。
+    # 0 = 不限制（不记账）
+    hire_daily_hours: float = 4.0
 
 
 @dataclass
@@ -165,6 +177,11 @@ class ScheduleConfig:
     main_page_checks: int = 1
     # 返回方式：系统返回（Android 返回键，默认）/ 返回图标（定位游戏内 back 按钮点击）
     back_method: str = "系统返回"
+    # 每次打工（含雇佣好友打工）结束时，在结算页上顺手领「看视频 +N」金币补贴：
+    # 打工的结算页标题就是「工资明细」，上面带着那个入口（带「限时补贴」角标），
+    # 不点就白丢。领取流程见 src/ad_bonus.py（挂载点见
+    # DeviceScenario.claim_settlement_ad_bonus，在点 quit 收尾之前）
+    claim_ad_bonus: bool = True
 
 
 @dataclass
@@ -277,11 +294,16 @@ class CareerConfig:
 
 
 # 任务队列调度的任务键（tasks.order 里可配置的任务名）
-TASK_KEYS = ('care', 'adventure', 'visit', 'pk', 'hire_friend', 'friend_care',
-             'gift_bag', 'school', 'work')
-# 主任务组：冒险/学习/打工/雇佣好友互斥（共用"出门-进行中"一条线，不能同时做），
-# 由 TaskQueueRunner 按 tasks.main_order 统一调度
-MAIN_TASK_KEYS = ('adventure', 'school', 'hire_friend', 'work')
+# **hire_friend 已并入 work**：打工流程里会"先顺路去指定好友家点 hire，CD 就绪就
+# 走那条路直接开工"（见 scenarios/work.py 的 _work_via_friend_hire），不再作为独立
+# 任务——否则它会和打工抢同一份工时预算，任务列表里也重复显示同一件事。
+# **friend_care 已并入 care**：护理任务每轮检查完自己之后，若好友护理到点就顺路去
+# 一趟（见 scenarios/runner.py 的 _friend_care_round）；它自己的开关/时间段/间隔/
+# 好友名都在 friend_care 段里原样保留，所以"单独开关"照旧生效。
+TASK_KEYS = ('care', 'adventure', 'visit', 'pk', 'gift_bag', 'school', 'work')
+# 主任务组：冒险/学习/打工互斥（共用"出门-进行中"一条线，不能同时做），
+# 由 TaskQueueRunner 按 tasks.main_order 统一调度。雇好友已并入打工，不再是独立主任务。
+MAIN_TASK_KEYS = ('adventure', 'school', 'work')
 
 
 @dataclass

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { TASK_GROUP, TASK_NAME, isLoopTask, runnerStart, runnerStop, saveSettings, type Data } from './api'
+import { TASK_GROUP, TASK_NAME, isLoopTask, keyOfTaskName, runnerStart, runnerStop, saveSettings, type Data } from './api'
 import { Overview, type PageKey } from './components/Overview'
 import { AdvPage } from './components/AdvPage'
 import { LivePage } from './components/LivePage'
@@ -11,14 +11,38 @@ import { SettingsPage } from './components/SettingsPage'
 import { useData } from './lib/useData'
 import { useScene } from './lib/useScene'
 
-/** 迁移中的外壳：目前只渲染总览页；其余页（冒险/职业/日志/通知/设置/实时画面）
- *  按计划逐块搬。旧界面仍在 `/` 上原样服务，互不影响。 */
+/** 前端外壳：页面切换 + 全部内页（总览 / 冒险 / 职业 / 日志 / 通知 / 设置 / 实时画面）。
+ *  构建产物由 dashboard.py 的 `/` 直接服务（旧版原生界面已删除，构建见 web/build.sh）。 */
+/** 一个"视图" = 页面 + 二级键（设置分组 / 日志子页）。
+ *  转场按**视图粒度**做，所以"设置一级 → 二级"与"总览 → 内页"共用同一套滑动动画。 */
+type View = { page: PageKey; grp: string | null; sub: string | null }
+
+/** 真正的滚动容器：**当前页的 `.page-slot`**。
+ *
+ *  这个前端里 `html` 是固定的 `overflow:hidden` 画布、`body` 也没有可滚高度，
+ *  只有 `.page-slot` 是 `overflow-y:auto` 的那一层（见 FRONTEND_PITFALLS 第三节：
+ *  `.page-slot` / `.home` / `.advlist` / `#logbox` 都是滚动容器）。
+ *  探针实测（390×420 的 iframe 里打开设置页）：
+ *    html 可滚 0 · body 可滚 0 · main 可滚 0 · section 可滚 0 · #root 0，
+ *    只有 `.page-slot.page-enter` scrollHeight=1000 / clientHeight=420（可滚 580），
+ *    对它写 `scrollTop=300` 能读回 300。
+ *  所以 `document.scrollingElement`（指向 html）与 `document.body` 都读写无效 ——
+ *  早先两版按它们取，表现就是"记忆了但没生效"。
+ *  转场期间退场页 `.page-leave-*` 也在 DOM 里，必须锁定 `.page-enter`。 */
+function scrollerEl(): HTMLElement | null {
+  const enter = document.querySelector('.page-slot.page-enter')
+  if (enter instanceof HTMLElement && enter.scrollHeight > enter.clientHeight) return enter
+  const slot = document.querySelector('.page-slot')
+  if (slot instanceof HTMLElement && slot.scrollHeight > slot.clientHeight) return slot
+  return null
+}
+
 export default function App() {
   const { data, error, reload } = useData(6000)
   const [busy, setBusy] = useState('')
   const [page, setPage] = useState<PageKey>('main')
   /**
-   * 历史栈模型（与 legacy 的 showTab / popstate 一一对应）：
+   * 历史栈模型（与 旧版 的 showTab / popstate 一一对应）：
    *   navDepth = 0（总览）/ 1（内页）/ 2（二级：设置 grp、日志子页）
    *     往下一层   → pushState
    *     同级互切   → replaceState（栈不增长）
@@ -30,7 +54,45 @@ export default function App() {
   const navDepth = useRef(0)
   const pendingTab = useRef<PageKey | null>(null)
 
+  /** 从 URL 解析当前所在位置：页面 + 二级键（设置的分组 / 日志的子页）。
+   *  **URL 是唯一事实来源** —— 侧滑返回时浏览器只改 URL 再抛 popstate，
+   *  界面状态必须照着 URL 重建，"栈里有什么就能退到什么"才成立。 */
+  const parseLoc = useCallback(() => {
+    const sp = new URLSearchParams(location.search)
+    const known: PageKey[] = ['main', 'adv', 'plan', 'log', 'notify', 'set', 'shot']
+    const t = sp.get('tab') as PageKey | null
+    return {
+      page: (t && known.includes(t) ? t : 'main') as PageKey,
+      grp: sp.get('grp'),
+      sub: sp.get('sub'),
+    }
+  }, [])
+
+  // 二级（设置分组 / 日志子页）：两个都从 URL 初始化，直开 ?tab=set&grp=work 也能落在二级
+  const [grp, setGrp] = useState<string | null>(() => parseLoc().grp)
+  const [sub, setSub] = useState<string | null>(() => parseLoc().sub)
+
+  /** 0 总览 / 1 内页 / 2 二级（设置分组 · 日志子页） */
+  const depthOf = (loc: { page: PageKey; grp: string | null; sub: string | null }): number =>
+    loc.page === 'main' ? 0 : loc.grp || loc.sub ? 2 : 1
+
+  // ---- 各视图的滚动位置记忆 ----
+  // 设置一级菜单滚到下面 → 点进二级 → 返回时停在顶部（用户实报）：真正滚动的是 `body`
+  // （见 AGENTS 的滚动架构），二级内容短，浏览器会把 body.scrollTop 直接 clamp 成 0，
+  // 再回一级时内容虽然变回来，滚动位置不会自动恢复。
+  // 做法：**在 DOM 更新前**（各导航入口里）存下当前视图的 scrollTop，视图 key 变了再写回去。
+  // key = 页面 或 页面:二级键 —— 一级与二级各记各的，不会互相覆盖。
+  const scrollMemo = useRef<Record<string, number>>({})
+  const scrollKeyRef = useRef<string>('main')
+  const scrollKeyOf = (p: PageKey, g: string | null, s: string | null): string =>
+    g || s ? `${p}:${g || s}` : p
+  const saveScroll = useCallback(() => {
+    const el = scrollerEl()
+    if (el) scrollMemo.current[scrollKeyRef.current] = el.scrollTop
+  }, [])
+
   const go = useCallback((name: PageKey) => {
+    saveScroll()
     const target = name === 'main' ? 0 : 1
     const url = name === 'main' ? location.pathname : `?tab=${name}`
     try {
@@ -52,13 +114,47 @@ export default function App() {
     } catch {
       /* 某些环境禁 pushState，退化成纯状态切换 */
     }
+    setGrp(null)
+    setSub(null)
     setPage(name)
+  }, [saveScroll])
+
+  /** 进二级 / 二级之间互切：**往下压栈、同级只替换当前条**。
+   *  离开二级一律走 `backSub()`（history.back()）——"返回"类操作绝不能用 pushState：
+   *  按钮在压栈、手势在退栈，方向相反会退不回去（旧版实测踩过，见 FRONTEND_PITFALLS）。 */
+  const openSub = useCallback((kind: 'grp' | 'sub', key: string) => {
+    saveScroll()   // 记下一级菜单滚到哪儿了，返回时好还原
+    const cur = parseLoc()
+    const atSameLevel = kind === 'grp' ? !!cur.grp : !!cur.sub
+    const sp = new URLSearchParams(location.search)
+    sp.set('tab', cur.page === 'main' ? (kind === 'grp' ? 'set' : 'log') : cur.page)
+    sp.set(kind, key)
+    const url = location.pathname + '?' + sp.toString()
+    try {
+      if (atSameLevel) history.replaceState({ tab: sp.get('tab') }, '', url)
+      else history.pushState({ tab: sp.get('tab') }, '', url)
+    } catch {
+      /* 忽略 */
+    }
+    navDepth.current = 2
+    if (kind === 'grp') setGrp(key)
+    else setSub(key)
+  }, [parseLoc, saveScroll])
+
+  /** 二级 → 一级（返回按钮与侧滑同一条路：退浏览器栈，不压栈） */
+  const backSub = useCallback(() => {
+    try {
+      history.back()
+    } catch {
+      setGrp(null)
+      setSub(null)
+    }
   }, [])
 
   // 侧滑 / 浏览器返回
   useEffect(() => {
-    const onPop = (e: PopStateEvent) => {
-      const st = (e.state || {}) as { tab?: PageKey }
+    const onPop = () => {
+      saveScroll()   // 先把**正在离开的那个视图**的位置记下来（此刻 DOM 还没更新）
       if (pendingTab.current) {
         // 跳级退栈的收尾：落回总览后再压目标页
         const t = pendingTab.current
@@ -72,49 +168,77 @@ export default function App() {
         setPage(t)
         return
       }
-      // state 拿不到就回退到 URL —— pushState 时 URL 一定写了 ?tab=xxx。
-      // 实测（headless）history.state 读出来是 null，不能只依赖它。
-      const fromUrl = new URLSearchParams(location.search).get('tab') as PageKey | null
-      const t: PageKey = (st.tab as PageKey) || fromUrl || 'main'
-      navDepth.current = t === 'main' ? 0 : 1
-      setPage(t)
+      // 一律按 URL 重建（**含二级**）：从"设置二级"侧滑回"设置一级"时 page 仍是 set，
+      // 只在 page 变化时才同步的话 grp 会残留成 2 层，下一次返回就多退一层（旧版踩过）
+      const loc = parseLoc()
+      navDepth.current = depthOf(loc)
+      setPage(loc.page)
+      setGrp(loc.grp)
+      setSub(loc.sub)
     }
     window.addEventListener('popstate', onPop)
     return () => window.removeEventListener('popstate', onPop)
-  }, [])
+  }, [parseLoc, saveScroll])
 
-  // 直开 ?tab=xxx（便于分享链接 / 截图 / 调试）
+  // 直开 ?tab=xxx[&grp=yyy][&sub=zzz]（便于分享链接 / 截图 / 调试）
   useEffect(() => {
-    try {
-      const t = new URLSearchParams(location.search).get('tab') as PageKey | null
-      if (t && ['adv', 'plan', 'log', 'notify', 'set', 'shot'].includes(t)) {
-        setPage(t)
-        navDepth.current = 1
-      }
-    } catch {
-      /* 忽略 */
+    const loc = parseLoc()
+    setPage(loc.page)
+    setGrp(loc.grp)
+    setSub(loc.sub)
+    navDepth.current = depthOf(loc)
+  }, [parseLoc])
+
+  // 视图（页面 + 二级）变化后，把记住的滚动位置写回去。
+  // 新视图没记录过 → 落在顶部（进二级/进内页从顶部开始，符合预期）。
+  useEffect(() => {
+    const key = scrollKeyOf(page, grp, sub)
+    scrollKeyRef.current = key
+    const y = scrollMemo.current[key] ?? 0
+    const put = () => {
+      const el = scrollerEl()   // 每次现取：转场中/渲染后 .page-enter 可能是新节点
+      if (el) el.scrollTop = y
     }
-  }, [])
+    const raf = window.requestAnimationFrame(put)
+    const t = window.setTimeout(put, 90)   // 兜底：iOS 上布局偶尔晚一帧才算完
+    return () => {
+      window.cancelAnimationFrame(raf)
+      window.clearTimeout(t)
+    }
+  }, [page, grp, sub])
 
   const [orderMsg, setOrderMsg] = useState('')
 
-  // ---- iOS 式转场：前后两页同时在场（旧页左让 / 新页右入，返回时反过来）----
-  // leaving = 正在退场的那一页（只活 320ms，动画结束就卸载）；dir 决定方向。
-  const [leaving, setLeaving] = useState<PageKey | null>(null)
+  // ---- iOS 式转场：前后两个**视图**同时在场（旧视图左让 / 新视图右入，返回时反过来）----
+  // leaving = 正在退场的那个视图（只活 340ms，动画结束就卸载）；dir 决定方向。
+  // **视图 = 页面 + 二级**：设置一级↔二级、日志↔子页也走同一套滑动，不再只有页面级才有动画
+  // （早先这里只认 PageKey，所以"进二级"是硬切，看着像动画丢了；实际是从来没挂过）。
+  const [leaving, setLeaving] = useState<View | null>(null)
   const [dir, setDir] = useState<'fwd' | 'back'>('fwd')
   const [transiting, setTransiting] = useState(false)
-  const prevPage = useRef<PageKey | null>(null)
+  const prevView = useRef<View | null>(null)
   const leaveTimer = useRef<number>()
 
-  /** page 一变就起转场。放在 effect 里而不是塞进 go()，是为了不受函数定义顺序约束
-   *  （go 定义在前、会引用尚未初始化的 switchTo）。首次渲染不触发 —— 那时 prevPage
-   *  还是 null。回总览算 back（新页从左进），进内页/内页互切算 fwd（新页从右进）。
-   *  go()/popstate 两条路径都只 setPage，这里统一兜住。 */
+  /** 视图一变就起转场。放在 effect 里而不是塞进各个导航函数，是为了不受定义顺序约束。
+   *  首次渲染不触发（prevView 还是 null）。方向按**层级**判：变深 = fwd、变浅 = back；
+   *  同级互切（日志子页 index↔reward）不滑，直接换内容。 */
   useEffect(() => {
-    const from = prevPage.current
-    prevPage.current = page
-    if (!from || from === page) return
-    setDir(page === 'main' ? 'back' : 'fwd')
+    const cur: View = { page, grp, sub }
+    const from = prevView.current
+    prevView.current = cur
+    if (!from) return
+    if (from.page === cur.page && (from.grp || '') === (cur.grp || '')
+        && (from.sub || '') === (cur.sub || '')) {
+      return   // 同一个视图（只是数据刷新）→ 不动画
+    }
+    const dFrom = depthOf(from)
+    const dTo = depthOf(cur)
+    if (dFrom === dTo) {
+      setLeaving(null)
+      setTransiting(false)
+      return     // 同级互切：不滑
+    }
+    setDir(dTo > dFrom ? 'fwd' : 'back')
     setLeaving(from)
     setTransiting(true)
     window.clearTimeout(leaveTimer.current)
@@ -122,10 +246,16 @@ export default function App() {
       setLeaving(null)
       setTransiting(false)
     }, 340)
-  }, [page])
+  }, [page, grp, sub])
 
   // 自动换背景要跟着「当前任务 + 进行中的活动」走
-  const curKey = data?.queue.pending ? data.queue.pending_key || '' : data?.queue.current || ''
+  // 场景键统一用**任务键**：pending 时后端给的就是键（pending_key），平时
+  // queue.current 是中文任务名（TaskQueueRunner 写 task.name）要反查回来 ——
+  // 直接把中文名交给 SCENE_OF（键是 care/school/pk…）永远命中不了，
+  // 会让"按任务自动换背景"只在 pending 期间生效。
+  const curKey = data?.queue.pending
+    ? data.queue.pending_key || ''
+    : keyOfTaskName(data?.queue.current)
   const etaKind = data?.work_eta?.kind ?? ''
   const scene = useScene(curKey, etaKind)
 
@@ -133,7 +263,7 @@ export default function App() {
   //
   // 1) `html[data-page]` —— CSS 里 `html[data-page]:not([data-page="main"])` 靠它把内页的
   //    底色与背景图切成白色顶栏。不设这个属性的话，进设置页后顶部的安全区**仍然显示总览页
-  //    的房间暖色**（旧版是 showTab() 里 setAttribute 的，见 legacy app.js:2096）。
+  //    的房间暖色**（旧版是 showTab() 里 setAttribute 的，见 git 历史 web/legacy/app.js）。
   // 2) `theme-color` meta —— iOS 18 及以前读它画状态栏那条带；iOS 26+ 改为采样 html 的
   //    background-color（那条路靠 CSS 的 --qp-statusbar，本身已经对）。
   useEffect(() => {
@@ -178,7 +308,7 @@ export default function App() {
 
   /** 拖完写回配置：tasks.order（全量，轮巡组保持在最前）+ tasks.main_order
    *  （四个主任务按新相对顺序）——**两个都写拖动才真的影响调度**：主任务组互斥时
-   *  看的是 main_order，只改 order 会"拖了但没生效"。（与 legacy 的 submitTaskOrder 一致） */
+   *  看的是 main_order，只改 order 会"拖了但没生效"。（与 旧版 的 submitTaskOrder 一致） */
   const onReorder = useCallback(async (restOrder: string[]) => {
     const loopKeys = Object.keys(TASK_NAME).filter(isLoopTask)
     const full = [...loopKeys, ...restOrder.filter((k) => !loopKeys.includes(k))]
@@ -198,7 +328,7 @@ export default function App() {
   }, [reload])
 
   /** 单字段保存（通知页的开关/文本框、设置页的表单都走这里）。
-   *  与 legacy 的「改动即自动保存」一致：后端 ruamel 往返写 config.yaml，下一轮生效。 */
+   *  与 旧版 的「改动即自动保存」一致：后端 ruamel 往返写 config.yaml，下一轮生效。 */
   const saveOne = useCallback(
     async (updates: Record<string, unknown>) => {
       try {
@@ -238,10 +368,13 @@ export default function App() {
     )
   }
 
-  /** 按页面键渲染。抽成函数是为了让"正在退场的那一页"也能被渲染 —— iOS 式转场
-   *  需要前后两页同时在场（单页滑入那种是旧页瞬间消失，不像原生）。
+  /** 按**视图**渲染（页面 + 二级键）。抽成函数是为了让"正在退场的那个视图"也能被渲染
+   *  —— iOS 式转场需要前后两个视图同时在场（单页滑入那种是旧页瞬间消失，不像原生）。
+   *  grp/sub 一律走参数，**不能读闭包里的全局值**：退场的那个视图往往带着不同的二级键
+   *  （例如从设置二级退回一级时，退场视图是 grp=work、进场视图是 grp=null）。
    *  第二参数显式传数据，避免依赖闭包里的类型窄化。 */
-  const renderPage = (p: PageKey, d: Data) => {
+  const renderView = (v: View, d: Data) => {
+    const p = v.page
     if (p === 'main') {
       return (
         <Overview
@@ -260,7 +393,7 @@ export default function App() {
       return (
         <section className="card" data-page="log">
           <NavHead title="日志" onBack={() => go('main')} />
-          <LogPage shots={d.shots ?? []} />
+          <LogPage shots={d.shots ?? []} sub={v.sub} onSub={(k) => openSub('sub', k)} />
         </section>
       )
     }
@@ -299,7 +432,14 @@ export default function App() {
     if (p === 'set') {
       return (
         <section className="card" data-page="set">
-          <SettingsPage editable={d.editable ?? {}} onSave={saveOne} onExit={() => go('main')} />
+          <SettingsPage
+            editable={d.editable ?? {}}
+            onSave={saveOne}
+            onExit={() => go('main')}
+            grp={v.grp}
+            onOpen={(id) => openSub('grp', id)}
+            onBackSub={backSub}
+          />
         </section>
       )
     }
@@ -314,15 +454,15 @@ export default function App() {
         {/* iOS 式转场：退场的那一页还在（往左/右让开），新页从另一侧推入 */}
         {leaving ? (
           <div className={'page-slot page-leave-' + dir} aria-hidden="true">
-            {renderPage(leaving, data)}
+            {renderView(leaving, data)}
           </div>
         ) : null}
         <div className={'page-slot page-enter' + (transiting ? ' page-enter-' + dir : '')}>
-          {renderPage(page, data)}
+          {renderView({ page, grp, sub }, data)}
         </div>
       </main>
 
-      {/* 拖拽保存结果的轻提示（复用 #torderToast 的样式，与 legacy 一致） */}
+      {/* 拖拽保存结果的轻提示（复用 #torderToast 的样式，与 旧版 一致） */}
       <div id="torderToast" className={orderMsg ? 'on' : ''}>
         {orderMsg}
       </div>

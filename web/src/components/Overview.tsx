@@ -11,7 +11,8 @@ import { TaskList } from './TaskList'
 export type PageKey = 'main' | 'adv' | 'plan' | 'log' | 'notify' | 'set' | 'shot'
 
 /** 总览页：照 QQ 宠物首页 1:1 还原的绝对定位浮动层。
- *  坐标全部来自官方运行时 dump（见 web/legacy/index.html 顶部注释），
+ *  坐标全部来自官方运行时 dump（见 qqpet_assets/web/UI_TREE_OFFICIAL.md、
+ *  UI_SPEC_MEASURED.md；数值在 styles/app.css 里逐项对齐），
  *  CSS 按 `calc(var(--u) * N)` 定位 —— 这里只负责放对 class/id。 */
 export function Overview({
   data,

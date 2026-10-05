@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
-import { fetchPlan, savePlan, syncPlan, type PlanData } from '../api'
+import { useEffect, useRef, useState } from 'react'
+import { fetchPlan, savePlan, syncPlan } from '../api'
+import { usePoll } from '../lib/usePoll'
 
-/** 一条进度条（`.pb > .t + .bar > i`），与 legacy 的 planBar 一致 */
+/** 一条进度条（`.pb > .t + .bar > i`），与 旧版 的 planBar 一致 */
 function PlanBar({ t, c, tg, col }: { t: string; c: number; tg: number; col: string }) {
   const w = tg ? Math.max(0, Math.min(100, (c / tg) * 100)) : 0
   return (
@@ -24,45 +25,31 @@ const boolOf = (v: unknown): boolean => !!v
 
 /** 职业解锁计划页：进度条 / 阶梯路线 / 8 线状态 / 哨兵 / 进度录入 */
 export function PlanPage() {
-  const [d, setD] = useState<PlanData | null>(null)
-  const [err, setErr] = useState('')
   const [msg, setMsg] = useState('')
-  /** 手工录入框里的值（用户正在改时不让轮询覆盖 —— legacy 用 planDirty 做同一件事） */
+  /** 手工录入框里的值（用户正在改时不让轮询覆盖） */
   const [edit, setEdit] = useState<Record<string, string | boolean>>({})
   const [dirty, setDirty] = useState(false)
   const [busy, setBusy] = useState('')
 
+  // 20 秒轮询；保存 / 识别完成后手动 reload（不等下一轮）
+  const { data: d, error: err, reload } = usePoll(fetchPlan, 20000)
+
+  // `dirty` 用 ref 读：**只有服务端数据变了才回填**，否则保存后 setDirty(false)
+  // 会立刻用旧数据把用户刚填的值盖回去（一闪）
+  const dirtyRef = useRef(dirty)
+  dirtyRef.current = dirty
   useEffect(() => {
-    let alive = true
-    const run = async () => {
-      try {
-        const r = await fetchPlan()
-        if (!alive) return
-        setD(r)
-        setErr('')
-        // 只在没人在改的时候刷新录入框
-        if (!dirty) {
-          setEdit({
-            '力': String(numOf(r.values['力'])),
-            '智': String(numOf(r.values['智'])),
-            '魅': String(numOf(r.values['魅'])),
-            '工分': String(numOf(r.values['工分'])),
-            '金币': String(numOf(r.values['金币'])),
-            '初级毕业': boolOf(r.values['初级毕业']),
-            '中级毕业': boolOf(r.values['中级毕业']),
-          })
-        }
-      } catch (e) {
-        if (alive) setErr(String(e))
-      }
-    }
-    void run()
-    const t = window.setInterval(run, 20000)
-    return () => {
-      alive = false
-      window.clearInterval(t)
-    }
-  }, [dirty])
+    if (!d || dirtyRef.current) return
+    setEdit({
+      '力': String(numOf(d.values['力'])),
+      '智': String(numOf(d.values['智'])),
+      '魅': String(numOf(d.values['魅'])),
+      '工分': String(numOf(d.values['工分'])),
+      '金币': String(numOf(d.values['金币'])),
+      '初级毕业': boolOf(d.values['初级毕业']),
+      '中级毕业': boolOf(d.values['中级毕业']),
+    })
+  }, [d])
 
   if (err) return <div className="empty">读取职业计划失败：{err}</div>
   if (!d) return <div className="empty">加载中…</div>
@@ -84,6 +71,7 @@ export function PlanPage() {
       })
       setMsg(r.ok ? '已保存' : `保存失败：${r.msg || ''}`)
       setDirty(false)
+      reload() // 拉回服务端认过的值（保存后回填的唯一路径）
     } catch (e) {
       setMsg(`保存失败：${String(e)}`)
     } finally {
@@ -97,6 +85,7 @@ export function PlanPage() {
     try {
       const r = await syncPlan()
       setMsg(r.ok ? `识别完成：${r.msg || ''}` : `识别失败：${r.msg || ''}`)
+      if (r.ok) reload() // 识别到的数值立刻回填，不等下一个 20 秒轮询
     } catch (e) {
       setMsg(`识别失败：${String(e)}`)
     } finally {

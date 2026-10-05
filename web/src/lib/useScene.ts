@@ -12,7 +12,7 @@ import {
 /** 房间背景状态。
  *
  *  **手动选择必须暂停"按当前任务自动换背景"** —— 否则每 6 秒一次的数据刷新会立刻把
- *  背景改回任务场景，用户看到的就是"点了没用、自己弹回去"（legacy 踩过）。
+ *  背景改回任务场景，用户看到的就是"点了没用、自己弹回去"（旧版 踩过）。
  *  选择存 `localStorage('qpet_scene')`，选回「自动」才恢复跟随。 */
 export function useScene(curKey: string, etaKind: string) {
   const [manual, setManual] = useState<string>(() => readManualScene())

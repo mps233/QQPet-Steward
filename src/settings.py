@@ -34,6 +34,8 @@ DEFAULTS = {
     'work.employ_scroll_limit': 5,
     'work.hire_name': '',
     'work.hire_wait': False,
+    'work.hire_wait_action': '去冒险',
+    'work.hire_daily_hours': 4,
     'schedule.coin_threshold': 2000,
     # 合计停止点：设置页只暴露一个「合计满则停止」，保存时三键写同一个值
     # （dashboard.py 的 apply_settings → stop_total_keys），默认 = 合计满 12 小时全停
@@ -65,6 +67,8 @@ DEFAULTS = {
     # 时间段 HH:MM-HH:MM；起止相同（00:00-00:00）= 跨零点 = 全天
     'friend_care.time_range': '00:00-00:00',
     'gift_bag.time_range': '00:00-00:00',
+    # 每次打工（含雇佣好友打工）结束，在结算页上顺手领「看视频 +N」金币补贴
+    'schedule.claim_ad_bonus': True,
     'friend_care.friend_name': '',
     'friend_care.method': 'ocr检测',
     'friend_care.interval_seconds': 60,
@@ -160,8 +164,19 @@ def validate_field(key: str, value):
         except (TypeError, ValueError):
             return False, default
     if key in ('friend_care.enabled', 'hire_friend.enabled', 'employed.enabled',
+               'schedule.claim_ad_bonus',
                'pk.helper_fallback', 'work.hire_wait'):
         return (True, value) if isinstance(value, bool) else (False, default)
+    if key == 'work.hire_wait_action':
+        # 「等他空闲」时干什么（只在 work.hire_wait 开启时生效）
+        return ((True, value) if value in ('不做任何事情', '去冒险', '继续打工')
+                else (False, default))
+    if key == 'work.hire_daily_hours':
+        # 每个好友每天最多被雇几小时（游戏机制 4 小时）；0 = 不限制
+        try:
+            return (True, value) if float(value) >= 0 else (False, default)
+        except (TypeError, ValueError):
+            return False, default
     if key == 'runner.engine':
         return (True, value) if value in ('task_queue', 'legacy') else (False, default)
     if key == 'control.method':

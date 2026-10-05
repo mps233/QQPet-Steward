@@ -36,6 +36,7 @@ from datetime import datetime, timedelta
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.fatigue import mark_fatigue
+from src.hire_quota import add_hire, duration_minutes
 from src.locators import see_bounds
 from src.ocr import ocr_texts
 from src.progress import (
@@ -54,6 +55,7 @@ from scenarios.work import DURATION_BOXES, WorkScenario
 PROGRESS_FILE = HIRE_FRIEND_PROGRESS_FILE
 
 HIRE_CD_POLL_SECONDS = 60  # 雇佣 CD 未到时的复测间隔（秒）：不原地等（CD 可能提前结束），延后到点再调度
+HIRE_CD_WAIT_SLICE = 120   # `hire_cd_policy: wait` 时单次原地睡眠上限（秒），醒来复读 CD（可能提前结束）
 HIRE_PANEL_WAIT = 3.0   # 点 hire 后打工面板的加载等待（秒），等完再检测面板
 HIRE_PANEL_ATTEMPTS = 3  # 点 hire 未进打工面板的重试次数
 HIRE_PANEL_CHECKS = 3   # 每次等待后面板（选择框）出现的检测次数
@@ -86,21 +88,56 @@ class FriendHireScenario(FriendCareScenario):
                 return int(m.group(1)) * 60 + int(m.group(2))
         return None
 
-    def wait_hire_ready(self) -> None:
-        """检查雇佣 CD：有剩余倒计时就抛 TaskDeferred 延后 HIRE_CD_POLL_SECONDS
-        秒再复测（不原地等待——CD 可能提前结束，且等待期间可以调度其他任务）；
-        没有 hire 按钮视为页面不对，抛异常走重试链路。"""
+    def wait_hire_ready(self, policy: str = 'defer', prefer: str = '',
+                        note: str = '') -> bool:
+        """检查雇佣 CD，按 `work.hire_cd_policy` 决定 CD 没好时怎么办。
+
+        policy：
+          defer = 抛 TaskDeferred 延后 HIRE_CD_POLL_SECONDS 秒复测（不原地等，
+                  CD 可能提前结束，等待期间调度器去跑冒险/护理等其他任务）—— 返回 True 不会发生
+          wait  = 原地等 CD 走完（最长可能占住调度器半小时，配置里写明了代价）
+          panel = 放弃"去好友家雇他"，返回 False 让调用方改走打工面板路径
+
+        返回 True = CD 就绪、可以点 hire；False = 按策略放弃（走面板）。
+        没有 hire 按钮视为页面不对，抛异常走重试链路。
+        """
         if not self.see('hire', source=self.dev.hierarchy()):
             raise RuntimeError('好友家未找到 hire 雇佣按钮')
-        secs = self.hire_cd_seconds()
-        if secs is None:
-            log('雇佣 CD 已就绪，可以雇佣')
-            return
-        until = datetime.now() + timedelta(seconds=HIRE_CD_POLL_SECONDS)
-        raise TaskDeferred(until, f'雇佣剩余 CD {secs // 60}:{secs % 60:02d}，'
-                                  f'{HIRE_CD_POLL_SECONDS} 秒后复测')
+        while True:
+            secs = self.hire_cd_seconds()
+            if secs is None:
+                log('雇佣 CD 已就绪，可以雇佣')
+                return True
+            left = f'{secs // 60}:{secs % 60:02d}'
+            if policy == 'panel':
+                log(f'雇佣 CD 还剩 {left}，不空等：改走打工面板路径')
+                return False
+            if policy == 'wait':
+                wait = min(max(1, secs + 2), HIRE_CD_WAIT_SLICE)
+                log(f'雇佣 CD 还剩 {left}，按配置原地等待（本次等 {wait} 秒）')
+                time.sleep(wait)
+                continue
+            until = datetime.now() + timedelta(seconds=HIRE_CD_POLL_SECONDS)
+            raise TaskDeferred(until, f'雇佣剩余 CD {left}，'
+                                      f'{HIRE_CD_POLL_SECONDS} 秒后复测',
+                               prefer=prefer, note=note)
 
     # ---- 雇佣并打工 ----
+
+    def _save_fail_shot(self, tag: str) -> None:
+        """失败现场存图到 runs/<tag>_MMDD_HHMMSS.png（取证用，失败不抛）。
+
+        加这个的起因：16:42 那次复现前，光看日志判断不了"点完 hire 页面到底停在
+        哪儿"——是没点进去、弹了提示、还是面板加载慢。存一张图 + 记下点击后的 CD，
+        一次复现就能定位。"""
+        try:
+            from src.u2dev import save_png
+            path = os.path.join(os.path.dirname(PROGRESS_FILE),
+                                f'{tag}_{datetime.now():%m%d_%H%M%S}.png')
+            if save_png(path, self.screen()):
+                log(f'雇佣好友: 失败现场已存图 {os.path.basename(path)}')
+        except Exception as e:  # noqa: BLE001 - 取证失败不能影响主流程
+            log(f'雇佣好友: 存现场图失败（{type(e).__name__}: {e}）')
 
     def _enter_work_panel(self) -> None:
         """点 hire 进打工面板：面板加载需要时间，点击后固定等 HIRE_PANEL_WAIT 秒
@@ -123,7 +160,14 @@ class FriendHireScenario(FriendCareScenario):
                     return
                 time.sleep(CLICK_INTERVAL)
             log(f'点击 hire 后未出现打工面板，重试 ({attempt}/{HIRE_PANEL_ATTEMPTS})')
-        raise RuntimeError('多次点击 hire 仍未进入打工面板')
+        # 抛之前先取证：记下点击后的 CD + 存现场图。今天 14:50/15:28/16:13 三次都
+        # 卡在"CD 走到 0、该进面板"这一步，而**失败后 CD 会被重置**（15:56 再看是
+        # 14:26）——说明雇佣八成已经生效，只是面板没弹出来，却被判成"没进面板"
+        # → 走重启恢复 → 白重启一次 + 白丢一次雇佣机会。CD 是不是 None 是分水岭：
+        # 有倒计时 = 雇佣已生效（该去打工面板找活干，而不是重启）。
+        cd_after = self.hire_cd_seconds()
+        self._save_fail_shot('hire_fail')
+        raise RuntimeError(f'多次点击 hire 仍未进入打工面板（点后 CD={cd_after}）')
 
     def _select_job(self) -> None:
         """按配置 work.duration 选工作（10分钟/45分钟/2小时 -> select_box_1/2/3）：
@@ -173,13 +217,24 @@ class FriendHireScenario(FriendCareScenario):
         work.wait_work_end()
 
     def _count_hire_and_work(self) -> None:
-        """延时收尾的计数（pending 收尾时由 finish_pending 调用）：
-        雇佣好友次数 + 打工次数各一次。"""
-        today, done, history = load_progress(PROGRESS_FILE)
-        done += 1
-        save_progress(PROGRESS_FILE, today, done, history)
-        log(f'已完成 {done} 次雇佣好友')
+        """延时收尾的计数（pending 收尾时由 finish_pending 调用）。
+
+        **「雇佣好友」已并入打工**：只计一次打工（不再有独立的雇佣次数），
+        并把这 45 分钟记到"今天雇的是谁"的配额账上（每人每天 4 小时上限）。
+        """
         self._count_work()
+        self._record_hire_usage()
+
+    def _record_hire_usage(self) -> None:
+        """把这次雇佣记进当天配额（键 = 配置的目标名，见 src/hire_quota.py）。"""
+        name = str(getattr(self.cfg.work, 'hire_name', '') or '').strip()
+        limit = float(getattr(self.cfg.work, 'hire_daily_hours', 4) or 0)
+        if not name or limit <= 0:
+            return
+        total = add_hire(name, duration_minutes(str(self.cfg.work.duration)), log)
+        if total >= limit * 60:
+            log(f'{name} 今天已被雇到 {total} 分钟（上限 {limit:g} 小时），'
+                f'接下来不再雇他，改走面板挑别人')
 
     @staticmethod
     def _count_work() -> None:

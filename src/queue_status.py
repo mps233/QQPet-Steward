@@ -44,7 +44,8 @@ def mark_starting(pid: int | None = None) -> None:
     由 `run_scheduler()` 在最前面调用（设备连接、启动检查都还没做），
     这样重启后的那一两秒里 GUI/仪表盘也不会继续显示上一轮的"上课（进行中）"。
     """
-    _write({'current': '', 'pending': '', 'next': '', 'next_at': '', 'next_ts': 0,
+    _write({'current': '', 'pending': '', 'next': '', 'next_reason': '', 'note': '',
+            'next_at': '', 'next_ts': 0,
             'ready': 0, 'waiting': 0, 'tasks': {},
             'starting': True, 'pid': os.getpid() if pid is None else int(pid),
             'started': time.time(),
@@ -57,7 +58,8 @@ def mark_stopped() -> None:
     只记"已停止"，不删文件：消费端（GUI/仪表盘）据此显示"已停止"，
     而不是把上一轮遗留的"进行中"当成还在跑。
     """
-    _write({'current': '', 'pending': '', 'next': '', 'next_at': '', 'next_ts': 0,
+    _write({'current': '', 'pending': '', 'next': '', 'next_reason': '', 'note': '',
+            'next_at': '', 'next_ts': 0,
             'ready': 0, 'waiting': 0, 'tasks': {},
             'stopped': True, 'pid': None,
             'updated': datetime.now().strftime('%H:%M:%S')})

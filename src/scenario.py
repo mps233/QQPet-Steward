@@ -8,6 +8,7 @@ import re
 import time
 from datetime import datetime, timedelta
 
+from .ad_bonus import claim_ad_bonus
 from .config import find_adb, load_config
 from .locators import LOCATORS, ocr_screen
 from .locators import see as locate
@@ -301,7 +302,10 @@ LEAVE_HOME_ATTEMPTS = 3    # 点击出门失败（点完 main_sign 仍在主页�
 WAIT_LOG_INTERVAL = 300.0  # 长等待期间的心跳日志间隔（秒），避免每轮检测刷屏
 ENCOURAGE_LOG_INTERVAL = 300.0  # "鼓励宠物"点击日志节流间隔（秒）：按钮每 ~12s 出现，避免刷屏
 EMPLOYED_MAX_WAIT_MINUTES = 45  # 被雇佣"等到25/75（小于45min）"：面板剩余时间超过该值立即召回
-YIELD_DEFER_MINUTES = 30  # "让利雇主（不召回）"模式下其它任务撞上被雇佣：延后多少分钟重试
+# "让利雇主（不召回）"模式下其它任务撞上被雇佣：**读不到剩余时间时**的兜底延后分钟数。
+# 能读到屏幕倒计时就用"实际剩余 + 15 秒余量"（见 wait_employed_back）——写死 30 分钟
+# 会让宠物早回来了、调度器还在等到点，表现为"明明空闲却不干活"（用户实报）。
+YIELD_DEFER_MINUTES = 30
 DEFER_DETECTION_ATTEMPTS = 3    # 延时收尾模式判定进行中/结束状态的检测次数
 DEFER_FALLBACK_SECONDS = 15     # OCR 识别不到剩余时间时的兜底重估间隔（秒）：
 # 原本 60s 会让一开始的收尾预估多等近 1 分钟（用户实测收尾偏晚），
@@ -315,9 +319,21 @@ class TaskDeferred(Exception):
     正在打工/学习/冒险/被雇佣中，按剩余时间延后）。与 ScenarioFailed 的
     失败退避语义不同，调度层需单独捕获。"""
 
-    def __init__(self, until: datetime, reason: str = ''):
+    def __init__(self, until: datetime, reason: str = '', prefer: str = '',
+                 note: str = ''):
         super().__init__(reason or f'延后到 {until:%H:%M:%S}')
         self.until = until
+        # 人类可读的延后原因（如"想雇的「墨瞳」正打工中，不换人，等到空闲再雇"）。
+        # 调度层把它写进队列状态，仪表盘的"等待中"下面直接显示这句 —— 别只留 until，
+        # 否则界面只能说"等待下一项任务"（用户实报"这太宽泛了"）。
+        self.reason = reason or f'延后到 {until:%H:%M:%S}'
+        # 让路期间希望调度器**优先**去做哪个任务（任务键，如 'adventure'）：
+        # 调度层收到后会让它插到主任务组最前（"去冒险"这个选项要的就是这个语义）；
+        # 它当下不可执行时忽略并记日志，退回正常顺序。
+        self.prefer = prefer
+        # 给仪表盘显示的一句话说明（"为什么现在在做那件事"），例如
+        # "打工要雇的「柠檬..」正忙，先去冒险；到点回去雇他"。
+        self.note = note
 
 
 class StatBlocked(Exception):
@@ -704,6 +720,9 @@ class DeviceScenario:
                     record_session_reward(
                         'school' if end_name == 'school_end' else 'work',
                         [t for t, *_ in ocr_screen(screen)])
+                    if end_name == 'work_end':
+                        # 每次打工结束都在结算页上把「看视频 +N」补贴领掉（点 quit 之前）
+                        self.claim_settlement_ad_bonus('（等待结束）')
                 break
             cur = self.see(in_name, screen, source)
             if cur:
@@ -829,10 +848,24 @@ class DeviceScenario:
         """
         if getattr(self.cfg.employed, 'action', '') == '让利雇主（不召回）':
             # 让利模式不召回：宠物要留在雇主（大号）那儿继续打工——其它任务撞上
-            # 被雇佣时不能阻塞等待（等召回 = 永不满足），直接延后重试
-            raise TaskDeferred(
-                datetime.now() + timedelta(minutes=YIELD_DEFER_MINUTES),
-                f'宠物被雇佣中（让利模式不召回），{YIELD_DEFER_MINUTES} 分钟后再试')
+            # 被雇佣时不能阻塞等待（等召回 = 永不满足），直接延后重试。
+            # **延后时长按屏幕上真实的"剩余 HH:MM:SS"**：早先写死 YIELD_DEFER_MINUTES
+            # （30 分钟）会出现"宠物早回来了、调度器还在等到点"的空转——用户实报
+            # "明明空闲了却不打工"，日志里就是被排到 30 分钟后。读不到才用固定值兜底。
+            secs: int | None = None
+            try:
+                secs = self.read_remaining_seconds()
+            except Exception:
+                secs = None
+            if secs and secs > 0:
+                wait = int(secs) + 15   # 留 15 秒余量，免得踩在结算/切页的缝上
+                note = (f'宠物被雇佣中（让利模式不召回），'
+                        f'约 {max(1, round(wait / 60))} 分钟后再试')
+            else:
+                wait = YIELD_DEFER_MINUTES * 60
+                note = (f'宠物被雇佣中（让利模式不召回），{YIELD_DEFER_MINUTES} 分钟后再试'
+                        f'（未识别到剩余时间，按兜底）')
+            raise TaskDeferred(datetime.now() + timedelta(seconds=wait), note)
         if check_interval is None:
             check_interval = self.check_interval
         last_log_at = 0.0
@@ -979,6 +1012,9 @@ class DeviceScenario:
                     record_session_reward(
                         'school' if pend['end_name'] == 'school_end' else 'work',
                         [t for t, *_ in ocr_screen(screen)])
+                    if pend['end_name'] == 'work_end':
+                        # 每次打工收尾都在结算页上把「看视频 +N」补贴领掉（点 quit 之前）
+                        self.claim_settlement_ad_bonus('（收尾）')
                 if pend.get('encourage'):
                     # 结算页实测没有鼓励按钮（快速 3 轮不中即放弃），仅作兜底
                     self._encourage_burst()
@@ -1045,6 +1081,27 @@ class DeviceScenario:
         log(f'检测到正在{desc}，预计 {secs} 秒后结束（{until:%H:%M:%S} 收尾），先调度其他任务')
         return True
 
+    def claim_settlement_ad_bonus(self, stage: str = '') -> int:
+        """结算页（= 工资明细页）上的「看视频 +N」补贴：**每次打工结束顺手领掉**。
+
+        打工的结算页标题就是「工资明细」，上面带着「看视频 +N」入口（带「限时补贴」
+        角标）——不点就白丢一笔。领取实现见 `src/ad_bonus.py`（含广告等待、关闭 X、
+        奖励弹层处理）。开关：`schedule.claim_ad_bonus`（默认开；schedule 段在
+        `Runner.reload_config()` 里整体替换到各场景，改了下一轮即生效）。
+
+        返回领到的金币数（0 = 没领到/已补贴/开关关闭）。
+        **绝不抛异常**：调用方都在收尾路径上（点 quit 之前），不能被广告加载失败、
+        网络抖动之类挡住——真要抛了，收尾中断、pending 丢掉、还要走恢复链路。
+        """
+        if not getattr(getattr(self.cfg, 'schedule', None), 'claim_ad_bonus', True):
+            return 0
+        try:
+            got = claim_ad_bonus(self, tag=f'结算补贴{stage}')
+        except Exception as e:  # noqa: BLE001 - 领补贴失败不拦收尾
+            log(f'结算补贴{stage}: 领取过程出错（{type(e).__name__}: {e}），继续收尾')
+            return 0
+        return got
+
     def _detect_settlement(self, screen, source) -> str | None:
         """出门后的结算页检测（上次活动已结束未收尾，如调度器重启丢失 pending 后，
         点出门直接出现结算页）：OCR 文案区分——"教师评语"=学习、"打工总结"=打工
@@ -1065,6 +1122,8 @@ class DeviceScenario:
             record_session_reward(
                 'work', texts,
                 {'location': getattr(getattr(self.cfg, 'work', None), 'location', '')})
+            # 结算页就在眼前，当场把「看视频 +N」补贴领掉（每次打工结束都领）
+            self.claim_settlement_ad_bonus('（结算页）')
             return 'work'
         if self.see('adventure_end', screen, source):
             record_adventure_live(texts)

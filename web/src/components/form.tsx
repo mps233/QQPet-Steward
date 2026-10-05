@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 
 /** 分组卡片：`.fgrp` > `.fsect`(标题) + `.fsec`(内容行)。
- *  与 legacy 的 `card(title, rows, key)` 生成同一份 DOM —— 设置页二级导航靠
+ *  与 旧版 的 `card(title, rows, key)` 生成同一份 DOM —— 设置页二级导航靠
  *  `id="grp_<key>"` 定位要显示哪一组，所以 id 命名必须保持一致。 */
 export function FGroup({
   title,

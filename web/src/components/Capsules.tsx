@@ -3,7 +3,7 @@ import { hrs, pct } from '../lib/format'
 
 /** 顶部两颗数据胶囊（官方结构：图标在胶囊外面且比胶囊大，文字在胶囊内居中）。
  *  第一排：金币 / 今日踩踩 / 今日PK；第二排：今日冒险 / 学习+打工合计 / 经验日常。
- *  与 legacy 的 renderData 逐项对齐（含分母取哪个值）。 */
+ *  与 旧版 的 renderData 逐项对齐（含分母取哪个值）。 */
 export function Capsules({ data }: { data: Data }) {
   const st = data.status
   const pg = data.progress || {}

@@ -1,4 +1,4 @@
-/** 数值格式化 —— 与 legacy/app.js 的同名工具保持一致 */
+/** 数值格式化 —— 沿用旧版同名工具的格式（与历史显示一致，别再改） */
 
 export const pad2 = (n: number): string => String(n).padStart(2, '0')
 

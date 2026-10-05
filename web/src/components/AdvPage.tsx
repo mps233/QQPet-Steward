@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { fetchAdventure, type AdvData } from '../api'
+import { usePoll } from '../lib/usePoll'
 
-/** 图表几何：与 legacy 的 drawAdv 逐项一致（viewBox 340×84，内边距 8） */
+/** 图表几何：与 旧版 的 drawAdv 逐项一致（viewBox 340×84，内边距 8） */
 const W = 340
 const H = 84
 const PAD = 8
@@ -20,33 +21,13 @@ const syState = (v: number): number =>
 const fmtNet = (v: number): string => (v > 0 ? `+${v}` : String(v))
 
 export function AdvPage() {
-  const [d, setD] = useState<AdvData | null>(null)
-  const [err, setErr] = useState('')
   const [date, setDate] = useState('')
   const [sel, setSel] = useState<{ chart: ChartKey; k: number } | null>(null)
   const [showAll, setShowAll] = useState(true)
   const downRef = useRef<ChartKey | null>(null)
 
-  useEffect(() => {
-    let alive = true
-    const run = async () => {
-      try {
-        const r = await fetchAdventure(date || undefined)
-        if (alive) {
-          setD(r)
-          setErr('')
-        }
-      } catch (e) {
-        if (alive) setErr(String(e))
-      }
-    }
-    void run()
-    const t = window.setInterval(run, 20000)
-    return () => {
-      alive = false
-      window.clearInterval(t)
-    }
-  }, [date])
+  // 20 秒轮询；切换统计范围（date）时立刻重拉
+  const { data: d, error: err } = usePoll(() => fetchAdventure(date || undefined), 20000, [date])
 
   /** 点/拖动图表 → 找最近的索引并把读数写进提示行 */
   const pick = useCallback(

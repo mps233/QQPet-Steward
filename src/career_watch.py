@@ -24,11 +24,10 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-import cv2
-
 from .config import PROJECT_ROOT
 from .ocr import ocr_fullscreen
 from .progress import log as _log
+from .u2dev import save_png
 
 RUNS = PROJECT_ROOT / 'runs'
 PLAN_FILE = RUNS / 'career_plan.json'
@@ -170,11 +169,10 @@ def touch_last_check() -> None:
 # ---------------------------------------------------------------- 真机检查
 
 def _save_img(img, path: Path) -> bool:
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        return bool(cv2.imwrite(str(path), img))
-    except Exception:
-        return False
+    # 走 u2dev.save_png（内部用 PIL，按 RGB）：img 来自 dev.screenshot() 是 **RGB**
+    # 数组，而 cv2.imwrite 按 BGR 解释 —— 直接用它存会把红蓝通道写反（设备上金黄
+    # 的福袋存出来变蓝袋子）。
+    return save_png(path, img)
 
 
 def _on_career_tree(scen) -> bool:
@@ -380,6 +378,12 @@ def check_career_tree(scen, targets=None, log=None) -> dict:
             if tgt in states and states[tgt]['state'] == 'unlocked':
                 name = states[tgt]['name'] or FIRST_TIER_NAMES.get(tgt)
                 unlocks[tgt] = name
+                # 只在**本次新解锁**时存图（newly 是本函数上面就算好的集合：本次实测
+                # unlocked、而库里记的是未解锁）。这里原先直接按"当前是否 unlocked"
+                # 存图，三条线全解锁之后每次检查（每小时兜底 + 每节课结算）都照存一份
+                # ——17 天攒了 1245 张、占了 runs/ 2.1G 的大头。
+                if tgt not in newly:
+                    continue
                 slug = SHOT_SLUG.get(tgt, 'unlock')
                 shot_name = f"career_unlock_{slug}_{datetime.now():%m%d_%H%M}.png"
                 if view_imgs and _save_img(view_imgs[-1], RUNS / shot_name):

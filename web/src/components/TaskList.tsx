@@ -10,10 +10,21 @@ import {
 import { restrictToParentElement, restrictToVerticalAxis } from '@dnd-kit/modifiers'
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { useEffect, useState } from 'react'
-import { TASK_GROUP, TASK_NAME, isLoopTask, type Data, type QueueTaskState } from '../api'
+import {
+  TASK_GROUP,
+  TASK_NAME,
+  isLoopTask,
+  keyOfTaskName,
+  type Data,
+  type QueueTaskState,
+} from '../api'
 
-/** 行右侧状态文字（与 legacy 的 rowOf 一致：只给"有信息量"的几种写字） */
-function statusText(t: QueueTaskState | undefined, nowDate: string) {
+/** 行右侧状态文字（与 旧版 的 rowOf 一致：只给"有信息量"的几种写字）。
+ *  `active` = 这一行就是调度器此刻正在跑的任务 —— 后端 tasks[k].state 只有
+ *  disabled/dead/ready/waiting/done，**从不写 run**，所以"执行中"必须靠
+ *  queue.current 认，不能靠 state（否则这个分支永远命中不了）。 */
+function statusText(t: QueueTaskState | undefined, nowDate: string, active: boolean) {
+  if (active) return { cls: 'run', text: '执行中' }
   const st = t?.state ?? ''
   if (st === 'disabled') return { cls: 'off-t', text: '已禁用' }
   if (st === 'run' || st === 'running') return { cls: 'run', text: '执行中' }
@@ -32,6 +43,7 @@ function RowBody({
   k,
   t,
   pendingKey,
+  activeKey,
   nowDate,
   onToggle,
   on,
@@ -39,6 +51,8 @@ function RowBody({
   k: string
   t: QueueTaskState | undefined
   pendingKey: string
+  /** 正在执行的任务键（含 pending 收尾中的那个） */
+  activeKey: string
   nowDate: string
   /** 点勾选框切换该任务启用状态（写回 `<k>_enabled`） */
   onToggle: (k: string, on: boolean) => void
@@ -46,7 +60,8 @@ function RowBody({
   on: boolean
 }) {
   const isPend = !!pendingKey && k === pendingKey
-  const det = statusText(t, nowDate)
+  const isActive = !!activeKey && k === activeKey
+  const det = statusText(t, nowDate, isActive && !isPend)
   const tag = TASK_GROUP[k] ? <span className="ttag">{TASK_GROUP[k]}</span> : null
 
   return (
@@ -67,7 +82,7 @@ function RowBody({
         className={'mcb' + (on ? ' on' : '')}
         data-k={k}
         // 勾选框：阻止冒泡，免得 dnd-kit 挂在行上的 listeners 把这次按下当成拖拽起手
-        // （legacy 是在 pointerdown 里 `if(e.target.closest('.mcb')) return` 做同样的事）
+        // （旧版 是在 pointerdown 里 `if(e.target.closest('.mcb')) return` 做同样的事）
         onPointerDown={(e) => e.stopPropagation()}
         onClick={(e) => {
           e.stopPropagation()
@@ -78,21 +93,26 @@ function RowBody({
   )
 }
 
-function rowClass(k: string, t: QueueTaskState | undefined, pendingKey: string) {
+function rowClass(
+  k: string,
+  t: QueueTaskState | undefined,
+  activeKey: string,
+) {
   const st = t?.state ?? ''
   const done = st === 'done' || st === 'dead'
-  const isPend = !!pendingKey && k === pendingKey
-  return 'mrow' + (done ? ' done' : '') + (isPend ? ' run' : '') + (st === 'disabled' ? ' off' : '')
+  const isActive = !!activeKey && k === activeKey
+  return 'mrow' + (done ? ' done' : '') + (isActive ? ' run' : '') + (st === 'disabled' ? ' off' : '')
 }
 
 /** 「任务顺序」组里的一行：用 dnd-kit 的 useSortable 包一层。
  *  listeners 绑在整行上，但传感器设了 220ms 长按门槛 —— 短按仍然是普通点击
- *  （勾选框/行内按钮照常工作），长按才进入拖拽。这替掉了 legacy 那套手写的
+ *  （勾选框/行内按钮照常工作），长按才进入拖拽。这替掉了 旧版 那套手写的
  *  pointerdown + 220ms 定时器实现。 */
 function SortableRow(props: {
   k: string
   t: QueueTaskState | undefined
   pendingKey: string
+  activeKey: string
   nowDate: string
   onToggle: (k: string, on: boolean) => void
   on: boolean
@@ -105,7 +125,7 @@ function SortableRow(props: {
       ref={setNodeRef}
       // 'sortable' 这个 class 是给 CSS 用的（.mrow.sortable{touch-action:none}）——
       // touch-action 必须在触摸开始前就声明好，不能等 onDragStart 再加。
-      className={rowClass(props.k, props.t, props.pendingKey) + ' sortable' + (isDragging ? ' dragging' : '')}
+      className={rowClass(props.k, props.t, props.activeKey) + ' sortable' + (isDragging ? ' dragging' : '')}
       data-k={props.k}
       style={{
         transform: transform ? `translate3d(0, ${Math.round(transform.y)}px, 0)` : undefined,
@@ -124,12 +144,13 @@ function StaticRow(props: {
   k: string
   t: QueueTaskState | undefined
   pendingKey: string
+  activeKey: string
   nowDate: string
   onToggle: (k: string, on: boolean) => void
   on: boolean
 }) {
   return (
-    <div className={rowClass(props.k, props.t, props.pendingKey)} data-k={props.k}>
+    <div className={rowClass(props.k, props.t, props.activeKey)} data-k={props.k}>
       <RowBody {...props} />
     </div>
   )
@@ -144,12 +165,14 @@ export function TaskList({
 }: {
   data: Data
   onReorder: (order: string[]) => void
-  /** 点勾选框切启用 —— 对应 legacy 里挂在 #taskList 上的那个 click 委托 */
+  /** 点勾选框切启用 —— 对应 旧版 里挂在 #taskList 上的那个 click 委托 */
   onToggle: (k: string, on: boolean) => void
 }) {
   const qt = data.queue.tasks || {}
   const nowDate = (data.now || '').slice(0, 10)
   const pendingKey = data.queue.pending ? data.queue.pending_key || '' : ''
+  // 正在执行的任务行：pending 时后端直接给任务键，平时 queue.current 是中文名要反查
+  const activeKey = pendingKey || keyOfTaskName(data.queue.current)
   const keys = Object.keys(qt)
   const loop = keys.filter(isLoopTask)
   const rest = keys.filter((k) => !isLoopTask(k))
@@ -220,6 +243,7 @@ export function TaskList({
                 k={k}
                 t={qt[k]}
                 pendingKey={pendingKey}
+                activeKey={activeKey}
                 nowDate={nowDate}
                 onToggle={handleToggle}
                 on={effectiveOn(k)}
@@ -248,6 +272,7 @@ export function TaskList({
                     k={k}
                     t={qt[k]}
                     pendingKey={pendingKey}
+                    activeKey={activeKey}
                     nowDate={nowDate}
                     onToggle={handleToggle}
                     on={effectiveOn(k)}

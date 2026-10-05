@@ -60,12 +60,22 @@ export interface QueueInfo {
   next: string
   next_at: string
   next_ts: number
+  /** 为什么在等（人类可读，如「雇佣好友：想雇的「墨瞳」正打工中」）——
+   *  由 TaskQueueRunner 产出，仪表盘的"等待中"下面显示这句 */
+  next_reason?: string
+  /** 为什么在做当前这件事（如「打工要雇的「柠檬..」正忙，先去冒险；到点回去雇他」）：
+   *  场景让路时随 TaskDeferred.note 登记，只在执行那个优先任务期间有值 */
+  note?: string
   ready: number
   waiting: number
   tasks: Record<string, QueueTaskState>
   pid: number
   started: number
   updated: string
+  /** 调度器刚起来、还没实测完当前状态（消费端显示"启动中"，见 src/queue_status.py） */
+  starting?: boolean
+  /** 调度器已停止（消费端据此显示"已停止"，而不是把上一轮残留的活动当现状） */
+  stopped?: boolean
 }
 
 export interface PetStatus {
@@ -103,13 +113,14 @@ export interface ConfigSnapshot {
   [k: string]: unknown
 }
 
-/** 任务键 → 中文名（与后端 key 一一对应） */
+/** 任务键 → 中文名（与后端 key 一一对应）
+ *  **没有 hire_friend**：它已并入 work（打工前顺路去好友家点 hire）
+ *  **没有 friend_care**：它已并入 care（护理时顺路去好友家护理一次，开关仍在 friend_care 段）
+ *  见 src/config.py 的 TASK_KEYS */
 export const TASK_NAME: Record<string, string> = {
   care: '护理',
   school: '学习',
-  friend_care: '好友护理',
   gift_bag: '福袋',
-  hire_friend: '雇佣好友',
   adventure: '冒险',
   visit: '踩踩',
   pk: 'PK',
@@ -119,15 +130,23 @@ export const TASK_NAME: Record<string, string> = {
 /** 任务类型标签：「循环」= 按间隔巡检；「每日」= 每天定时；「主线」= 主任务组互斥 */
 export const TASK_GROUP: Record<string, '循环' | '每日' | '主线'> = {
   care: '循环',
-  friend_care: '循环',
   gift_bag: '循环',
   visit: '每日',
   pk: '每日',
   adventure: '主线',
   school: '主线',
   work: '主线',
-  hire_friend: '主线',
 }
+
+/** 任务名（中文）→ 任务键。后端 `queue.current` 存的是 TaskQueueRunner 写的
+ *  `task.name`（中文，如「PK」「护理」「福袋」），而前端多处（自动换背景、任务行
+ *  高亮）要的是任务键（`pk` / `care` / `gift_bag`）—— 直接拿中文名查键表永远命中不了。 */
+export const keyOfTaskName = (name: string | undefined): string =>
+  name ? (KEY_OF_NAME[name] ?? '') : ''
+
+const KEY_OF_NAME: Record<string, string> = Object.fromEntries(
+  Object.entries(TASK_NAME).map(([k, v]) => [v, k]),
+)
 
 /** 日常轮巡组（顺序固定，不参与拖动排序） */
 export const isLoopTask = (k: string): boolean => TASK_GROUP[k] === '循环'

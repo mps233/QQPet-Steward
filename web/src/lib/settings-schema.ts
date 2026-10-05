@@ -5,7 +5,7 @@
  * `{字段名: 值}`，后端负责校验并写回 config.yaml（ruamel 往返，保留注释）。
  * 所以这里不需要知道配置键（`tasks.school.enabled` 那些），只需知道字段名与控件类型。
  *
- * 与 legacy 的差别：那边把 62 个字段的 HTML 全渲染进 `#setForm` 再用 `.hide`
+ * 与 旧版 的差别：那边把 62 个字段的 HTML 全渲染进 `#setForm` 再用 `.hide`
  * 切换分组；这边**只渲染当前组**，省掉一半 DOM。
  */
 
@@ -17,6 +17,11 @@ export interface FieldDef {
   kind: FieldKind
   /** select 的选项；也支持用 `'@work_locations'` 这种从 editable 里取选项的写法 */
   opts?: string[]
+  /** select 的显示文案（值 → 界面上的中文），不写就直接显示值 */
+  optLabels?: Record<string, string>
+  /** 依赖另一个 bool 字段：它为 false 时本项**置灰不可选**
+   *  （如"等他空闲时"依赖"等TA空闲"——开关没开就没什么可等的） */
+  enabledWhen?: string
   tip?: string
   placeholder?: string
   /** 输入框宽度（u 单位，1u ≈ 视口宽/360）；不给则自适应 */
@@ -38,6 +43,8 @@ const WORK_DURATIONS = ['10分钟', '45分钟', '2小时']
 const CARE_METHODS = ['ocr检测', '一键护理']
 const EMPLOYED_ACTIONS = ['等到25/75（小于45min）', '等到25/75', '立刻召回', '让利雇主（不召回）']
 const ADVENTURE_TYPES = ['附近走走', '诗和远方']
+/** 「等他空闲」时干什么（work.hire_wait_action，仅 hire_wait 开启时可选） */
+const HIRE_WAIT_ACTIONS = ['不做任何事情', '去冒险', '继续打工']
 
 /** 二级分组：id 必须与 MENU 里的 key 一致（也是 `?grp=<id>` 直开用的值） */
 export const GROUPS: Record<string, GroupDef> = {
@@ -58,8 +65,11 @@ export const GROUPS: Record<string, GroupDef> = {
       { key: 'work_enabled', label: '启用打工', kind: 'bool' },
       { key: 'work_location', label: '打工地点', kind: 'select', opts: ['@work_locations'] },
       { key: 'work_duration', label: '打工时长', kind: 'select', opts: WORK_DURATIONS },
-      { key: 'hire_name', label: '优先雇佣', kind: 'text', placeholder: '好友的宠物名或主人名（留空 = 自动挑收益最高的）', tip: '部分匹配；不可雇/未配置时回落最上面一行' },
-      { key: 'hire_wait', label: '等TA空闲', kind: 'bool', tip: '开 = 好友正忙时等它空下来再雇，而不是跳过' },
+      { key: 'hire_name', label: '优先雇佣', kind: 'text', placeholder: '好友的宠物名或主人名（留空 = 面板自动挑收益最高的）', tip: '配了就先顺路去他家雇：雇到直接开工；他还在 CD、或不在好友轮播里，就照常去打工地点用面板挑人（不空等）' },
+      { key: 'hire_wait', label: '等TA空闲', kind: 'bool', tip: '开 = 好友正忙（出门中/被雇佣中/还在雇佣 CD 里）时等他空下来再雇，而不是跳过。关掉 = 直接换收益最高的人' },
+      { key: 'hire_wait_action', label: '等他空闲时', kind: 'select', opts: HIRE_WAIT_ACTIONS, enabledWhen: 'hire_wait', tip: '他正忙 / 还在雇佣 CD 里的这段时间做什么：不做任何事情 = 原地等；去冒险 = 先让出调度器去做别的，到点再回来雇；继续打工 = 不等了，直接去打工地点用面板挑人' },
+      { key: 'hire_daily_hours', label: '每人每天被雇上限', kind: 'int', unit: '小时', tip: '游戏机制：每个好友每天最多被雇这么久，满了就不再雇他（再雇没收益）；0 = 不限制', w: 56 },
+      { key: 'claim_ad_bonus', label: '结算领补贴', kind: 'bool', tip: '每次打工（含雇佣好友打工）结束时，在结算页顺手领「看视频 +N」金币补贴' },
     ],
   },
   quota: {
@@ -78,7 +88,7 @@ export const GROUPS: Record<string, GroupDef> = {
       { key: 'stop_total_hours', label: '合计满则停止', kind: 'int', unit: '小时', tip: '学习+打工合计满这个小时数就两项都停（转冒险）。0 = 不限', w: 56 },
       { key: 'daily_hour_limit', label: '停学习点', kind: 'int', unit: '小时', tip: '合计满这么多小时后今天不再学习、只打工（手改 config.yaml 才生效于此项，界面默认跟合计同值）', w: 56 },
       { key: 'work_stop_hours', label: '停打工点', kind: 'int', unit: '小时', tip: '合计满这么多小时后今天连打工也停', w: 56 },
-      { key: 'main_order', label: '主任务优先级', kind: 'text', placeholder: 'school>hire_friend>work>adventure', tip: '> 分隔，越靠前越优先。四个主任务：学习/雇佣好友/打工/冒险（任务列表也可以直接拖动排序）' },
+      { key: 'main_order', label: '主任务优先级', kind: 'text', placeholder: 'school>work>adventure', tip: '> 分隔，越靠前越优先。三个主任务：学习/打工/冒险（任务列表也可以直接拖动排序；雇好友已并入打工，不再是独立主任务）' },
     ],
   },
   care: {
@@ -96,19 +106,11 @@ export const GROUPS: Record<string, GroupDef> = {
     id: 'friend_care',
     title: '好友护理',
     fields: [
-      { key: 'friend_care_enabled', label: '启用', kind: 'bool' },
+      { key: 'friend_care_enabled', label: '启用', kind: 'bool', tip: '好友护理已并入「护理」任务：护理每轮检查完自己之后，到点就顺路去好友家护理一次。这个开关就是它的单独开关（关掉只做自己的护理）' },
       { key: 'friend_care_name', label: '好友', kind: 'text', placeholder: '宠物名或主人名', tip: '留空则不会做，需要填一个好友' },
       { key: 'friend_care_range', label: '时间段', kind: 'text', placeholder: '00:00-00:00', tip: 'HH:MM-HH:MM；起止相同 = 全天' },
       { key: 'friend_care_interval', label: '间隔', kind: 'int', unit: '秒', w: 56 },
       { key: 'friend_care_method', label: '方式', kind: 'select', opts: CARE_METHODS },
-    ],
-  },
-  hire_friend: {
-    id: 'hire_friend',
-    title: '雇佣好友',
-    fields: [
-      { key: 'hire_friend_enabled', label: '启用', kind: 'bool' },
-      { key: 'hire_friend_times', label: '每天次数', kind: 'int', tip: '0 = 不限', w: 56 },
     ],
   },
   visit: {
@@ -186,7 +188,7 @@ export const GROUPS: Record<string, GroupDef> = {
   },
 }
 
-/** 一级菜单：4 个分区，共 17 个二级页（与 legacy 的 MENU 一致） */
+/** 一级菜单：4 个分区，共 17 个二级页（与 旧版 的 MENU 一致） */
 export const MENU: { section: string; items: { id: string; title: string }[] }[] = [
   {
     section: '核心任务',
@@ -202,7 +204,6 @@ export const MENU: { section: string; items: { id: string; title: string }[] }[]
     items: [
       { id: 'care', title: '护理' },
       { id: 'friend_care', title: '好友护理' },
-      { id: 'hire_friend', title: '雇佣好友' },
       { id: 'visit', title: '踩踩' },
       { id: 'pk', title: 'PK' },
       { id: 'adventure', title: '冒险' },

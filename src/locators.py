@@ -100,6 +100,19 @@ LOCATORS: dict[str, dict] = {
         'xpath': ['//*[@content-desc="出门"]'],
         'rel': (359, 1103),
     },
+    # 主页面右侧「好友」按钮（点击开好友列表面板）：
+    # 面板里"这家有可领福袋"的行会带一个福袋图标，用它筛出该去哪几家，见 gift_bag.scan_friend_list
+    'main_friend_btn': {
+        'xpath': ['//*[@content-desc="friend"]'],
+        'rel': (638, 852),
+    },
+    # 主页面"钱袋"= 自己家的福袋（2026-09-29 实测）：点击弹「5个福袋共 N 金币，
+    # 已领 M 个」+ 领取人列表，主人自己点一次领走一个（一个人一个周期只能领一次）。
+    # 有 content-desc，稳定；bounds 300x300、中心 (210,1506) @1080x2412
+    # （见 scenarios/gift_bag.py 的 claim_home_bag）
+    'home_bag': {
+        'xpath': ['//*[@content-desc="钱袋"]'],
+    },
     # 宠物状态面板展开/收起按钮（点击用）：xpath 优先，参考坐标兜底
     'pet_status': {
         'xpath': ['//*[@content-desc="宠物状态"]'],

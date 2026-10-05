@@ -12,7 +12,10 @@
   B. `dashboard.work_eta()` 只认"本次调度器启动之后"的登记 + 启动标记不漂移；
   C. `src/scenario.py` 的出门状态分类/启动实测 `probe_activity_state()`，
      以及 `wait_busy_end()` 重构后行为不变（结算页/进行中/被雇佣三条路径）；
-  D. `TaskQueueRunner._startup_activity_probe()` 的四条分支（空/进行中/结算/被雇佣）。
+  D. `TaskQueueRunner._startup_activity_probe()` 的四条分支（空/进行中/结算/被雇佣）；
+  E. GUI 任务队列卡的"启动检查中"判定 + `_main_pending_key()` 任务键；
+  F. 队列状态的 `next_reason`（"为什么在等"）：
+     `TaskDeferred.reason` → `task.defer_reason` → `queue_status.next_reason`。
 
 用法：
     .venv/bin/python tools/test_state_freshness.py          # 全部（含 GUI 卡，需要 Qt）
@@ -452,6 +455,126 @@ def test_main_pending_key() -> None:
     check('pending 里没有 desc → 不抛异常', r._main_pending_key() == 'school')
 
 
+# ---------------- F. 队列状态的"为什么在等"（next_reason） ----------------
+
+def _reason_runner(tasks, order, eligible=False, throttle=None):
+    """构造一个只够跑 `_write_queue_status` 的 TaskQueueRunner。
+
+    注意：调用方必须先把 `runner_mod.save_queue_status` 换成内存捕获，
+    否则这里会写真实的 runs/queue_status.json。
+    """
+    import types as _types
+
+    r = TaskQueueRunner.__new__(TaskQueueRunner)
+    r._current_task = ''
+    r._run_started_ts = 0.0
+    r.visit_times = r.pk_times = r.adventure_times = 0
+    r.study_quota_hours = r.work_quota_hours = 0
+    r._load_durations = lambda: (0, 0)
+    r._fatigue_skip = r._quota_over = r._duration_over = r._work_over = lambda *a: False
+    r._main_pending_scen = lambda: None
+    r._main_pending_key = lambda: ''
+    r._next_daily_time = lambda times, now: None
+
+    def _eligible_fn(t, n):
+        # eligible 可以是 True/False（全体），也可以是一组任务键（只有它们可执行）
+        if isinstance(eligible, bool):
+            return eligible
+        return t.key in eligible
+
+    r._eligible = _eligible_fn
+    r._scen_throttle_next = lambda k: (throttle or {}).get(k)
+    hf = _types.SimpleNamespace(enabled=True, times_per_day=99, friend_name='墨瞳')
+    r.hire_friend = _types.SimpleNamespace(cfg=_types.SimpleNamespace(hire_friend=hf))
+    r.care = _types.SimpleNamespace(cfg=_types.SimpleNamespace(
+        care=_types.SimpleNamespace(interval_seconds=60)))
+    r.gift_bag = _types.SimpleNamespace(cfg=_types.SimpleNamespace(
+        gift_bag=_types.SimpleNamespace(enabled=True, interval_seconds=1800)))
+    r.friend_care = _types.SimpleNamespace(cfg=_types.SimpleNamespace(
+        friend_care=_types.SimpleNamespace(enabled=True, friend_name='墨瞳')))
+    r._tasks, r._order = tasks, order
+    return r
+
+
+def test_wait_reason() -> None:
+    """F. 队列状态的 next_reason：仪表盘"等待中"下面显示的**具体**原因。
+
+    回归背景（2026-09-30 实报）：Deck 原先只认 work_eta（只有学习/打工/冒险这类
+    走延时收尾的主任务才写那种日志），所以 PK / 护理 / 雇佣好友在跑时界面说"空闲"；
+    补上 `queue.current` 之后，"等待中"又只剩一句笼统的"等待下一项任务"。
+    这里把"为什么在等"的整条链焊死：
+    `TaskDeferred.reason` → `task.defer_reason` → `queue_status.next_reason`。
+    """
+    print('F. 队列状态 next_reason（"为什么在等"）')
+    from src.scenario import TaskDeferred
+
+    captured: dict = {}
+    orig_save = runner_mod.save_queue_status
+    runner_mod.save_queue_status = lambda st: captured.update(st)
+    now = datetime.now()
+    try:
+        # ④ 场景层：TaskDeferred 必须把 reason 存成**属性**（只传 super() 的话
+        #    调度层拿不到，等于白写）
+        d = TaskDeferred(now + timedelta(seconds=60), '测试原因')
+        check('TaskDeferred.reason 可读', d.reason == '测试原因', f'{d.reason!r}')
+
+        # ① 场景主动延后（雇佣好友：想雇的人正忙）—— 原因必须原样带出来
+        t = runner_mod._QueueTask('hire_friend')
+        t.next_at = now + timedelta(seconds=60)
+        t.defer_reason = '想雇的「墨瞳」正打工中（不换人，等到空闲再雇）'
+        _reason_runner({'hire_friend': t}, ['hire_friend'])._write_queue_status(
+            {'hire_friend': t}, ['hire_friend'])
+        check('延后原因写进 next_reason',
+              captured.get('next_reason') == '雇佣好友：想雇的「墨瞳」正打工中（不换人，等到空闲再雇）',
+              f'{captured.get("next_reason")!r}')
+        check('next 仍是任务名（前端拼"下一项"用）',
+              captured.get('next') == '雇佣好友', f'{captured.get("next")!r}')
+
+        # ② 场景级节流（护理间隔未到）
+        t2 = runner_mod._QueueTask('care')
+        _reason_runner({'care': t2}, ['care'], eligible=True,
+                       throttle={'care': now + timedelta(seconds=30)})._write_queue_status(
+            {'care': t2}, ['care'])
+        check('节流原因带间隔说明',
+              captured.get('next_reason') == '护理：护理间隔未到（每 60 秒巡检一次）',
+              f'{captured.get("next_reason")!r}')
+
+        # ③ 失败退避（没有场景原因时，给笼统但可行动的退避文案）
+        t3 = runner_mod._QueueTask('pk')
+        t3.next_at = now + timedelta(seconds=120)
+        _reason_runner({'pk': t3}, ['pk'])._write_queue_status({'pk': t3}, ['pk'])
+        check('退避原因', captured.get('next_reason') == 'PK：上次未成功，退避重试中',
+              f'{captured.get("next_reason")!r}')
+
+        # ③b **阻塞原因优先于"最近的等待点"**：护理 30 秒后就到期、雇佣好友要等
+        #     30 分钟 —— 显示的必须是后者（用户实报：一直被"等护理到点"刷屏，
+        #     而主任务其实在等雇佣结束）
+        tc = runner_mod._QueueTask('care')
+        th = runner_mod._QueueTask('hire_friend')
+        th.next_at = now + timedelta(minutes=30)
+        th.defer_reason = '宠物正在被雇佣（剩余约 45 分钟），雇佣好友延后到 01:33:29'
+        pair = {'care': tc, 'hire_friend': th}
+        _reason_runner(pair, ['care', 'hire_friend'], eligible={'care'},
+                       throttle={'care': now + timedelta(seconds=30)})._write_queue_status(
+            pair, ['care', 'hire_friend'])
+        check('阻塞原因优先于最近等待点（不是"等护理"）',
+              '宠物正在被雇佣' in (captured.get('next_reason') or ''),
+              f'{captured.get("next_reason")!r}')
+        check('next 仍是最近等待点（护理）', captured.get('next') == '护理',
+              f'{captured.get("next")!r}')
+
+        # ④ 执行成功后延后原因必须清空（否则界面会一直挂着上次的雇佣 CD 文案）
+        t.defer_reason = ''
+        t.next_at = now
+        _reason_runner({'hire_friend': t}, ['hire_friend'], eligible=True)._write_queue_status(
+            {'hire_friend': t}, ['hire_friend'])
+        check('成功后不再复用旧的延后原因',
+              '打工中' not in (captured.get('next_reason') or ''),
+              f'{captured.get("next_reason")!r}')
+    finally:
+        runner_mod.save_queue_status = orig_save
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description='状态新鲜度离线测试（不连设备）')
     ap.add_argument('--no-gui', action='store_true', help='跳过 GUI 任务队列卡测试')
@@ -472,6 +595,7 @@ def main() -> int:
     test_classify_precedence()
     test_startup_probe()
     test_main_pending_key()
+    test_wait_reason()
     if not args.no_gui:
         test_gui_queue_card()
 

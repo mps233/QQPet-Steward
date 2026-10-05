@@ -10,7 +10,7 @@ const PET_STATS: ReadonlyArray<readonly [string, string, string]> = [
 ]
 
 /** 三层同心弧：外=体力(蓝) / 中=清洁(绿) / 内=心情(橙)，每弧按 0~100 画。
- *  用 stroke-dashoffset 控制进度（与 legacy 的 setRingArc 一致）。 */
+ *  用 stroke-dashoffset 控制进度（与 旧版 的 setRingArc 一致）。 */
 function ringStyle(v: number | null, r: number): React.CSSProperties {
   const C = 2 * Math.PI * r
   const p = v === null ? 0 : Math.max(0, Math.min(100, v))

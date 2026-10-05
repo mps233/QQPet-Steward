@@ -211,7 +211,9 @@ export function LivePage() {
     setOn(true)
     setHint('')
 
-    // 心跳：保活 + 刷新尺寸 + 延迟看门狗 + 接管失效检测
+    // 心跳：保活 + 刷新尺寸 + 延迟看门狗 + 接管失效检测。
+    // **故意不接 usePoll**：每轮还要 POST ping、必要时 seek 追帧、弹接管失效提示 ——
+    // 这是状态机而不是取数（数据轮询统一在 lib/usePoll.ts）。
     timerRef.current = window.setInterval(async () => {
       if (!onRef.current) return
       try {

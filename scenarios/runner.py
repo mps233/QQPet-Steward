@@ -361,6 +361,25 @@ class Runner:
         self._fc_bad_range_logged = False
         return in_time_range(datetime.now().time(), start, end)
 
+    def _friend_care_round(self) -> None:
+        """好友护理（**已并入护理任务**）：到点就顺路去好友家护理一次。
+
+        - 开关 / 时间段 / 间隔 / 好友名全都还是 `friend_care` 段里那一套
+          （由 `friend_care_due()` 判定），所以"单独开关"照旧生效 —— 没开或没到点
+          就什么都不做；
+        - **失败不拖垮护理**：它原来是独立支线（失败走任务级退避 + 恢复链路），
+          并入后这里只记日志，并把 `last_care_at` 推到此刻（等效按
+          friend_care.interval_seconds 退避一次）——好友家卡顿很常见，不该让
+          "自己的护理"跟着失败。
+        """
+        if not self.friend_care_due():
+            return
+        try:
+            self.friend_care.run(max_rounds=1)
+        except Exception as e:  # noqa: BLE001 - 好友护理失败只记日志
+            log(f'好友护理失败（已并入护理，本次护理不受影响）: {e}')
+            self.friend_care.last_care_at = datetime.now()
+
     def gift_bag_due(self) -> bool:
         """是否该扫福袋了：已启用、当前时间在时间段内、距上次扫描已过
         gift_bag.interval_seconds 且不在失败延后期。"""
@@ -380,6 +399,15 @@ class Runner:
             return False
         self._gb_bad_range_logged = False
         return in_time_range(datetime.now().time(), start, end)
+
+    def _hire_merged_into_work(self) -> bool:
+        """「雇佣好友」是否已并入打工（配了 `work.hire_name` 就是并入状态）。
+
+        并入后 work 每轮会顺路去好友家雇人（scenarios/work.py 的 `_work_via_friend_hire`），
+        legacy 主循环里那段老「雇佣好友」必须让位——否则同一个好友一天被雇两遍
+        （配额账也只会记到一份上）。task_queue 引擎不用管：`hire_friend` 已不在 TASK_KEYS 里。
+        """
+        return bool(str(getattr(self.work, 'hire_name', '') or '').strip())
 
     def hire_friend_due(self) -> bool:
         """是否该雇佣好友了：已启用、配置了好友名称、当前在雇佣时间段内、
@@ -881,6 +909,9 @@ class Runner:
         self.work.employ_scroll_limit = cfg.work.employ_scroll_limit
         self.work.hire_name = str(getattr(cfg.work, 'hire_name', '') or '').strip()
         self.work.hire_wait = bool(getattr(cfg.work, 'hire_wait', False))
+        # 顺路雇好友的每日配额（原「雇佣好友」任务已并入打工）：同样要热加载，
+        # 否则设置页改了"每人每天被雇上限"要重启调度器才生效
+        self.work.hire_daily_hours = float(getattr(cfg.work, 'hire_daily_hours', 4) or 0)
         self.visit.times_per_day = cfg.visit.times_per_day
         self.visit_times = cfg.visit.times_per_day
         try:
@@ -1045,7 +1076,11 @@ class Runner:
 
                 # 好友雇佣：到达调度时间且当天次数未满（雇佣 CD 未到时场景抛
                 # TaskDeferred 延后 60 秒复测，不原地等待）
-                if not suppress_main and not self.hire_friend_dead and self.hire_friend_due():
+                # **已并入打工**（work.hire_on_work + hire_name）：work 每轮会顺路去好友家
+                # 雇人，这里让位，否则同一个好友一天被雇两遍（配额账也只会记一份）
+                if (not suppress_main and not self.hire_friend_dead
+                        and not self._hire_merged_into_work()
+                        and self.hire_friend_due()):
                     log('到达雇佣好友调度时间，处理好友雇佣')
                     self.hire_friend.last_hire_at = datetime.now()  # 调度间隔从实际执行起算
                     try:
@@ -1319,6 +1354,9 @@ class _QueueTask:
         self.next_at = datetime.min  # 间隔/退避的最早可执行时间
         self.dead = False            # run() 返回 False（当天上限等），当天不再可用
         self.window: datetime | None = None  # daily trigger：当前服务的每日时间点
+        # 场景主动延后的原因（TaskDeferred.reason，如"想雇的「墨瞳」正打工中"）：
+        # 队列状态把它当"为什么在等"显示给仪表盘，执行成功/失败后清空
+        self.defer_reason = ''
 
 
 def _parse_clock(value, field: str):
@@ -1387,6 +1425,12 @@ class TaskQueueRunner(Runner):
             scen.defer_wait = True
         self._main_order: list[str] = list(MAIN_TASK_KEYS)
         self._current_task: str | None = None  # 正在执行的任务名（队列状态展示用）
+        # 场景让路时登记的**优先任务**（TaskDeferred.prefer，如"去冒险"）：
+        # 下一轮 _main_choice 会用掉它（当下不可执行则忽略并记日志），
+        # _prefer_note 是随之带给仪表盘的一句话说明（"为什么在做那件事"）。
+        self._prefer_task = ''
+        self._prefer_note = ''
+        self._active_note = ''   # 正在执行那个优先任务期间挂出去的说明（队列状态 note）
         self._sched_day: date | None = None  # 调度日期：跨天时清除任务"当天不可继续"标记
         self._startup_probe_done = False  # 启动实测（出门确认有无进行中活动）只做一次
         self._run_started_ts = time.time()  # 本次运行的启动时间（写进队列状态供判新鲜度）
@@ -1674,6 +1718,22 @@ class TaskQueueRunner(Runner):
         if self.employed_window_active():
             return None  # 被雇佣时间段内主任务不触发
         now = datetime.now()
+        # 场景让路时登记的优先任务（如"雇好友的人正忙 → 先去冒险"）：
+        # 用一次就清；**要求它当下真的可执行**（冒险有 daily 时间窗与当天次数限制），
+        # 不可执行就记日志说明并退回正常顺序——不然"一定去冒险"会变成死等到窗口打开。
+        if self._prefer_task:
+            prefer = self._prefer_task
+            self._prefer_task = ''
+            pt = tasks.get(prefer)
+            if pt is not None and self._eligible(pt, now):
+                if prefer == 'adventure' and self.adventure_due():
+                    self._active_note = self._prefer_note          # 给仪表盘显示
+                    self._prefer_note = ''
+                    log('让路期间优先冒险（配置：等他空闲时去冒险）')
+                    return prefer
+                log(f'想让路优先执行{TASK_NAMES.get(prefer, prefer)}，但它现在不可执行'
+                    f'（冒险有每日时间窗与次数限制），按正常顺序调度')
+            self._prefer_note = ''
         for key in self._main_order:
             task = tasks.get(key)
             # 跳过不可执行的任务（不在 order / 当天不可继续 / 退避未到点）：
@@ -2024,6 +2084,7 @@ class TaskQueueRunner(Runner):
             # 顺带补刷金币状态缓存：只打工策略下学习判定被跳过、金币不会读，
             # 缓存会一直停在旧值（护理巡检本来就在主页面，就地补一次）
             self._refresh_coins()
+            self._friend_care_round()   # 好友护理已并入护理：到点就顺路去一趟
             task.next_at = self._success_at(cfg, now)
             return
         scen = {'adventure': self.adventure, 'visit': self.visit, 'pk': self.pk,
@@ -2042,8 +2103,20 @@ class TaskQueueRunner(Runner):
             return
         except TaskDeferred as d:
             # 场景主动延后（如雇佣好友发现宠物正在打工/学习/冒险/被雇佣中）：
-            # 到 until 再调度，不算失败
+            # 到 until 再调度，不算失败。**reason 要留下**——它是"为什么在等"的
+            # 唯一具体来源（如"想雇的「墨瞳」正打工中"），写进队列状态给仪表盘显示，
+            # 否则界面只能说一句笼统的"等待下一项任务"。
             task.next_at = d.until
+            task.defer_reason = d.reason
+            prefer = getattr(d, 'prefer', '')
+            if prefer:
+                # 场景要求"让路期间优先去做某事"（如"去冒险"这个选项）：登记下来，
+                # 下一轮 _main_choice 会把它插到主任务组最前面；它当下不可执行
+                # （冒险有时间窗/次数限制）时忽略并记日志，退回正常顺序。
+                self._prefer_task = prefer
+                self._prefer_note = getattr(d, 'note', '')
+                log(f'{task.name}: 已登记让路期间优先执行 '
+                    f'{TASK_NAMES.get(prefer, prefer)}（{self._prefer_note or "无说明"}）')
             log(f'{task.name}: {d}，先执行其他任务')
             self._back_to_main(f'{task.name} 延后后')
             return
@@ -2054,6 +2127,7 @@ class TaskQueueRunner(Runner):
                 self._back_to_main(f'{task.name} 失败后')
             return
         if produced:
+            task.defer_reason = ''  # 跑成功了，延后原因作废
             if getattr(scen, 'pending', None) is not None:
                 # 延时收尾（pending）的任务节奏由 pending.until 控制：next_at 立即到期，
                 # 结算完成的同一轮调度就能接力下一个主任务；若按 success_interval
@@ -2080,6 +2154,7 @@ class TaskQueueRunner(Runner):
         """任务失败退避：延后 failure_interval 秒重试，先执行其他任务。"""
         at = now + timedelta(seconds=task.cfg.failure_interval)
         task.next_at = at
+        task.defer_reason = ''  # 这次不是"主动延后"，等待原因改由退避文案表达
         log(f'{reason}，延后到 {at:%H:%M} 重试，先执行其他任务')
 
     def _back_to_main(self, stage: str) -> None:
@@ -2090,6 +2165,18 @@ class TaskQueueRunner(Runner):
             log(f'{stage}回主页面失败: {e}')
 
     # ---- 队列状态（GUI 状态条） ----
+
+    def _throttle_reason(self, key: str) -> str:
+        """被"场景级节流"挡住的任务，具体在等什么（护理/好友护理/福袋按各自 interval 巡检）。"""
+        if key == 'care':
+            secs = int(getattr(self.care.cfg.care, 'interval_seconds', 0) or 0)
+            return f'护理间隔未到（每 {secs} 秒巡检一次）' if secs else '护理间隔未到'
+        if key == 'friend_care':
+            return '好友护理间隔未到（按巡检间隔）'
+        if key == 'gift_bag':
+            secs = int(getattr(self.gift_bag.cfg.gift_bag, 'interval_seconds', 0) or 0)
+            return f'福袋扫描间隔未到（每 {secs // 60} 分钟一次）' if secs else '福袋扫描间隔未到'
+        return '按间隔巡检，未到下一次执行时间'
 
     def _write_queue_status(self, tasks: dict, order: list) -> None:
         """把队列状态写 runs/queue_status.json，供 GUI 日志页状态条显示。
@@ -2106,6 +2193,15 @@ class TaskQueueRunner(Runner):
         ready = waiting = 0
         next_at = None
         next_name = ''
+        # "为什么在等"（人类可读）：与 next_name 一起被最近的等待点覆盖，
+        # 仪表盘的"等待中"下面直接显示这句，不再只说一句"等待下一项任务"
+        next_reason = ''
+        # "真正卡住的是什么"：场景主动延后的原因（如"宠物被雇佣中"）**不该被最近
+        # 等待点盖掉** —— 护理这类 60 秒一轮的任务永远是最远的等待点，只看它就会
+        # 一直显示"等护理到点"，而主任务其实在等雇佣结束（用户实报）。所以单独记
+        # 一条：所有 defer 原因里**到期最早**的那个（= 最早能恢复干活的时间）。
+        defer_block = ''
+        defer_until = None
         task_states = {}
         for key in order:
             task = tasks[key]
@@ -2185,6 +2281,7 @@ class TaskQueueRunner(Runner):
                                         'next': throttled_until.strftime('%Y-%m-%d %H:%M:%S')}
                     if next_at is None or throttled_until < next_at:
                         next_at, next_name = throttled_until, task.name
+                        next_reason = f'{task.name}：{self._throttle_reason(key)}'
                     continue
                 # 现在就能跑、在等调度器轮到 -> 等待中
                 waiting += 1
@@ -2194,14 +2291,27 @@ class TaskQueueRunner(Runner):
             ready += 1
             # 最近的等待点：退避时间 / 下一个每日时间点
             cand = task.next_at if task.next_at > now else None
+            nxt = None
             if cfg.trigger == 'daily':
                 nxt = self._next_daily_time(cfg.daily_times, now)
                 if nxt and (cand is None or nxt < cand):
                     cand = nxt
             task_states[key] = {'state': 'waiting',
                                 'next': cand.strftime('%Y-%m-%d %H:%M:%S') if cand else ''}
+            # 场景主动延后的原因单独收集：它回答的是"为什么整体停摆"，与
+            # next_at 是不是最近无关（宠物被雇佣时 work/school 的到期点比护理晚得多）
+            if cand and task.defer_reason and (defer_until is None or cand < defer_until):
+                defer_until = cand
+                defer_block = f'{task.name}：{task.defer_reason}'
             if cand and (next_at is None or cand < next_at):
                 next_at, next_name = cand, task.name
+                # 最近等待点的原因（没有 defer 原因时它才上台）
+                if task.defer_reason:
+                    next_reason = f'{task.name}：{task.defer_reason}'
+                elif nxt is not None and cand == nxt:
+                    next_reason = f'{task.name}：等每日时间点 {nxt:%H:%M}'
+                else:
+                    next_reason = f'{task.name}：上次未成功，退避重试中'
         pend = self._main_pending_scen()
         pending_desc = ''
         pending_key = ''
@@ -2213,11 +2323,23 @@ class TaskQueueRunner(Runner):
             until = pend.pending['until']
             if next_at is None or until < next_at:
                 next_at, next_name = until, f'{pending_desc}收尾'
+                next_reason = f'{pending_desc}：进行中，等结算完收尾'
+        # "为什么在做这件事"（给仪表盘）：只在**当前执行的正是那个让路优先任务**时挂出去，
+        # 任务一换就清掉（否则"冒险中"下面会挂着过期的说明）
+        note_now = (self._active_note
+                    if self._current_task == TASK_NAMES.get('adventure') else '')
+        if not note_now:
+            self._active_note = ''
         save_queue_status({
             'current': self._current_task or '',
+            'note': note_now,
             'pending': pending_desc,
             'pending_key': pending_key,
             'next': next_name,
+            # "为什么在等"的人类可读原因（如「雇佣好友：想雇的「墨瞳」正打工中
+            # （不换人，等到空闲再雇）」）—— 仪表盘的"等待中"下面直接显示这句
+            # 优先说"真正卡住的"（场景延后原因），没有才退回最近等待点的原因
+            'next_reason': defer_block or next_reason,
             'next_at': next_at.strftime('%H:%M:%S') if next_at else '',
             # 时间戳：GUI 每 5 秒刷新时算"剩余xx秒"倒计时用
             'next_ts': next_at.timestamp() if next_at else 0,
@@ -2413,7 +2535,8 @@ def run_test(name: str) -> None:
     scenarios = {'school': SchoolScenario, 'work': WorkScenario,
                  'adventure': AdventureScenario, 'care': CareScenario,
                  'visit': VisitScenario, 'pk': PKScenario,
-                 'friend_care': FriendCareScenario, 'hire_friend': FriendHireScenario}
+                 'friend_care': FriendCareScenario, 'hire_friend': FriendHireScenario,
+                 'gift_bag': GiftBagScenario}
     if scen_name not in scenarios or not method:
         raise ValueError(f'--test 参数无效: {name!r}，应为 coins / recover 或 school./work./adventure./care./friend_care. 开头的方法名')
     scen = scenarios[scen_name]()

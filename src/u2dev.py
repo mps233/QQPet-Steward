@@ -674,3 +674,24 @@ class MiniTouchSession:
     def up(self) -> None:
         self._send('u 0')
         self._send('c')
+
+
+def save_png(path, img) -> bool:
+    """把 `screenshot()` 返回的 **RGB** 数组存成颜色正确的 PNG。
+
+    **不要直接用 cv2.imwrite**：`screenshot()` 按项目约定返回 RGB（供 OCR），
+    而 `cv2.imwrite` 是按 **BGR** 解释数组的 —— 直接用它存会把红蓝通道写反。
+    实测症状：设备上金黄色的福袋存出来变成**蓝色**袋子（用户一眼看出来的），
+    于是任何"看截图判断颜色"的排查都会被带偏。
+    这里走 PIL（`Image.fromarray` 按 RGB），与 `scenarios/runner.py` 存告警图
+    （`alert_*.png`）的写法一致——那些图颜色一直是对的。
+    """
+    try:
+        from PIL import Image
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        Image.fromarray(np.asarray(img)).save(str(p))
+        return True
+    except Exception as e:  # noqa: BLE001 - 存图失败不该影响主流程
+        log(f'存图失败（{path}）: {type(e).__name__}: {e}')
+        return False

@@ -77,6 +77,34 @@ iOS 会先判定"这是滚动还是交互"，判定成滚动就发 `pointercance
 | 拖拽完全没反应 | 用 **`TouchSensor` + `MouseSensor`**，**不要 `PointerSensor`**（dnd-kit 文档里写着） |
 | 拖拽不动（更隐蔽的一种） | `touch-action` 必须**静态**声明；等 `onDragStart` 再加 class 已经晚了——浏览器在**触摸开始那一刻**就读了它 |
 
+### 滚动位置记忆：容器是 `.page-slot`，**不是** `html` / `body`
+
+设置一级菜单滚到下面 → 点进二级 → 返回时停在顶部（用户实报）：二级内容短，滚动位置
+被浏览器 clamp 掉，回一级时不会自动恢复。实现见 `App.tsx` 的 `scrollMemo` / `saveScroll`：
+**在导航入口（DOM 更新前）**存下 scrollTop，视图 key（`page` 或 `page:二级键`）变了再写回。
+
+**两个必须知道的坑**：
+
+1. **取错容器 = 静默失效**。`document.scrollingElement` 指向 `html`（本项目 `html` 是
+   `overflow:hidden` 的固定画布），`body` 也没有可滚高度——对它们写 `scrollTop` 读回恒 0，
+   现象是"记忆了但没生效"。实测（390×420 的 iframe 打开设置页，把每个候选都拉出来量）：
+
+   | 元素 | scrollHeight | clientHeight | 可滚 | 写 scrollTop=300 读回 |
+   | --- | --- | --- | --- | --- |
+   | `html` | 420 | 420 | 0 | 0 ✗ |
+   | `body` | 420 | 420 | 0 | 0 ✗ |
+   | `main` / `section` / `#root` | 420 / 1000 / 0 | 420 / 1000 / 0 | 0 | 0 ✗ |
+   | **`.page-slot.page-enter`** | **1000** | **420** | **580** | **300 ✓** |
+
+   所以取容器的正确方式是 `document.querySelector('.page-slot.page-enter')`（并校验
+   `scrollHeight > clientHeight`）。
+2. **转场期间退场页 `.page-leave-*` 也在 DOM 里**，选择器必须锁 `.page-enter`，否则可能
+   记到／写回正在退场的那一页。
+
+**验证**：同源 iframe 里 `slot.scrollTop = 500` → 点菜单进二级 → `history.back()` →
+断言 `slot.scrollTop === 500`；**再换个值（250）复测一遍**，确认恢复的是"上次那个值"
+而不是写死的常量。
+
 ---
 
 ## 四、选择器与特异性
@@ -100,7 +128,7 @@ iOS 会先判定"这是滚动还是交互"，判定成滚动就发 `pointercance
 
 ---
 
-## 五、迁移 legacy 时最容易漏的：JS 副作用
+## 五、重构/搬页面时最容易漏的：JS 副作用
 
 **DOM 里看不出来的东西，搬页面时必须专门清点。** 已漏过并已补的：
 
@@ -111,9 +139,14 @@ iOS 会先判定"这是滚动还是交互"，判定成滚动就发 `pointercance
 - **勾选框的 click 委托** → 点了没反应
 - **拖拽守卫**（`e.target.closest('.mcb')` 时不启动拖拽）→ 点勾选框变成拖拽起手
 
-**方法**：搬一个页面时，除了搬 DOM，必须
-`grep -nE "addEventListener|setAttribute|\.style\.|dataset\." web/legacy/app.js`
-逐条问"这个我搬了吗"。
+**方法**：搬一个页面时，除了搬 DOM，必须把旧实现里的副作用逐条问"这个我搬了吗"。
+
+旧版原生实现（`web/legacy/`，纯 HTML+CSS+JS）已随迁移完成删除，需要对照时从 git 历史取：
+
+```bash
+git show 7e142f1:web/legacy/app.js > /tmp/legacy-app.js   # 迁移落地那一次的完整旧版
+grep -nE "addEventListener|setAttribute|\.style\.|dataset\." /tmp/legacy-app.js
+```
 
 ---
 
