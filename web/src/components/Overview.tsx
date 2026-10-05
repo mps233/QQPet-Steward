@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import type { Data } from '../api'
+import { icon } from '../lib/icons'
 import type { useScene } from '../lib/useScene'
 import { BgSheet } from './BgSheet'
 import { Capsules } from './Capsules'
@@ -93,9 +94,10 @@ export function Overview({
         <button className="rbtn r" data-tab="plan" title="职业" onClick={() => onNav('plan')}>
           <img src="/qp-icons/official/off_r2_briefcase.png" alt="" />
         </button>
-        {/* `?v=2` 是换图后的缓存击穿（/qp-icons/* 走 max-age=3600，不换 URL 拿旧图 1 小时） */}
+        {/* `/qp-icons/*` 走 max-age=3600，不换 URL 拿旧图 1 小时 —— 版本号统一由
+            lib/icons.ts 的 ICON_VER 提供（原先这里是散落的 `?v=2`）。 */}
         <button className="rbtn r" data-tab="shot" title="实时画面" onClick={() => onNav('shot')}>
-          <img src="/qp-icons/ctrl/phone.svg?v=2" alt="" />
+          <img src={icon('/qp-icons/ctrl/phone.svg')} alt="" />
         </button>
       </nav>
 

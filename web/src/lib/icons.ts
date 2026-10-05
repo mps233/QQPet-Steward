@@ -1,0 +1,22 @@
+/**
+ * `/qp-icons/` 图标的版本号与取值帮助函数。
+ *
+ * **为什么需要它**：`/qp-icons/*` 走 `Cache-Control: max-age=3600`，同名图片覆盖后
+ * 浏览器一小时内仍显示旧图（踩过：素材已更新、页面还是旧的）。所以换图必须在 URL 上
+ * 挂 `?v=` 做击穿。
+ *
+ * 但版本号原先散在四处、值还不一样：FuncBar 三处 `?v=5`、Overview 一处 `?v=2`、
+ * CSS 里 10 处静态 `?v=5`。换图时漏掉任何一处，那一张就还是旧图。
+ * 见 docs/review/05-前端设计系统.md E 节。
+ *
+ * **换图流程**：
+ *   1. 把 ICON_VER +1
+ *   2. 同步 CSS 里那些 `url('...?v=N')`（CSS 不能插值 JS 常量，只能手改；
+ *      用 `grep -n "?v=" web/src/styles/app.css` 列出来）
+ *   3. 背景图是另一套（lib/scene.ts 的 BG_VER），不要混用
+ */
+export const ICON_VER = '5'
+
+/** 给 `/qp-icons/...` 路径加上当前版本号。 */
+export const icon = (path: string): string =>
+  `${path}${path.includes('?') ? '&' : '?'}v=${ICON_VER}`

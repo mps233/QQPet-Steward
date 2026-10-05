@@ -7,7 +7,9 @@
 # rollup.darwin-arm64.node，报 ERR_DLOPEN_FAILED —— 那种情况下换官方 node 即可）。
 #
 # 依赖：node + npm（macOS: brew install node）
-# 用法：./web/build.sh        然后打开 http://<host>:8787/next/
+# 用法：./web/build.sh        然后打开 http://<host>:8787/
+#   （`/next` 是迁移期的兼容别名（老书签/主屏图标仍可用），**不是**正式入口 ——
+#     正式入口自 React 版切换起就是 `/`。）
 set -euo pipefail
 cd "$(dirname "$0")"
 

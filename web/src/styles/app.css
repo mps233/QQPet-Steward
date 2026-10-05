@@ -39,6 +39,9 @@
   --h-card:46;          /* 资料卡高（官方 46.2） */
   --h-cap:23;           /* 胶囊行高：图标 23dp 外凸于 20dp 胶囊体（官方图标 22.3） */
   --gap-top:12;         /* 顶部区块统一间距（TDesign 间距阶梯 12；官方资料卡→胶囊实测 13.8） */
+  /* 冒险/职业页明细行的日期列宽（窄屏由 @media(max-width:360px) 覆写）。
+     见 .advlist .ai 处的说明 —— 这里是与断点共享的**唯一**定义点。 */
+  --adv-date-w:126px;
   /* 由上面几个值推出后续纵坐标（不要再手写数字，否则改了间距就对不上）：
      胶囊区顶 = 资料卡顶 + 资料卡高 + 间距
      任务面板顶 = 胶囊区顶 + 胶囊行高 + 间距 + 胶囊行高 + 间距 */
@@ -1447,11 +1450,15 @@ pre#logbox{
 }
 .advlist .arow:first-child{border-top:0}
 .advlist .ai{
-  /* 宽度 112 → 126px：改用 .pgsec 骨架后白卡内容区比原来的 .card 窄了 24px
-     （.pgsec-c 是 12u margin + 14u padding，内容距屏幕边 26u；旧版 .card 只有 14px），
-     112px 装不下 `#276 09-29 00:00`（16 字符 × 12px 字号 ≈ 106px + 余量）会被省略号截断。
-     16 字符约 106px，留 20px 余量。 */
-  color:var(--sub);font-size:12px;flex:none;width:126px;
+  /* **宽度只在这里定义一处**（原先基规则写 126px、@media(max-width:360px) 里又写 112px，
+     注释自己都写着"改基规则的宽度没用，这里是另一份" —— git 历史为它误修过两次）。
+     现在用变量表达两档，窄屏那段已删除：
+       ≤360px → 112px（`#276 09-29 00:00` 实测文本宽 105px @12px 字号，96 装不下会被
+                 省略号截断；窄屏下输入框 max-width:52% 会挤压，日期列不能给更宽）
+       否则   → 126px（.pgsec-c 是 12u margin + 14u padding，内容距屏幕边 26u，
+                 比旧版 .card 窄 24px，112px 也装不下 + 余量不够）
+     改宽度只改这两个变量。 */
+  color:var(--sub);font-size:12px;flex:none;width:var(--adv-date-w);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
 .advlist .ag{
@@ -1533,9 +1540,9 @@ pre#logbox{
   :root{--gap-top:10}
   .cap{padding:0 8px}
   .cap .cval{font-size:12.5px}
-  /* 96 → 112px：`#276 09-29 00:00` 实测文本宽 105px（12px 字号），96 装不下会被
-     省略号截断（用户真机正好命中这个 ≤360 分支）。改基规则的宽度没用，这里是另一份。 */
-  .advlist .ai{width:112px}
+  /* 日期列宽收窄（原因见 .advlist .ai 处）。**改为覆写变量，而不是再写一份
+     .advlist .ai{width:...}** —— 后者就是历史上"改基规则没用"那个坑的成因。 */
+  :root{--adv-date-w:112px}
   .form select,.form input[type=number],.form input[type=text]{max-width:52%}
   .form input[type=text]{width:126px}
 }

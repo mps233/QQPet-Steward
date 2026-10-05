@@ -6,6 +6,8 @@
  *  历史：旧版 用一段 `place()` 在运行时把功能栏底端对齐到任务列表底端（带 0.4u
  *  迟滞、量两次防中间态），我照搬过一版；后来用户改主意要"固定在圆钮下面两倍间距
  *  的位置"，于是又改回静态 top —— 那段动态逻辑已移除，别再顺手加回来。 */
+import { icon } from '../lib/icons'
+
 export function FuncBar({
   alive,
   busy,
@@ -29,7 +31,7 @@ export function FuncBar({
           disabled={alive || !!busy}
           onClick={onStart}
         >
-          <img className="fi" src="/qp-icons/ctrl/play.svg?v=5" alt="" />
+          <img className="fi" src={icon('/qp-icons/ctrl/play.svg')} alt="" />
           <span className="ft">{busy === 'start' ? '启动中' : '启动'}</span>
         </button>
         <button
@@ -39,13 +41,13 @@ export function FuncBar({
           disabled={!alive || !!busy}
           onClick={onStop}
         >
-          <img className="fi" src="/qp-icons/ctrl/stop.svg?v=5" alt="" />
+          <img className="fi" src={icon('/qp-icons/ctrl/stop.svg')} alt="" />
           <span className="ft">{busy === 'stop' ? '停止中' : '停止'}</span>
         </button>
       </div>
       <div className="fb-group">
         <button className="fab ghost" id="btnShot" title="实时画面" onClick={onShot}>
-          <img className="fi" src="/qp-icons/ctrl/refresh.svg?v=5" alt="" />
+          <img className="fi" src={icon('/qp-icons/ctrl/refresh.svg')} alt="" />
           <span className="ft">画面</span>
         </button>
       </div>
