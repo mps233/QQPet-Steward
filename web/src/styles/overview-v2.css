@@ -287,6 +287,26 @@
    图标溢出、彼此重叠，看起来像"图标错位"。 */
 .v2-home .rbtn img{ width:55%; height:55%; object-fit:contain }
 
+/* ---------- 右列圆钮的材质与图标尺寸 ----------
+   ⚠ 必须在这里补一份：官方右列圆钮是**纯黑蒙版**（rgba(0,0,0,.28) 毛玻璃），
+   与左列/资料卡的白玻璃**故意不同**。app.css 里那条是 `.col-r .rbtn`，
+   而 V2 的 class 是 `.v2-rail.right`（没有 `.col-r`）→ 那条不生效，
+   圆钮会回落到 `.rbtn` 基础规则的白色 `--panel-bg-strong`。
+   实测症状：右列 3 颗圆钮变成白底（用户反馈"怎么变成白色了"）。
+
+   图标尺寸是**逐颗设**的（app.css 里那段注释解释了为什么不能统一百分比：
+   三张图的可见内容占比差很多 —— 指南针 88%、公文包 79%、手机 93.3%，
+   按"可见高度统一 18dp"反解各自的盒子；手机是唯一例外，竖长条要按面积补）。 */
+.v2-home .v2-rail.right .rbtn{
+  background:var(--btn-r-bg);
+  backdrop-filter:var(--panel-blur);
+  -webkit-backdrop-filter:var(--panel-blur);
+}
+.v2-home .v2-rail.right .rbtn img{ object-fit:contain }
+.v2-home .v2-rail.right .rbtn:nth-child(1) img{ width:48.7%; height:48.7% }  /* 冒险：指南针 */
+.v2-home .v2-rail.right .rbtn:nth-child(2) img{ width:54.2%; height:54.2% }  /* 职业：公文包（最扁） */
+.v2-home .v2-rail.right .rbtn:nth-child(3) img{ width:52.5%; height:52.5% }  /* 画面：手机（竖长条） */
+
 /* ---------- 窄屏 ---------- */
 @media(max-width:360px){
   /* ⚠ 别在这里给 `.v2-top` 加 padding-top —— 顶部对齐由 `.v2-center` 的
