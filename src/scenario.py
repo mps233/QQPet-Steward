@@ -7,6 +7,7 @@ import os
 import re
 import time
 from datetime import datetime, timedelta
+from typing import Callable
 
 from .ad_bonus import claim_ad_bonus
 from .config import find_adb, load_config
@@ -363,6 +364,12 @@ class DeviceScenario:
         # finish_pending() 收尾计数。legacy 引擎保持 False（原阻塞等待）。
         self.defer_wait = False
         self.pending = None  # dict: in_name/end_name/until(datetime)/on_finish/desc/encourage
+        # "回主页面护理一次"的回调，由调度器注入（见 care_once）。
+        # **为什么是注入而不是直接 import**：护理的实现在 scenarios/care.py，
+        # 而 care.py 顶层 import src.scenario —— 直接在这里 import 会形成
+        # src ↔ scenarios 的 import 环，导致 `import src.scenario` 连带拉起整个
+        # scenarios 包、src/ 无法独立加载与单测（见 docs/review/06-后端架构拆分.md A 节）。
+        self.care_fn: Callable[[], None] | None = None
 
     def screen(self):
         return self.dev.screenshot()
@@ -636,11 +643,16 @@ class DeviceScenario:
             raise StatBlocked()
 
     def care_once(self) -> None:
-        """主页面执行一次护理检查（同调度器的护理：体力/清洁不足则喂食/洗澡，
-        或一键护理），护理完成停在主页面。"""
-        from scenarios.care import CareScenario
+        """主页面执行一次护理检查（体力/清洁不足则喂食/洗澡，或一键护理）。
 
-        CareScenario(self.dev).check_and_care()
+        具体实现在 scenarios/care.py，由调度器在构造场景时通过 `care_fn` 注入
+        （见 __init__ 的说明）—— 本类刻意**不** import scenarios.care，
+        否则会形成 import 环。
+        """
+        if self.care_fn is None:
+            log('care_once: 未注入护理回调，跳过（应由调度器构造场景时传入 care_fn）')
+            return
+        self.care_fn()
 
     def reset_select_boxes(self, drags: int = 2, source=None) -> None:
         """学习/工作三栏选择框归位：从第一框中心拖到第三框中心 drags 次。

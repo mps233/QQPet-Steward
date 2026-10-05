@@ -233,6 +233,18 @@ class Runner:
         self.gift_bag = GiftBagScenario(dev)
         self.hire_friend = FriendHireScenario(dev)
         self.employed = EmployedScenario(dev)
+        # 把"回主页面护理一次"回调注入给所有场景（基类 DeviceScenario.care_once 用）。
+        # 目的是断开 src ↔ scenarios 的 import 环：护理实现在 scenarios/care.py，
+        # 而 care.py 顶层 import src.scenario，基类里直接 import 会形成环
+        # （见 docs/review/06-后端架构拆分.md A 节）。
+        # 用**共享实例**而不是每次新建：护理有节流（CareScenario.last_care_at），
+        # 每次新建会丢掉节流状态。
+        self._care_for_scenario = CareScenario(dev)
+        _care_fn = self._care_for_scenario.check_and_care
+        for _scen in (self.school, self.work, self.adventure, self.care,
+                      self.visit, self.pk, self.friend_care, self.gift_bag,
+                      self.hire_friend, self.employed):
+            _scen.care_fn = _care_fn
         self.recoveries = 0  # 连续异常恢复次数（成功跑完一轮清零；距上次超过 RECOVERY_RESET_AFTER 也清零）
         self.last_recovery_at = 0.0  # 上次发起恢复的 monotonic 时间
         self.retry_after: dict[str, datetime] = {}  # 支线任务名 -> 失败后的下次可执行时间
@@ -2217,35 +2229,11 @@ class TaskQueueRunner(Runner):
                 task_states[key] = {'state': 'dead',
                                     'next': nxt.strftime('%Y-%m-%d %H:%M:%S') if nxt else ''}
                 continue
-            # 每日配额已完成（踩踩/PK/冒险当天次数已满）：显示"今日完成"，不再计入待执行/等待中
-            quota_done = False
-            if key == 'visit' and self.visit_times:
-                _, done, _ = load_progress(VISIT_PROGRESS_FILE, quiet=True)
-                quota_done = done >= self.visit_times and exp_daily_done()
-            elif key == 'pk' and self.pk_times:
-                _, done, _ = load_progress(PK_PROGRESS_FILE, quiet=True)
-                quota_done = done >= self.pk_times
-            elif key == 'adventure' and self.adventure_times:
-                _, done, _ = load_progress(ADVENTURE_PROGRESS_FILE, quiet=True)
-                quota_done = done >= self.adventure_times
-            elif key == 'hire_friend':
-                hf_q = self.hire_friend.cfg.hire_friend
-                if hf_q.times_per_day:
-                    _, done, _ = load_progress(HIRE_FRIEND_PROGRESS_FILE, quiet=True)
-                    quota_done = done >= hf_q.times_per_day
-            elif key == 'school':
-                # 疲劳提示 / 学习配额满 / 合计达上限：今天不再学习，显示"今日完成"
-                study_s, work_s = self._load_durations()
-                quota_done = (self._fatigue_skip(study_s, work_s)
-                              or self._quota_over(study_s, self.study_quota_hours)
-                              or self._duration_over(study_s, work_s))
-            elif key == 'work':
-                # 疲劳提示 / 打工配额满 / 打工停止时长已达：
-                # 显示"今日完成"，明天时长清零后恢复
-                study_s, work_s = self._load_durations()
-                quota_done = (self._fatigue_skip(study_s, work_s)
-                              or self._quota_over(work_s, self.work_quota_hours)
-                              or self._work_over(study_s, work_s))
+            # 每日配额已完成（踩踩/PK/冒险当天次数已满）：显示"今日完成"，不再计入待执行/等待中。
+            # 判定统一走 _task_done_today() —— 这里原先内联了一份，且**漏了 _dead**，
+            # 导致"某场景当天被标记 dead 后，调度器不执行、界面却仍显示待执行"的哑火
+            # （见 docs/review/06-后端架构拆分.md B/G 节）。
+            quota_done = self._task_done_today(key, tasks)
             if quota_done:
                 nxt = (self._next_daily_time(cfg.daily_times, now)
                        if cfg.trigger == 'daily' else None)
@@ -2375,6 +2363,50 @@ class TaskQueueRunner(Runner):
             return True
         _, done, _ = load_progress(HIRE_FRIEND_PROGRESS_FILE, quiet=True)
         return done >= hf.times_per_day
+
+    def _task_done_today(self, key: str, tasks: dict) -> bool:
+        """**唯一**的"某个任务今天是否已完成"判定 —— 调度与显示共用同一份口径。
+
+        背景（docs/review/06-后端架构拆分.md B/G 节）：这个判断原先有两份实现，
+        口径还不一致：
+          · `_main_finished()`（调度用）算了 `_dead(tasks, key)`；
+          · `_write_queue_status()` 内联的那份（**显示用**）**漏了 `_dead`**。
+        后果是哑火：某场景当天被标记 dead 后，调度器不再执行它，但界面的
+        "待执行/等待中"仍把它算作可跑 —— 用户看到"应该在做却一直不动"。
+
+        现在两边都调这里，口径不可能再漂移。注意 `_main_finished` 里 fatigue 是
+        作为公共因子处理的（"只第二层才算当天结束"），这里按任务各自的口径判定，
+        与它合并后语义不变。
+        """
+        if self._dead(tasks, key):
+            return True
+        if key == 'visit':
+            if not self.visit_times:
+                return False
+            _, done, _ = load_progress(VISIT_PROGRESS_FILE, quiet=True)
+            return done >= self.visit_times and exp_daily_done()
+        if key == 'pk':
+            if not self.pk_times:
+                return False
+            _, done, _ = load_progress(PK_PROGRESS_FILE, quiet=True)
+            return done >= self.pk_times
+        if key == 'adventure':
+            return self._adventure_done(tasks)
+        if key == 'hire_friend':
+            return self._hire_friend_done(tasks)
+        if key == 'school':
+            # 疲劳提示 / 学习配额满 / 合计达上限：今天不再学习，显示"今日完成"
+            study_s, work_s = self._load_durations()
+            return (self._fatigue_skip(study_s, work_s)
+                    or self._quota_over(study_s, self.study_quota_hours)
+                    or self._duration_over(study_s, work_s))
+        if key == 'work':
+            # 疲劳提示 / 打工配额满 / 打工停止时长已达：明天时长清零后恢复
+            study_s, work_s = self._load_durations()
+            return (self._fatigue_skip(study_s, work_s)
+                    or self._quota_over(work_s, self.work_quota_hours)
+                    or self._work_over(study_s, work_s))
+        return False
 
     def _main_finished(self, tasks: dict) -> bool:
         """主任务组（冒险/学习/打工/雇佣好友）今天是否已全部结束：
