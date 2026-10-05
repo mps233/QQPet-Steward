@@ -116,12 +116,16 @@
 }
 /* 第 3 颗起各补 1.8u 的额外间距 → 步进回到官方的 60.0 */
 .v2-rail .rbtn:nth-child(n+3){ margin-top:calc(var(--u) * 1.8) }
-/* 右栏：官方右圆钮 x = 418.2dp、右边距 19.6dp → 用 margin-right 顶到右边 */
+/* 右栏：官方右圆钮 x=418.2dp、宽 42.2 → 右边距 19.6dp。
+   列宽用 **50.2**（= 功能栏宽度，两者中较宽者），这样功能栏放得下；
+   圆钮在列内**居中**（官方两者中心相同 439.3）。
+   ⚠ 若列宽只给 42.2，功能栏会溢出列的右边界；若用 align-items:flex-start，
+   功能栏又会比圆钮偏右 4px（用户指出过）。 */
 .v2-rail.right{
   margin-left:0;
-  margin-right:calc(var(--u) * 19.6);
-  width:calc(var(--u) * 42.2);
-  align-items:flex-start;
+  margin-right:calc(var(--u) * 15.6);   /* 19.6 − (50.2−42.2)/2 = 15.6：让中心的右边距回到 19.6 */
+  width:calc(var(--u) * 50.2);
+  align-items:center;
 }
 /* 中间内容列：官方 x = 74.2dp（= 20 + 42.2 + 12），宽 331.8dp。
    宽度由 grid 的 `minmax(0, 1fr)` 决定（480dp 屏上正好 331.8 —— 与官方一致），
@@ -235,17 +239,12 @@
   flex-direction:column;
   gap:calc(var(--u) * 16);
 }
-/* 右列：圆钮（42u）+ 功能栏（50u）宽度不同 —— 让整列取较宽者并**左对齐**，
-   这样圆钮与功能栏的左缘与 V1 一致（V1 两者都是 x319）。
-   实测不这样处理时功能栏会把整列撑宽、圆钮被推到右边（偏 26px）。 */
-/* 右列：圆钮 42u、功能栏 50u —— 列宽取**圆钮宽**（对齐 V1 的圆钮 x323），
-   功能栏从列的左缘开始、多出的 8u 往右溢出（V1 里功能栏 x319 比圆钮 x323 还靠左 4px，
-   两者本来就不同轴）。 */
-.v2-rail.right{
-  width:calc(var(--u) * 42);
-  align-items:flex-start;
-}
-.v2-rail-right-btns{ align-items:flex-start }
+/* 右列的宽度与对齐统一在文件前面那条 `.v2-rail.right` 里定义
+   （宽 50.2 = 功能栏宽度，列内居中 → 圆钮与功能栏中心相同）。
+   ⚠ 这里**不要**再写一条 `.v2-rail.right{width:...}` —— 同特异性下后写的胜出，
+     会静默覆盖前面那条。曾经就是因此把宽度改回 42.2、功能栏溢出列外 4px、
+     整组偏右 4px（实测圆钮中心 443.3，官方 439.3）。 */
+.v2-rail-right-btns{ align-items:center }
 /* 功能栏按 V1 的位置微调：第 3 颗圆钮底 → 功能栏顶，按实测对齐到 y259。 */
 .v2-funcseat{ margin-top:calc(var(--u) * 40) }
 .v2-funcseat .funcbar{
