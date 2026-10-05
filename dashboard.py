@@ -16,6 +16,7 @@
 """
 
 import errno
+import gzip
 import io
 import json
 import os
@@ -62,6 +63,18 @@ except Exception as _qs_err:           # 缺 ruamel/yaml 等极端环境：退�
 LOGS = RUNS / 'logs'
 ADV_LIVE_FILE = RUNS / 'adventure_live.jsonl'   # 冒险统一记录（实验 300 把 + 日常实时）
 DEFAULT_PORT = 8787
+
+# ---- 静态资源的传输优化（见 docs/review/03-p0-交付链与安全.md B/C 节）----
+# 小于此不压：省 CPU，收益也小。
+_GZIP_MIN = 1024
+# 只压文本类。png/jpg/woff2/mp4 本身已压缩，再压纯属浪费 CPU。
+_GZIP_TYPES = re.compile(
+    r'^(text/|application/(javascript|json|manifest\+json)|image/svg\+xml)')
+# 带内容 hash 的 Vite 产物名（如 index-BYrpw4Vd.js）→ 内容变 URL 就变，可长缓存。
+# 不带 hash 的（/next/index.html 之类兼容别名）仍走 no-store，否则用户永远停在旧版本。
+_HASHED_ASSET_RE = re.compile(r'-[A-Za-z0-9_-]{8,}\.')
+CACHE_IMMUTABLE = 'public, max-age=31536000, immutable'
+CACHE_NONE = 'no-store'
 
 # ---- PWA：应用清单 + Service Worker（离线兜底；SW 需 https/localhost 才注册）----
 MANIFEST_JSON = json.dumps({
@@ -1490,6 +1503,16 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header('Content-Type', ctype)
         self.send_header('Cache-Control', cache)
+        # 文本类按客户端声明压缩（实测 index-*.js 470510 → 107851 B）。
+        # ⚠ 压缩必须在 Content-Length 之前完成，否则长度对不上会截断下载（页面白屏）。
+        if (len(body) >= _GZIP_MIN
+                and _GZIP_TYPES.match(ctype)
+                and 'gzip' in (self.headers.get('Accept-Encoding') or '')):
+            body = gzip.compress(body, 6)
+            self.send_header('Content-Encoding', 'gzip')
+            # 同一 URL 因 Accept-Encoding 返回不同字节 → 必须声明 Vary，
+            # 否则中间缓存可能把 gzip 版本发给不支持的客户端。
+            self.send_header('Vary', 'Accept-Encoding')
         self.send_header('Content-Length', str(len(body)))
         self.end_headers()
         try:
@@ -1569,11 +1592,18 @@ class Handler(BaseHTTPRequestHandler):
                 _NCT = {'.html': 'text/html; charset=utf-8',
                         '.js': 'application/javascript',
                         '.css': 'text/css', '.json': 'application/json',
-                        '.map': 'application/json', '.png': 'image/png',
+                        '.png': 'image/png',
                         '.svg': 'image/svg+xml', '.woff2': 'font/woff2'}
+                # 注：**不再放行 `.map`** —— 它含完整 TS/TSX 源码，而仪表盘无鉴权，
+                # 内网任何人可直接下载。构建侧也已关掉 sourcemap（vite.config.ts），
+                # 这里兜底防"将来有人又把 sourcemap 打开"。见 03 文档 D 节。
                 # 与 /qp-icons 同样的归属校验：resolve 后必须仍在 web/dist 内
                 if fp.is_file() and fp.is_relative_to(root) and fp.suffix.lower() in _NCT:
-                    self._send(200, _NCT[fp.suffix.lower()], fp.read_bytes())
+                    # 带内容 hash 的产物可长缓存（Vite 文件名自带 hash）；
+                    # index.html 等不带 hash 的仍 no-store，否则发现不了新版本。
+                    cache = (CACHE_IMMUTABLE if _HASHED_ASSET_RE.search(fp.name)
+                             else CACHE_NONE)
+                    self._send(200, _NCT[fp.suffix.lower()], fp.read_bytes(), cache)
                 else:
                     self._send(404, 'text/plain; charset=utf-8',
                                b'not found (build first: cd web && ./build.sh)')

@@ -9,9 +9,14 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
-    // 调试方便：产物不压缩（迁移期）。迁完可去掉。
-    minify: false,
-    sourcemap: true,
+    // 生产构建：压缩 + 不产出 sourcemap。
+    // 历史：迁移期为了调试写成 minify:false + sourcemap:true，注释也写着"迁完可去掉"，
+    // 但迁移完成后一直没去掉。代价（实测）：JS 明文 470KB（gzip 后 109KB）、
+    // 外加一个 804KB 的 .map 被 dashboard.py 的 /assets/* 白名单公开下载
+    // （而仪表盘本身无鉴权）。见 docs/review/03-p0-交付链与安全.md A/D 节。
+    // 需要调试时用 `npm run dev` —— Vite dev server 自带 sourcemap，与产物无关。
+    minify: 'esbuild',
+    sourcemap: false,
   },
   server: {
     port: 5173,

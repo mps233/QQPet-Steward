@@ -27,7 +27,15 @@ if [ ! -d node_modules ]; then
 fi
 
 echo "node: $(node -v)"
+# 先类型检查再构建：package.json 的 "build" 是 `tsc -b && vite build`，而这个脚本
+# 原先只跑 vite —— 于是 `./build.sh` 会放过所有类型错误（与 npm run build 行为不一致）。
+node node_modules/typescript/bin/tsc -b
 node node_modules/vite/bin/vite.js build
 
 SIZE=$(wc -c < dist/assets/*.js 2>/dev/null | tail -1 | tr -d ' ')
 echo "✓ 构建完成（bundle ${SIZE} 字节）→ 打开 http://<host>:8787/"
+
+# 布局回归体检（防"改完没报错但界面坏了"）。退出码 2 = 环境不满足（如 dashboard 没起），不阻塞。
+if [ -x ../tools/layout-check.sh ]; then
+  ../tools/layout-check.sh --sizes "390x844" || [ $? -eq 2 ] || echo "⚠ 布局断言未通过，见上方输出"
+fi

@@ -40,3 +40,4 @@ runs/friends_cache.json
 # 前端工程（React + TS）构建产物
 web/node_modules/
 web/dist/
+web/tsconfig.tsbuildinfo

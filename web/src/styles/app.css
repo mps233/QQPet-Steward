@@ -3,10 +3,20 @@
    --------------------------------------------------------------------------
    设计依据：qqpet_assets/web/UI_TREE_OFFICIAL.md
      · 官方运行时 uiautomator dump（Kuikly 暴露的 content-desc + bounds）
-     · 逻辑画布 480dp；边距 20dp；圆钮 42dp；胶囊高 28dp；
-       左列圆钮 y=28/86/146/206（步进 60dp）；胶囊行 y=86/126（步进 40dp）
+     · **官方逻辑画布 480×853 dp**（1080×1920 px / density 360，1dp = 2.25px；
+       该比值经 dump 与截图测量两条独立路径交叉验证，见 UI_TREE_OFFICIAL.md 第 0 节）
+     · 官方坐标示例：边距 20dp；圆钮 42dp；胶囊高 28dp
      · 配色取自 Kuikly 反编译代码里的 ARGB 常量（非目测）
-   组织原则：token 只定义一次；结构分层（token → 基础 → 骨架 → 总览 → 卡片
+
+   ⚠️ **本项目不直接用 480 当分母**：`--u` = 可用宽度 / **360**（见下方 :root）。
+     二者关系要分清，历史上混用导致过误判：
+       · 官方画布 480dp 是**被测设备**的事实（1080px 宽 / 2.25）；
+       · 本项目的 360 是**自定义缩放分母** —— 把官方 480dp 画布整体重映射到
+         360 单位的坐标系里（等效缩小 25%），使 360 个 u 恰好铺满浏览器视口宽。
+     因此 dump 里的官方 dp 值**不能直接当 u 用**，要按 360/480 = 0.75 折算
+     （例：官方圆钮 42dp → 42 × 0.75 = 31.5u）。改坐标前先确认用的是哪套。
+
+  组织原则：token 只定义一次；结构分层（token → 基础 → 骨架 → 总览 → 卡片
              → 表单 → 响应式 → 深色），避免历史版本的选择器重复覆盖。
    ========================================================================== */
 
@@ -165,14 +175,50 @@ body{
 ::-webkit-scrollbar-corner{background:transparent}
 .hide{display:none!important}
 
-/* ---------- 3. 骨架：480dp 浮动层舞台 ---------- */
-/* 单位系统：--u = 1dp = 屏宽/480。官方逻辑画布就是 480dp，所有坐标直接用它。 */
+/* ============================================================
+   S0 · 舞台高度锁（唯一真源 · 改动前先读 docs/review/04-布局系统与高度链.md）
+   ------------------------------------------------------------
+   契约：从 html 到 section[data-page] 的每一层必须"高度已确定"。
+   .home / 内页容器里全是 position:absolute 的浮动层，撑不开父级；
+   min-height:100% 依赖父级有确定高度。断任意一层 → 整页塌成只剩背景。
+
+   历史：这个错犯过 3 次，断点分别在 .app、main、.page-slot。
+
+   规则：
+     ① 链条上的层用 `height:100%` 或 `position:absolute;inset:0`；
+     ② **inset 那一层（.page-slot）绝不能改成 position:relative** ——
+        它会退化成"由内容撑高"，而内容全是绝对定位 → 高度塌成 0；
+     ③ 新增任何 wrapper 必须自带 height:100% 或 display:contents；
+     ④ main 上不要加 overflow（会二阶裁切，且让 slot 的滚动高度算不对）。
+
+   自动校验：`./tools/layout-check.sh`（断言 P1/P2/P3）——改骨架后必跑。
+   ============================================================ */
+#root{display:contents}                 /* 布局上消失：.app 直接成为 body 的布局子元素
+                                           （原因见下方 .app 段的历史注释） */
+.app,
+.app > main{height:100%}
+.app > main{position:relative;overflow:visible}   /* 转场动画的定位上下文 */
+main .page-slot{
+  position:absolute;inset:0;            /* ← inset 锁高度，禁用 relative 替代 */
+  overflow-y:auto;overflow-x:hidden;
+  overscroll-behavior:none;will-change:transform;
+}
+main section[data-page]{min-height:100%}  /* .home 与内页共用（内页另有背景色覆盖） */
+
+/* ---------- 3. 骨架：360 单位浮动层舞台 ---------- */
+/* 单位系统：--u = 1u = 可用宽度 / 360。
+   分母 360 是本项目的**自定义缩放基准**（不是官方画布宽度）：
+   官方手机版画布是 **480×853 dp**（1080×1920 / density 360，见文件头设计依据），
+   本项目把它整体重映射到 360 单位的坐标系，使 360u 恰好铺满视口宽。
+   → dump 里的官方 dp 值要按 360/480 = 0.75 折算后才能当 u 用
+     （官方圆钮 42dp → 31.5u）。
+   由 lib/stage.ts 写 --vu（用 clientWidth 而不是 100vw —— 后者含滚动条宽，会让坐标
+   偏大约 2%），第 115 行的 `calc(100vw / 360)` 只是 JS 未执行时的兜底。
+   纵向坐标一律写绝对值 `N × u`，不依赖任何"画布高度"概念。 */
 /* React 版的挂载层：#root(display:contents) → .app → main → section[data-page]。
    `.home{min-height:100%}` 要求**这条链上每一层都有确定高度**，断一层百分比就失效、
    整页塌成只剩背景（实测两次踩坑：先只给 .home 写 100% → 塌；补了 .app 的高度、
-   漏了中间的 main → 还是塌）。这里把两层一起钉住。 */
-.app,
-.app > main{height:100%}
+   漏了中间的 main → 还是塌）。规则集中在文件顶部 **S0 区块**。 */
 
 /* ---- 页面级转场：iOS 那种（前后两页同时在场，旧页往左让、新页从右推入）----
    不是单页滑入 —— 单页那种旧页会瞬间消失，看着不像原生。
@@ -181,21 +227,17 @@ body{
    注意：动画期间容器上有 transform，会让内部的 position:fixed 子孙（#bgSheet、
    #liveToast）暂时相对它定位 —— 只在切页那 320ms 内存在，期间不会去开面板，
    所以没影响；但别把这套挂到常驻容器上。 */
-.app > main{position:relative}
 /* 两个 slot 都必须是**绝对定位**、叠在 main 上。别给 .page-enter 加
    `position:relative` —— 那会让当前页变成"由内容撑高"，而 .home 里全是绝对定位的
    浮动层、撑不开它，`.home{min-height:100%}` 的百分比随之失效，整页塌成只剩背景
    （实测踩过一次：加上 relative 之后立刻"什么都没有了只留背景"）。
 
    **滚动**：slot 是 absolute + inset:0，高度被锁成一屏，所以滚动必须由 slot 自己承担
-   （`overflow-y:auto`）—— 之前给它写 `overflow:hidden`、外加 main 上的 overflow:hidden，
+   —— 之前给它写 `overflow:hidden`、外加 main 上的 overflow:hidden，
    结果内页内容超出就被裁掉、又滚不动（用户实报"每个页面都不能滑动了"）。
-   overscroll-behavior:none 是既有的防回弹约定。
-   main 上**不要**加 overflow:hidden：那会二阶裁切，且会让 slot 的滚动高度算不对。 */
-.page-slot{
-  position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;
-  overscroll-behavior:none;will-change:transform;
-}
+   main 上**不要**加 overflow.hidden：那会二阶裁切，且会让 slot 的滚动高度算不对。
+
+   ↑ 以上规则的**声明**已集中到文件顶部 S0 区块（main .page-slot），此处仅留说明。 */
 .page-enter{z-index:2}
 .page-leave{z-index:1}
 @keyframes qp-enter-fwd{from{transform:translateX(100%)}to{transform:translateX(0)}}
@@ -211,18 +253,18 @@ body{
 }
 
 .home{
-  /* 单位基准：1dp = 可用宽度 / 360。
-     **基准是 360 不是 480** —— 官方手机版逻辑画布是 360dp（真机 density480）：
-     按钮 42dp 占屏宽 11.67%。若按 480dp（平板/模拟器版）做，按钮只占 8.75%，
-     会明显偏小（实测小了 25%）。
-     不用 100vw：它含滚动条宽度，会让坐标偏大约 2%。由 JS 写入 --vu。 */
+  /* 单位换算见文件顶部 S0 区块：--u = 可用宽度 / 360（**不是 480**）。 */
 
   position:relative;
   width:100%;max-width:100vw;
   box-sizing:border-box;
-  overflow-x:hidden;
-  /* 官方画布 853dp；用 --u 乘出来即可。
-     注意不要写 calc(100% * N) —— 百分比在 min-height 里会被当相对高度算。 */
+  /* 纵向也要 hidden：只写 overflow-x:hidden 时，CSS 规范会把 overflow-y 的计算值
+     提升为 auto —— 于是任何亚像素溢出（.deck 的 top 由 calc 算出，会产生 448.0001
+     这类值，而 scrollHeight 取整）都变成"可滚动 1px"，表现为"总览页能多滑一点"。
+     这里显式压掉。已由 tools/layout-check.sh 的 P2 断言守护。
+     横向保持 hidden：背景图/浮动层溢出不该产生横向滚动。 */
+  overflow:hidden;
+  /* 注意不要写 calc(100% * N) —— 百分比在 min-height 里会被当相对高度算。 */
   /* 高度：**body 已经有 padding-top: env(safe-area-inset-top)**，
      所以这里只要"填满 body 的内容区"就行 → `100%`。
 
@@ -1544,8 +1586,8 @@ html[data-page]:not([data-page="main"]){background-image:none;background-color:#
      （WebKit 把该属性映射到 UIScrollView 的 elasticity，**根滚动器是特例**）。
    - `display:contents` 让这层**在布局上消失** —— `.app` 直接成为 `body` 的布局子元素，
      与旧版的 DOM 结构完全等价，这才是根治。
-   （Safari 11.1+ / Chrome 65+ 支持 display:contents） */
-#root{display:contents}
+   （Safari 11.1+ / Chrome 65+ 支持 display:contents）
+   ↑ 声明已集中到文件顶部 S0 区块。 */
 
 /* 总览页的滚动容器是 `section.home` 自己（它带 overflow-y:auto，页面里的浮动层都是
    绝对定位，scrollHeight 由它们的最远边界决定），而它的 overscroll-behavior 是默认的
