@@ -29,6 +29,7 @@ import time
 from datetime import datetime
 
 from .config import PROJECT_ROOT
+from .jsonio import write_json
 
 QUEUE_STATUS_FILE = PROJECT_ROOT / 'runs' / 'queue_status.json'
 
@@ -67,9 +68,9 @@ def mark_stopped() -> None:
 
 def _write(state: dict) -> None:
     try:
-        QUEUE_STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        QUEUE_STATUS_FILE.write_text(
-            json.dumps(state, ensure_ascii=False), encoding='utf-8')
+        # 原子写：dashboard 每 6 秒读这个文件，裸 write_text 存在"截断后未写完"
+        # 的窗口 → 界面会闪现"队列空了"。见 docs/review/07-进程间契约.md B 节。
+        write_json(QUEUE_STATUS_FILE, state)
     except OSError:
         pass
 

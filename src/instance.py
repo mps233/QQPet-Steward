@@ -29,6 +29,8 @@ import subprocess
 import time
 from pathlib import Path
 
+from .jsonio import write_json
+
 #: PID 复用窗口内的兜底校验：pidfile 里的启动时间比这个还"未来"就认为不可信
 _MAX_CLOCK_SKEW = 300.0
 
@@ -82,13 +84,9 @@ def read_pidfile(path: Path) -> dict | None:
 
 
 def write_pidfile(path: Path, argv: list[str] | None = None) -> None:
-    """登记当前进程（原子写：先写 .tmp 再 replace，避免读到半个文件）。"""
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    """登记当前进程（原子写，避免读到半个文件）。"""
     payload = {'pid': os.getpid(), 'started': time.time(), 'argv': argv or []}
-    tmp = path.with_suffix(path.suffix + '.tmp')
-    tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding='utf-8')
-    os.replace(tmp, path)
+    write_json(Path(path), payload)
 
 
 def clear_pidfile(path: Path, pid: int | None = None) -> None:

@@ -17,6 +17,7 @@ import json
 from datetime import date
 
 from .config import PROJECT_ROOT
+from .jsonio import write_json
 
 HIRE_QUOTA_FILE = PROJECT_ROOT / 'runs' / 'hire_quota.json'
 
@@ -50,9 +51,8 @@ def load_hire_quota() -> tuple[str, dict[str, int]]:
 
 def _write(today: str, mins: dict[str, int]) -> None:
     try:
-        HIRE_QUOTA_FILE.parent.mkdir(parents=True, exist_ok=True)
-        HIRE_QUOTA_FILE.write_text(
-            json.dumps({'date': today, 'mins': mins}, ensure_ascii=False), encoding='utf-8')
+        # 原子写（见 docs/review/07-进程间契约.md B 节）
+        write_json(HIRE_QUOTA_FILE, {'date': today, 'mins': mins})
     except OSError:
         pass   # 记账失败只影响"还要不要雇"，不该让打工中断
 

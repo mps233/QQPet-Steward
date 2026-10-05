@@ -21,6 +21,7 @@ import json
 import time
 
 from .config import PROJECT_ROOT
+from .jsonio import write_json
 from .progress import log
 
 STATUS_CACHE_FILE = PROJECT_ROOT / 'runs' / 'status_cache.json'
@@ -55,9 +56,8 @@ def load_accounts() -> dict[str, dict]:
 
 def _save(data: dict) -> None:
     try:
-        STATUS_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        STATUS_CACHE_FILE.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
+        # 原子写（见 docs/review/07-进程间契约.md B 节）
+        write_json(STATUS_CACHE_FILE, data, indent=2)
     except OSError as e:
         log(f'状态缓存写入失败: {e}')
 

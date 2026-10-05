@@ -89,6 +89,7 @@ from src.config import (
     load_config,
 )
 from src.fatigue import fatigue_today
+from src.jsonio import write_text_atomic
 from src.notify import notify_error, send_alert, send_career_unlock, send_event
 from src import instance
 from src import opener
@@ -1331,8 +1332,8 @@ def sleep_interruptible(seconds: float, chunk: float = 1.0) -> None:
 def touch_reload_signal() -> None:
     """写热加载信号（设置保存后调用）。"""
     try:
-        RELOAD_SIGNAL.parent.mkdir(parents=True, exist_ok=True)
-        RELOAD_SIGNAL.write_text(str(time.time()), encoding='utf-8')
+        # 原子写（见 docs/review/07-进程间契约.md S2）
+        write_text_atomic(RELOAD_SIGNAL, str(time.time()))
     except OSError as e:
         log(f'写热加载信号失败: {e}')
 

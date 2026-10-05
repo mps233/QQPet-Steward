@@ -42,6 +42,7 @@ import cv2
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from src.jsonio import write_json
 from src.ocr import find_text, ocr_fullscreen, ocr_rec_only, ocr_texts
 from src.progress import (
     PK_PROGRESS_FILE,
@@ -352,11 +353,11 @@ class PKScenario(VisitScenario):
     def _save_helper_state(self, name: str, source: str) -> None:
         """记住当前打手——兜底雇的人靠它跨 run 保持，不被当"不在名单"解雇。"""
         try:
-            HELPER_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-            with open(HELPER_STATE_FILE, 'w', encoding='utf-8') as f:
-                json.dump({'name': name, 'source': source,
-                           'at': time.strftime('%Y-%m-%d %H:%M:%S')},
-                          f, ensure_ascii=False, indent=2)
+            # 原子写（见 docs/review/07-进程间契约.md B 节）
+            write_json(HELPER_STATE_FILE, {
+                'name': name, 'source': source,
+                'at': time.strftime('%Y-%m-%d %H:%M:%S'),
+            }, indent=2)
         except Exception as e:
             log(f'PK 打手: 状态写入失败（忽略）: {e}')
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+import os
 import yaml
 from ruamel.yaml import YAML
 from ruamel.yaml.scalarstring import DoubleQuotedScalarString, LiteralScalarString
@@ -296,9 +297,16 @@ def load_raw():
 
 
 def save_raw(data) -> None:
-    """写回 config.yaml（保留原有注释和格式）。"""
-    with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+    """写回 config.yaml（保留原有注释和格式）。
+
+    **原子写**：调度器每轮调度前都会重读这个文件（runner.reload_config），
+    裸 `open(w)` 存在"截断后未写完"的窗口 —— 那时调度器读到的可能是半截 YAML，
+    表现为"改了设置却提示读取失败"。见 docs/review/07-进程间契约.md S2。
+    """
+    tmp = CONFIG_FILE.with_name(CONFIG_FILE.name + '.tmp')
+    with open(tmp, 'w', encoding='utf-8') as f:
         _yaml.dump(data, f)
+    os.replace(tmp, CONFIG_FILE)
 
 
 def get_value(data, dotted_key: str, default=None):

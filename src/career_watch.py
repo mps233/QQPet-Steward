@@ -25,6 +25,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .config import PROJECT_ROOT
+from .jsonio import write_json
 from .ocr import ocr_fullscreen
 from .progress import log as _log
 from .u2dev import save_png
@@ -132,9 +133,7 @@ def save_attrs(attrs: dict) -> None:
     except Exception:
         data = {}
     data.update({'力': attrs['力量'], '智': attrs['智力'], '魅': attrs['魅力']})
-    tmp = PLAN_FILE.with_suffix('.json.tmp')
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), 'utf-8')
-    tmp.replace(PLAN_FILE)
+    write_json(PLAN_FILE, data, indent=1)
 
 
 def load_unlock_data() -> dict:
@@ -151,10 +150,7 @@ def load_unlock_data() -> dict:
 
 def save_unlock_data(data: dict) -> None:
     try:
-        UNLOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
-        tmp = UNLOCK_FILE.with_suffix('.json.tmp')
-        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), 'utf-8')
-        tmp.replace(UNLOCK_FILE)
+        write_json(UNLOCK_FILE, data, indent=1)
     except OSError:
         pass
 

@@ -31,6 +31,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src import opener
+from src.jsonio import write_json
 from src.locators import LOCATORS, see_bounds
 from src.ocr import ocr_texts
 from src.progress import (
@@ -103,14 +104,13 @@ def save_friends_cache(names: list[str]) -> None:
         for n in clean:
             if n not in merged:
                 merged.append(n)
-        FRIENDS_CACHE_FILE.write_text(
-            _json.dumps({
-                'names': merged,
-                'source': 'friend_list_content_desc',
-                'note': '好友列表的主人昵称（非宠物名）；宠物名请在设置页手动输入',
-                'updated': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            }, ensure_ascii=False, indent=1),
-            encoding='utf-8')
+        # 原子写（见 docs/review/07-进程间契约.md B 节）
+        write_json(FRIENDS_CACHE_FILE, {
+            'names': merged,
+            'source': 'friend_list_content_desc',
+            'note': '好友列表的主人昵称（非宠物名）；宠物名请在设置页手动输入',
+            'updated': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        }, indent=1)
     except OSError as e:
         log(f'写好友缓存失败: {e}')
 

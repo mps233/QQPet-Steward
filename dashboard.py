@@ -44,6 +44,7 @@ RUNNER_PID = RUNS / 'runner.pid'      # 调度器自己写的单实例登记（�
 
 sys.path.insert(0, str(BASE))          # 让 `import src.instance` 在源码运行/打包都成立
 from src import instance  # noqa: E402  （判活工具：pidfile + os.kill(pid,0)，不依赖 ps）
+from src.jsonio import write_json, write_text_atomic  # noqa: E402  （统一原子写）
 
 try:                                   # 队列状态的"已停止"标记（字段格式见 src/queue_status.py）
     from src.queue_status import mark_stopped as mark_queue_stopped  # noqa: E402
@@ -51,12 +52,20 @@ except Exception as _qs_err:           # 缺 ruamel/yaml 等极端环境：退�
     print(f'[dashboard] src.queue_status 不可用（停止时改本地写）：{_qs_err}', flush=True)
 
     def mark_queue_stopped() -> None:
+        # 降级副本：正常路径用的是 src.queue_status.mark_stopped（见上方 import）。
+        # 字段必须与 src/queue_status.py 的 mark_stopped 保持一致 —— 这里原先少了
+        # next_reason / note，导致前端在这条路径下读到 undefined（见
+        # docs/review/07-进程间契约.md S4 的 schema 漂移）。
+        # 也改为原子写（tmp + os.replace）：消费端可能恰好读到这里写的文件。
         try:
-            (RUNS / 'queue_status.json').write_text(json.dumps({
-                'current': '', 'pending': '', 'next': '', 'next_at': '', 'next_ts': 0,
-                'ready': 0, 'waiting': 0, 'tasks': {}, 'stopped': True, 'pid': None,
-                'updated': datetime.now().strftime('%H:%M:%S')}, ensure_ascii=False),
-                encoding='utf-8')
+            from src.jsonio import write_json
+            write_json(RUNS / 'queue_status.json', {
+                'current': '', 'pending': '', 'next': '', 'next_reason': '', 'note': '',
+                'next_at': '', 'next_ts': 0,
+                'ready': 0, 'waiting': 0, 'tasks': {},
+                'stopped': True, 'pid': None,
+                'updated': datetime.now().strftime('%H:%M:%S'),
+            })
         except OSError:
             pass
 
@@ -246,7 +255,9 @@ PAUSE_SIGNAL = RUNS / 'pause.signal'
 def scheduler_pause() -> dict:
     """网页接管：写暂停信号，让调度器在安全点让路（不退出进程、pending 与进度全保留）。"""
     try:
-        PAUSE_SIGNAL.write_text(str(time.time()), encoding='utf-8')
+        # 原子写：调度器靠 mtime 判"信号是否新鲜"，写到一半被读会拿到半截时间戳。
+        # os.replace 用的是 tmp 的 mtime（即刚写入的时刻），语义不变。
+        write_text_atomic(PAUSE_SIGNAL, str(time.time()))
     except OSError as e:
         return {'ok': False, 'msg': f'写暂停信号失败：{e}'}
     audit('调度器让路（网页接管，来自仪表盘）')
@@ -975,10 +986,7 @@ def apply_plan(updates: dict) -> dict:
         else:
             rejected.append(f'{k}: 不支持')
     if applied:
-        RUNS.mkdir(parents=True, exist_ok=True)
-        tmp = PLAN_FILE.with_suffix('.json.tmp')
-        tmp.write_text(json.dumps(v, ensure_ascii=False, indent=1), 'utf-8')
-        tmp.replace(PLAN_FILE)
+        write_json(PLAN_FILE, v, indent=1)
     return {'ok': not rejected, 'applied': applied, 'rejected': rejected}
 
 
@@ -1729,8 +1737,7 @@ class Handler(BaseHTTPRequestHandler):
                 # 唤醒调度器立即重读配置（否则它可能正在 30s 轮询睡眠里等下一轮）
                 if result.get('ok') and result.get('applied'):
                     try:
-                        (RUNS / 'reload.signal').write_text(
-                            str(time.time()), encoding='utf-8')
+                        write_text_atomic(RUNS / 'reload.signal', str(time.time()))
                     except OSError:
                         pass
                 body = json.dumps(result, ensure_ascii=False).encode('utf-8')

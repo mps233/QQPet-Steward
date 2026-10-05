@@ -25,6 +25,8 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Callable
 
+from .jsonio import write_json
+
 _log: Callable[[str], None] = lambda msg: None
 
 
@@ -70,11 +72,8 @@ def read_raw(path: Path) -> dict:
 
 
 def write_raw(path: Path, data: dict) -> None:
-    """原子写入：先写 <文件>.tmp 再 os.replace 覆盖（避免写一半被杀留损坏文件）。"""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + '.tmp')
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
-    os.replace(str(tmp), str(path))
+    """原子写入（避免写一半被杀留损坏文件）。实现统一在 src/jsonio.py。"""
+    write_json(path, data, indent=2)
 
 
 def normalize(data: dict) -> tuple[dict, bool]:
