@@ -79,42 +79,46 @@ export function OverviewV2({
 
   return (
     <section className="v2-home" data-page="main">
-      {/* ── row 1：顶部信息（资料卡 + 胶囊）── */}
-      <div className="v2-top">
-        <IdCard data={data} open={petOpen} onToggle={setPetOpen} />
-        <Capsules data={data} />
-      </div>
+      {/* 左右圆钮从**顶部**开始（与资料卡同一水平线）——
+          V1 里它们是浮动层，跨越"资料卡/胶囊/任务卡"三块；
+          所以 V2 用「两列 rail 贯穿 + 中间列（top+seat）竖排」的 grid，
+          而不是把 rail 塞进任务卡那一行（那样圆钮会被推到 y174 才开始，
+          功能栏也跟着低 150px）。见本文件顶部对 V1 规格的说明。 */}
+      <nav className="v2-rail left" aria-label="导航">
+        <button
+          className="rbtn"
+          id="btnScene"
+          title="房间背景（点按选择 / 长按换下一张）"
+          {...sceneBtnHandlers}
+        >
+          <img src="/qp-icons/official/off_l1_tshirt.png" alt="" />
+        </button>
+        <button className="rbtn" title="设置" onClick={() => onNav('set')}>
+          <img src="/qp-icons/official/off_l2_gear.png" alt="" />
+        </button>
+        <button className="rbtn" title="日志" onClick={() => onNav('log')}>
+          <img src="/qp-icons/official/off_l3_diary.png" alt="" />
+        </button>
+        <button className="rbtn" title="通知" onClick={() => onNav('notify')}>
+          <img src="/qp-icons/official/off_l4_bell.png" alt="" />
+        </button>
+      </nav>
 
-      {/* ── row 2：圆钮列 + 任务列表 ── */}
-      <div className="v2-mid">
-        {/* 左列：官方 4 个（返回/设置/消息/日记） —— 本工具把第一个换成"房间背景" */}
-        <nav className="v2-rail left" aria-label="导航">
-          <button
-            className="rbtn"
-            id="btnScene"
-            title="房间背景（点按选择 / 长按换下一张）"
-            {...sceneBtnHandlers}
-          >
-            <img src="/qp-icons/official/off_l1_tshirt.png" alt="" />
-          </button>
-          <button className="rbtn" title="设置" onClick={() => onNav('set')}>
-            <img src="/qp-icons/official/off_l2_gear.png" alt="" />
-          </button>
-          <button className="rbtn" title="日志" onClick={() => onNav('log')}>
-            <img src="/qp-icons/official/off_l3_diary.png" alt="" />
-          </button>
-          <button className="rbtn" title="通知" onClick={() => onNav('notify')}>
-            <img src="/qp-icons/official/off_l4_bell.png" alt="" />
-          </button>
-        </nav>
-
-        {/* 中间：任务列表（V2 里它真的撑满剩余高度，内容多就自然滚动） */}
+      <div className="v2-center">
+        {/* 顶部信息（资料卡 + 胶囊） */}
+        <div className="v2-top">
+          <IdCard data={data} open={petOpen} onToggle={setPetOpen} />
+          <Capsules data={data} />
+        </div>
+        {/* 任务卡 */}
         <div className="v2-seat">
           <TaskList data={data} onReorder={onReorder} onToggle={onToggle} />
         </div>
+      </div>
 
-        {/* 右列：官方 3 个（装扮/会员/盲盒）—— 本工具指向冒险/职业/画面 */}
-        <nav className="v2-rail right" aria-label="快捷入口">
+      {/* 右列：3 颗圆钮 + 功能栏（V1 里功能栏就在第 3 颗圆钮下方） */}
+      <div className="v2-rail right">
+        <nav className="v2-rail-right-btns" aria-label="快捷入口">
           <button className="rbtn r" title="冒险" onClick={() => onNav('adv')}>
             <img src="/qp-icons/official/cap_compass.png" alt="" />
           </button>
@@ -125,18 +129,20 @@ export function OverviewV2({
             <img src={icon('/qp-icons/ctrl/phone.svg')} alt="" />
           </button>
         </nav>
+        <div className="v2-funcseat">
+          <FuncBar
+            alive={sch.alive}
+            busy={busy}
+            onStart={onStart}
+            onStop={onStop}
+            onShot={() => onNav('shot')}
+          />
+        </div>
       </div>
 
-      {/* ── row 3：状态卡 + 功能栏 ── */}
+      {/* 底栏（弧形面板 + 居中状态卡） */}
       <div className="v2-bottom">
         <Deck data={data} />
-        <FuncBar
-          alive={sch.alive}
-          busy={busy}
-          onStart={onStart}
-          onStop={onStop}
-          onShot={() => onNav('shot')}
-        />
       </div>
 
       {/* 切换房间背景的轻提示 */}
