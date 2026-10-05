@@ -33,27 +33,32 @@
    这正是"与官方一致"要的结果。） */
 
 /* ---------- 容器 ----------
-   三列 × 两行：
-     ┌ rail-left │ center │ rail-right ┐   ← 圆钮从顶部开始（与资料卡同一水平线）
-     │           │        │            │      这正是 V1 里浮动层跨越 top+mid 的等效结构
-     ├───────────┴────────┴────────────┤
-     │          bottom（跨三列）        │
-     └──────────────────────────────────┘
-   center 里竖排：top（资料卡+胶囊）→ seat（任务卡）。 */
+   横向按**官方 dump 的固定 dp 布局**（不是居中！）：
+     左边距 20 | 左钮 42.2 | 间隙 12 | 内容 331.8 | 间隙 12.2 | 右钮 42.2 | 右边距 19.6 = 480dp
+   官方证据（qqpet_assets/web/UI_TREE_OFFICIAL.md 第 1/2 节，480dp 画布）：
+     · 左圆钮  x = 20dp
+     · 胶囊区  x = 74.2dp（= 20 + 42.2 + 12）**贴着左圆钮，不居中**
+     · 右圆钮  x = 418.2dp，右边距 19.6dp
+   我先前写成 `justify-content:center` + 定宽内容列 —— 那是错的：
+   实测在 480px 视口下左钮跑到 x82.5（官方 20）、内容列 x136.5（官方 74.2）。
+
+   纵向：两行 —— 上（左右栏 + 中间内容），下（底栏，绝对定位贴底）。 */
 .v2-home{
   display:grid;
-  /* 中间列**定宽**（= 内容列宽），三列整体居中 —— V1 就是这样：
-     左钮 x22、内容 x80..304、右钮 x323、右边距 21，内容列居中、两侧对称留白。
-     若把中间列写成 1fr，它会吃满剩余宽度、把右列推到最右（实测偏 13px）。 */
-  grid-template-columns:auto var(--v2-seat-w) auto;
+  /* 中间列 `minmax(0, 1fr)` = 弹性：**吃掉剩余宽度**。
+     官方在 480dp 画布上中间列是 331.8dp —— 而 480dp 屏上"480 − 左右边距与圆钮"
+     正好也是 331.8，所以两者一致；小屏时它自动收缩、不把右圆钮挤出屏幕。
+     ⚠ 别用 `max-width:100%` 去给中间列兜底 —— 那个百分比相对的是 grid 列本身
+       （auto，由内容定宽），形成循环依赖会被浏览器忽略（实测无效）。
+     也别用 100vw —— 平板/桌面下 .v2-home 被 max-width 限宽居中，视口宽不是容器宽。 */
+  grid-template-columns:auto minmax(0, 1fr) auto;
   grid-template-rows:1fr auto;
-  justify-content:center;
+  justify-content:start;                  /* **靠左**，不居中 */
+  align-items:start;
   height:100%;
   min-height:0;
   box-sizing:border-box;
-  /* V1 实测：左圆钮 x22..67、内容列 x80.2..304.4 → 两者间隙 13.2px ≈ 12u。
-     （先前用 11u 时内容列落在 x82.9，比 V1 偏右 2.7px。） */
-  column-gap:calc(var(--u) * 12);
+  column-gap:0;                           /* 间隙由各自 margin 控制（官方 12dp，不是统一 gap） */
   padding:0;
 }
 .v2-rail.left{ grid-column:1; grid-row:1 }
@@ -69,20 +74,25 @@
 .v2-home > *{ min-width:0; min-height:0 }
 
 /* ---------- 行 1：顶部（资料卡 + 胶囊）----------
-   V1 实测：资料卡/胶囊 x80..304（宽 224），与任务卡**同一条内容列**。
-   所以这里用同一个定宽居中，保证三者在垂直方向对齐（V1 就是这样对齐的）。 */
+   官方：资料卡 / 胶囊区 x = 74.2dp、宽 331.8dp —— 正好是 `.v2-center` 的宽度
+   （`grid-template-columns: auto auto auto`，中间列宽由这里的 width 决定）。
+   所以两者直接填满 center，不需要再各自定宽、也不需要居中。 */
 .v2-top{
   display:flex;
   flex-direction:column;
-  align-items:center;
-  gap:calc(var(--u) * 11);      /* V1：胶囊 y100 - 资料卡底 y87 = 13px ≈ 12u */
-  padding:calc(var(--u) * 34) 0 0;   /* V1：资料卡 y37 ≈ 34u */
+  gap:calc(var(--u) * 12);      /* 官方：胶囊行 y86.2 − 资料卡底 ≈ 12dp */
+  padding:0;
   min-width:0;
 }
-/* ⚠ 特异性要够：`.v2-top > *` 是 (0,1,0)，会被下面的 `.v2-home .flt{width:auto}`
-   (0,2,0) 压掉 —— 实测那时 .caps 被设成 width:auto、按内容只有 200px（V1 是 224px）。
-   这里用 (0,2,0) 并靠"后加载"胜出。 */
-.v2-home .v2-top > *{ width:var(--v2-seat-w); max-width:100% }
+/* ⚠ 资料卡与胶囊**宽度不同**（官方 dump，UI_TREE_OFFICIAL.md 第 2/5 节）：
+     资料卡  207.1dp
+     胶囊区  331.8dp（两行各 3 颗，每颗 67.1dp）
+   而 `.v2-center` 本身是 331.8dp，所以：
+     · 胶囊 → 填满 center
+     · 资料卡 → 回到 207.1dp（左对齐，不居中）
+   两者都从 x=74.2 开始（官方实测）。 */
+.v2-top .idcard{ width:calc(var(--u) * 207.1); align-self:flex-start }
+.v2-top .caps{ width:100% }
 
 /* ---------- 行 2：圆钮列 + 任务卡 ----------
    V1 实测：左圆钮 x22..68、内容列 x80..304（**宽 224、基本居中**）、右圆钮 x323..369。
@@ -92,22 +102,29 @@
 .v2-rail{
   display:flex;
   flex-direction:column;
-  gap:calc(var(--u) * 16);
+  gap:calc(var(--u) * 18);          /* 官方：圆钮步进 60dp − 钮高 42.2 ≈ 17.8dp */
   flex:0 0 auto;
-  width:var(--v2-rail-w);
-  /* 圆钮从顶部开始（V1：第 1 颗 y39 ≈ 资料卡 y37） */
-  padding-top:calc(var(--u) * 34);
+  width:calc(var(--u) * 42.2);      /* 官方圆钮 42.2dp */
+  /* 官方：左圆钮 y = 28dp（画布顶），左边距 20dp */
+  padding-top:calc(var(--u) * 28);
+  margin-left:calc(var(--u) * 20);
 }
-/* 内容列定宽（V1：224px @390 宽 → 207u） */
-.v2-seat{
-  flex:0 0 auto;
-  width:var(--v2-seat-w);
-  max-width:100%;
-  min-width:0;
-  min-height:0;
-  display:flex;
-  flex-direction:column;
-  margin:calc(var(--u) * 12) auto 0;   /* V1：任务卡 y176 - 胶囊底 163 = 13px */
+/* 右栏：官方右圆钮 x = 418.2dp、右边距 19.6dp → 用 margin-right 顶到右边 */
+.v2-rail.right{
+  margin-left:0;
+  margin-right:calc(var(--u) * 19.6);
+  width:calc(var(--u) * 42.2);
+  align-items:flex-start;
+}
+/* 中间内容列：官方 x = 74.2dp（= 20 + 42.2 + 12），宽 331.8dp。
+   宽度由 grid 的 `minmax(0, 1fr)` 决定（480dp 屏上正好 331.8 —— 与官方一致），
+   小屏自动收缩。这里只给它左右 margin（官方 12 / 12.2dp）。 */
+.v2-center{
+  grid-column:2; grid-row:1;
+  display:flex; flex-direction:column;
+  margin-left:calc(var(--u) * 12);
+  margin-right:calc(var(--u) * 12.2);
+  min-width:0; min-height:0;
 }
 /* 任务卡**按内容自适应 + 上限**，与 V1 一致。
    V1 的 .scene 注释记着这个取舍："原来用 bottom 固定撑到页面底部，任务少时
@@ -115,6 +132,16 @@
      · flex:0 1 auto 按内容高；
      · max-height 到"底栏上方留 16u 缝"为止（别只减到刚好不重叠 —— 差 0 是贴死）。
    实测按内容高时 V1/V2 的任务卡高度一致（362px）。 */
+/* 任务卡区：填满 `.v2-center`（宽 331.8u，与官方胶囊区同宽）。
+   官方：任务面板在胶囊区下方，间距 = 官方 .pgsec 的节奏 ≈ 12dp。 */
+.v2-seat{
+  display:flex;
+  flex-direction:column;
+  margin-top:calc(var(--u) * 12);
+  min-width:0;
+  min-height:0;
+  flex:1 1 auto;
+}
 .v2-seat .qpanel{
   flex:0 1 auto;
   min-height:0;
@@ -248,16 +275,6 @@
    实测：漏了这条时图标按固有尺寸渲染成 96×96，而圆钮只有 50px ——
    图标溢出、彼此重叠，看起来像"图标错位"。 */
 .v2-home .rbtn img{ width:55%; height:55%; object-fit:contain }
-
-/* V1 里内容列固定 224px（x80..304）。V2 用 flex 自适应，但设上下限保证
-   窄屏不挤扁、宽屏不过宽。 */
-.v2-home{
-  --v2-rail-w:calc(var(--u) * 42);                    /* 圆钮列宽 = 圆钮宽 */
-  /* 内容列宽：V1 实测 224px @390 宽 = 207u。窄屏按同一 u 值缩，宽屏由版心兜住。 */
-  --v2-seat-w:calc(var(--u) * 207);
-  /* 三列 + 两个 column-gap 的总宽 —— 底栏要突破它到满宽（见 .v2-bottom）。 */
-  --v2-total-w:calc(var(--u) * 42 * 2 + var(--u) * 207 + var(--u) * 11 * 2);
-}
 
 /* ---------- 窄屏 ---------- */
 @media(max-width:360px){

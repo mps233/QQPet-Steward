@@ -392,12 +392,13 @@ export default function App() {
   const renderView = (v: View, d: Data) => {
     const p = v.page
     if (p === 'main') {
-      // 总览页两版并存：默认仍是绝对定位版（V1），带 `?ui=v2` 切到正常流版（V2）。
-      // V2 验证稳定后再把默认切过去、删掉 V1（见 docs/review 的布局重构计划）。
-      const useV2 =
+      // 总览页两版并存：**默认是正常流版（V2）**，带 `?ui=v1` 可切回绝对定位版。
+      // V1 保留一段时间用于对照（它的圆钮等全部是 position:absolute，
+      // 坐标逐颗写死；V2 全部走正常流 —— 可用 ?ui=v1 / ?ui=v2 直接对比）。
+      const useV1 =
         typeof window !== 'undefined' &&
-        new URLSearchParams(window.location.search).get('ui') === 'v2'
-      const OverviewView = useV2 ? OverviewV2 : Overview
+        new URLSearchParams(window.location.search).get('ui') === 'v1'
+      const OverviewView = useV1 ? Overview : OverviewV2
       return (
         <OverviewView
           data={d}
