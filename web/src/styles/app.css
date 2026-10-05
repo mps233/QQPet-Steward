@@ -866,7 +866,19 @@ main section[data-page]{min-height:100%}  /* .home 与内页共用（内页另�
 
 
 
-.dhint{display:none}
+/* 剩余时间（"剩余 01:59:00"）。
+   历史：这里原本是 display:none —— 于是长任务期间用户只看得到「● 等待中」，
+   而"还要多久"正是这类挂机工具最核心的信息（信息一直在 DOM 里，是 CSS 把它关掉的）。
+   为什么不放回 .dtitle 标题行：.drawer 仅 62u 宽（390px 屏约 67px），标题行是
+   white-space:nowrap 的 flex，塞不下。改为独立一行，空间来自删掉的空 #runnerMsg
+   （它白占 16px）。高度预算：.deck 135u − top 12u = 123px 可用，实测内容 121px。 */
+.dhint{
+  font-size:calc(var(--u) * 11);
+  line-height:1.2;
+  color:var(--strong);
+  font-variant-numeric:tabular-nums;
+  white-space:nowrap;
+}
 .dsub{
   font-size:calc(var(--u) * 9);color:var(--sub);
   font-variant-numeric:tabular-nums;white-space:nowrap;

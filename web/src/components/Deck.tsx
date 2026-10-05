@@ -104,9 +104,12 @@ export function Deck({ data }: { data: Data }) {
           <div className="dtitle">
             <span className={'dot' + (running ? ' on' : ' off')} id="runnerDot" />
             <span id="runnerState">{state}</span>
-            <span className="dhint" id="runnerHint">
-              {hint}
-            </span>
+          </div>
+          {/* 剩余时间单独成行（原先在 .dtitle 里、被 .dhint{display:none} 关掉了）。
+              为什么不放回标题行：.drawer 只有 62u 宽（390px 屏约 67px），
+              标题行是 white-space:nowrap 的 flex，再塞"剩余 01:59:00"必然溢出。 */}
+          <div className="dhint" id="runnerHint">
+            {hint}
           </div>
           <div className="dsub" id="workSub">
             {sub}
@@ -114,7 +117,10 @@ export function Deck({ data }: { data: Data }) {
           <div className="dsub" id="runnerSub">
             {stat}
           </div>
-          <div className="saveMsg" id="runnerMsg" />
+          {/* 原有一个空的 <div className="saveMsg" id="runnerMsg" />：从旧版迁移过来的
+              残留，全仓没有任何代码往里写内容或切换类，但 .saveMsg 的 min-height:16px
+              让它白占 16px —— 而 .drawer 在 360px 视口下只剩 2px 余量。
+              删掉，把空间让给真正有信息量的"剩余时间"。 */}
         </div>
         <span className="dmeta" id="runnerMeta">
           {running ? `PID ${sch.pid}${sch.uptime ? ` · 已跑 ${sch.uptime}` : ''}` : '未运行'}

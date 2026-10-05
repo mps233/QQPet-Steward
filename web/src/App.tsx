@@ -283,10 +283,24 @@ export default function App() {
     })
   }, [page, scene.scene, scene.dark])
 
-  const start = async () => {
-    setBusy('start')
+  /**
+   * 调度器启停。
+   *
+   * 历史坑：这里原先只有 try/finally —— 请求失败时 finally 照常跑，3 秒后按钮
+   * 从「启动中」变回「启动」，界面没有任何错误文本（而 api.ts 层的裸 fetch 连
+   * r.ok 都不判，catch 根本不会触发）。用户看到的是"点了没反应，也无从排查"。
+   * 现在：错误落 orderMsg；**失败信息不自动消失**（成功才 1.8 秒后清），
+   * 保证用户来得及读。见 docs/review/01-p0-交互急救.md 缺陷 2。
+   */
+  const runRunnerAction = async (kind: 'start' | 'stop') => {
+    setBusy(kind)
     try {
-      await runnerStart()
+      await (kind === 'start' ? runnerStart() : runnerStop())
+      setOrderMsg(kind === 'start' ? '调度器启动中…' : '调度器停止中…')
+      window.setTimeout(() => setOrderMsg(''), 1800)
+    } catch (e) {
+      setOrderMsg(`${kind === 'start' ? '启动' : '停止'}失败：${String(e)}`)
+      // 不设自动清除 —— 失败信息必须留在屏幕上
     } finally {
       window.setTimeout(() => {
         setBusy('')
@@ -294,17 +308,8 @@ export default function App() {
       }, 3000)
     }
   }
-  const stop = async () => {
-    setBusy('stop')
-    try {
-      await runnerStop()
-    } finally {
-      window.setTimeout(() => {
-        setBusy('')
-        reload()
-      }, 3000)
-    }
-  }
+  const start = () => void runRunnerAction('start')
+  const stop = () => void runRunnerAction('stop')
 
   /** 拖完写回配置：tasks.order（全量，轮巡组保持在最前）+ tasks.main_order
    *  （四个主任务按新相对顺序）——**两个都写拖动才真的影响调度**：主任务组互斥时

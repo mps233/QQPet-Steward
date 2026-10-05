@@ -178,9 +178,36 @@ export async function saveSettings(
   return (await r.json()) as SettingsResult
 }
 
-/** 调度器启停（功能栏的两个按钮） */
-export const runnerStart = () => fetch('/api/runner/start', { method: 'POST' })
-export const runnerStop = () => fetch('/api/runner/stop', { method: 'POST' })
+/** 调度器启停（功能栏的两个按钮）的返回体 */
+export interface RunnerActionResult {
+  ok: boolean
+  msg?: string
+}
+
+/**
+ * 调度器启停。
+ *
+ * ⚠ 这里**必须**判 `r.ok` 并把后端的 msg 透传出去：
+ * 后端在失败时返回 **HTTP 400 + `{ok:false, msg:"调度器已在运行（PID N），不重复启动"}`**，
+ * 而裸 `fetch` 对 400 是正常 resolve 的 —— 调用方的 catch 永远不会触发，
+ * 界面表现为"点了启动没反应"，且无从排查（见 docs/review/01 缺陷 2）。
+ */
+async function runnerAction(path: string): Promise<RunnerActionResult> {
+  const r = await fetch(path, { method: 'POST' })
+  let body: RunnerActionResult = { ok: r.ok }
+  try {
+    body = (await r.json()) as RunnerActionResult
+  } catch {
+    // 后端异常时可能没有 JSON 体；此时至少把状态码带出去
+  }
+  if (!r.ok || body.ok === false) {
+    throw new Error(body.msg || `${path} → HTTP ${r.status}`)
+  }
+  return body
+}
+
+export const runnerStart = () => runnerAction('/api/runner/start')
+export const runnerStop = () => runnerAction('/api/runner/stop')
 
 /** GET /api/logs —— 当天日志（尾部 N 行） */
 export interface LogsData {
