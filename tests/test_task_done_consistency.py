@@ -76,3 +76,83 @@ def test_main_finished_still_uses_shared_pieces(runner_src):
     assert '_adventure_done(' in body
     assert '_hire_friend_done(' in body
     assert '_dead(tasks,' in body
+
+
+# ---------------------------------------------------------------------------
+# 行为验证：构造 dead 场景，证明修复确实消除了"显示与调度不一致"
+#
+# 上面 5 条是源码结构断言；下面这条是真机验证过的行为断言（用桩，不依赖设备）。
+# 真机实测（2026-10-05，一加 9 Pro）：
+#   adventure 标记 dead 后 →
+#     调度侧 _adventure_done          = True
+#     显示侧 旧口径（无 _dead）        = False   ← 哑火：界面显示"待执行"、调度器永不执行
+#     显示侧 新口径 _task_done_today  = True    ← 一致
+# ---------------------------------------------------------------------------
+
+class _StubTask:
+    def __init__(self, dead: bool = False):
+        self.dead = dead
+
+
+def _make_runner_like(**attrs):
+    """构造一个只带 _task_done_today 所需属性的极简替身。
+
+    这样不需要连设备、也不需要真实 config —— 只测判定逻辑本身。
+    """
+    from scenarios.runner import TaskQueueRunner
+
+    class _R:
+        _dead = staticmethod(TaskQueueRunner._dead)
+        _task_done_today = TaskQueueRunner._task_done_today
+        _adventure_done = TaskQueueRunner._adventure_done
+        _hire_friend_done = TaskQueueRunner._hire_friend_done
+
+        def __init__(self):
+            self.visit_times = 0
+            self.pk_times = 0
+            self.adventure_times = attrs.get('adventure_times', 5)
+            self.study_quota_hours = 0
+            self.work_quota_hours = 0
+
+        def _load_durations(self):
+            return 0, 0
+
+        def _fatigue_skip(self, s, w):
+            return False
+
+        def _quota_over(self, v, limit):
+            return False
+
+        def _duration_over(self, s, w):
+            return False
+
+        def _work_over(self, s, w):
+            return False
+
+    return _R()
+
+
+def test_dead_task_counts_as_done_in_display():
+    """dead 的任务，显示口径必须也判为"已完成" —— 与调度侧一致。"""
+    r = _make_runner_like(adventure_times=5)
+    tasks = {'adventure': _StubTask(dead=True)}
+
+    sched = r._adventure_done(tasks)          # 调度侧
+    disp = r._task_done_today('adventure', tasks)   # 显示侧（收敛后）
+
+    assert sched is True, '前置：dead 时调度侧应判为已完成'
+    assert disp is True, (
+        '显示侧没把 dead 当已完成 —— 界面会显示"待执行"而调度器永不执行（哑火）')
+
+
+def test_alive_task_not_counted_as_done():
+    """未 dead 且配额未满的任务不该被误判为完成（收敛不能过度触发）。"""
+    r = _make_runner_like(adventure_times=5)
+    tasks = {'adventure': _StubTask(dead=False)}
+    assert r._task_done_today('adventure', tasks) is False
+
+
+def test_task_absent_from_order_counts_as_done():
+    """不在 tasks.order 里的任务 = 不可用 = 已完成（_dead 的既有语义）。"""
+    r = _make_runner_like()
+    assert r._task_done_today('adventure', {}) is True
