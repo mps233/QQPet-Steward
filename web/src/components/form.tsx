@@ -48,10 +48,12 @@ export function Switch({
   on,
   onToggle,
   title,
+  disabled = false,
 }: {
   on: boolean
   onToggle: () => void
   title?: string
+  disabled?: boolean
 }) {
   return (
     <button
@@ -59,6 +61,7 @@ export function Switch({
       className={'sw' + (on ? ' on' : '')}
       title={title}
       aria-pressed={on}
+      disabled={disabled}
       onClick={onToggle}
     />
   )

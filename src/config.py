@@ -387,6 +387,8 @@ class NotifyConfig:
     feishu_webhook: str = ""
     # 机器人"加签"密钥（安全设置选"签名校验"时必填；选"自定义关键词"可留空）
     feishu_secret: str = ""
+    # 图片上传需应用 access token；群机器人 webhook 本身不能用于上传鉴权
+    feishu_access_token: str = ""
     # ---- Telegram Bot ----
     telegram_enabled: bool = False
     # @BotFather 给的 token，形如 123456789:AAE...
@@ -397,7 +399,8 @@ class NotifyConfig:
     # 隐藏职业解锁时是否用上面已启用的渠道推送（含树页截图）
     career_notify: bool = True
     # ---- 完成类事件通知 ----
-    # 今日配额达成（学满/打满）时推送（含当前截图）
+    # 日内收益汇总：学习+打工当天都跑完时推「收工总账」（各跑多久 + 各自收益），
+    # 到 23:59 推「冒险日报」（当天冒险总次数与总金币）。关掉后两条都不发。
     quota_done: bool = True
     # 事件类通知总开关（关掉后 quota_done 等"完成"类通知一律不发；告警不受影响）
     event_notify: bool = True

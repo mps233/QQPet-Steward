@@ -1,6 +1,6 @@
 """告警与事件通知：多渠道推送（参考 qq-farm-copilot）。
 
-渠道（config.yaml 的 notify 段配置，可叠加，任一成功即算送达）：
+渠道（config.yaml 的 notify 段配置，可叠加；启用远程渠道时须有远程成功才算送达）：
 - Windows/macOS 桌面通知：notify.win_toast: true（Windows 需 winotify）
 - OnePush 推送：notify.onepush_config 填 YAML（设置页是多行输入框），
   支持 Bark / PushPlus / Server酱 / Telegram / SMTP / 自定义 webhook 等
@@ -26,42 +26,28 @@ import mimetypes
 import os
 import subprocess
 import sys
+import threading
 import time
 import uuid
+from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from .config import NotifyConfig, load_config
+from .config import NotifyConfig, PROJECT_ROOT, load_config
+from .jsonio import append_jsonl
 from .progress import log
 
 TITLE = '[QQ宠物助手告警]'
-# 职业解锁通知的标题（与告警区分，便于在手机上看通知来源）
-CAREER_TITLE = '[QQ宠物·职业解锁]'
 # 错误/降级通知（"出错了但没崩"类，如配置读取失败后沿用旧配置）
 ERROR_TITLE = '[QQ宠物·异常]'
 HTTP_TIMEOUT = 20
+HISTORY_FILE = PROJECT_ROOT / 'runs' / 'notifications.jsonl'
+_HISTORY_LOCK = threading.Lock()
 
 
 def send_alert(reason: str, image_path: str | None = None) -> bool:
     """按 notify 配置发送告警，返回是否有渠道发送成功。"""
     return send(TITLE, reason, image_path)
-
-
-def send_event(title: str, reason: str, image_path: str | None = None) -> bool:
-    """发送"事件类"通知（今日完成/配额达成等），受 notify.event_notify 总开关控制。
-
-    与告警区分：告警是出问题要人处理，事件是"按计划完成了"的告知——用户可能
-    不想被完成类消息打扰，故单独给一个开关（默认开）。
-    """
-    try:
-        cfg = load_config().notify
-    except Exception as e:
-        log(f'事件通知: 读取配置失败（{e}），跳过推送')
-        return False
-    if not getattr(cfg, 'event_notify', True):
-        log('事件通知: notify.event_notify 已关闭，跳过推送')
-        return False
-    return send(title, reason, image_path, cfg=cfg)
 
 
 # 错误通知限频：按 key（错误类别）记上次发送时间，避免同一错误刷屏。
@@ -89,6 +75,12 @@ def _notify_cfg() -> NotifyConfig | None:
             return _LAST_GOOD_NOTIFY
         log(f'通知: 读取配置失败（{e}）且无可用缓存，跳过推送')
         return None
+
+
+def remember_config(cfg: NotifyConfig) -> None:
+    """Refresh the fallback when the scheduler successfully reloads settings."""
+    global _LAST_GOOD_NOTIFY
+    _LAST_GOOD_NOTIFY = cfg
 
 
 def prime_config() -> bool:
@@ -128,53 +120,92 @@ def notify_error(reason: str, key: str = 'default', cooldown: int = ERROR_NOTIFY
     return ok
 
 
-def send_career_unlock(reason: str, image_path: str | None = None) -> bool:
-    """职业解锁通知（受 notify.career_notify 开关控制）。"""
+def _redact(text: str, cfg: NotifyConfig) -> str:
+    for name in ('feishu_webhook', 'feishu_secret', 'feishu_access_token',
+                 'telegram_token', 'telegram_chat_id', 'onepush_config'):
+        secret = str(getattr(cfg, name, '') or '').strip()
+        if secret:
+            text = text.replace(secret, '[REDACTED]')
     try:
-        cfg = load_config().notify
+        import yaml
+        extra = yaml.safe_load(cfg.onepush_config) or {}
+        if isinstance(extra, dict):
+            for name, value in extra.items():
+                if any(word in name.lower() for word in ('key', 'token', 'secret', 'password')):
+                    if isinstance(value, str) and value:
+                        text = text.replace(value, '[REDACTED]')
+    except Exception:
+        pass
+    return text
+
+
+def send_detailed(title: str, content: str, image_path: str | None = None,
+                  cfg: NotifyConfig | None = None, *,
+                  target: str = 'all', event_key: str | None = None) -> dict:
+    """Return channel results. Desktop success never masks a failed remote push."""
+    cfg = cfg or _notify_cfg()
+    if cfg is None:
+        return {'ok': False, 'msg': '读取配置失败且无可用缓存', 'results': {}}
+    content = _redact(content, cfg)
+    results: dict[str, str] = {}
+    successes: set[str] = set()
+    remote_enabled: set[str] = set()
+    channels = (
+        ('飞书', 'feishu', cfg.feishu_enabled,
+         bool(str(cfg.feishu_webhook).strip()),
+         lambda: _send_feishu_result(cfg, title, content, image_path)),
+        ('Telegram', 'telegram', cfg.telegram_enabled,
+         bool(str(cfg.telegram_token).strip() and str(cfg.telegram_chat_id).strip()),
+         lambda: _send_telegram_result(cfg, title, content, image_path)),
+        ('OnePush', 'onepush', bool(str(cfg.onepush_config).strip()), True,
+         lambda: _send_onepush(str(cfg.onepush_config), content, image_path, title=title)),
+        ('桌面', 'desktop', cfg.win_toast, True,
+         lambda: (_send_mac_toast(content, title=title) if sys.platform == 'darwin'
+                  else _send_windows_toast(content, image_path, title=title))),
+    )
+    for label, key, enabled, complete, deliver in channels:
+        if target not in ('all', key):
+            continue
+        if not enabled:
+            results[label] = '已关闭'
+            continue
+        if key != 'desktop':
+            remote_enabled.add(label)
+        if not complete:
+            results[label] = '配置不完整'
+            continue
+        try:
+            response = deliver()
+            ok, detail = response if isinstance(response, tuple) else (
+                bool(response), '成功' if response else '失败（详见日志）')
+            results[label] = _redact(detail, cfg)
+            if ok:
+                successes.add(label)
+        except Exception as e:
+            results[label] = f'失败：{_redact(str(e), cfg)}'
+            log(f'{label}通知: {results[label]}')
+    ok = bool(successes & remote_enabled) if remote_enabled else bool(successes)
+    summary = '、'.join(f'{key}: {value}' for key, value in results.items()) or '无可测渠道'
+    if not ok:
+        log(f'通知未送达: {summary}')
+    try:
+        with _HISTORY_LOCK:
+            append_jsonl(HISTORY_FILE, {
+                'ts': time.strftime('%Y-%m-%d %H:%M:%S'), 'title': title,
+                'content': _redact(content, cfg),
+                'image': Path(image_path).name if image_path else None,
+                'event_key': event_key, 'ok': ok, 'results': results,
+            })
+        HISTORY_FILE.chmod(0o600)
     except Exception as e:
-        log(f'职业通知: 读取配置失败（{e}），跳过推送')
-        return False
-    if not getattr(cfg, 'career_notify', True):
-        log('职业通知: notify.career_notify 已关闭，跳过推送')
-        return False
-    return send(CAREER_TITLE, reason, image_path, cfg=cfg)
+        log(f'通知记录写入失败（不影响发送）: {e}')
+    return {'ok': ok, 'msg': summary, 'results': results}
 
 
 def send(title: str, content: str, image_path: str | None = None,
-         cfg: NotifyConfig | None = None) -> bool:
-    """按 notify 配置把 title+content 发到所有已启用渠道；返回是否有渠道成功。
-
-    cfg 传 None 时自行读配置（配置坏了按默认配置发，尽量把问题报出来）。
-    """
-    if cfg is None:
-        try:
-            cfg = load_config().notify
-        except Exception as e:
-            log(f'通知: 读取配置失败（{e}），按默认配置发送')
-            cfg = NotifyConfig()
-    try:
-        sent = False
-        if getattr(cfg, 'feishu_enabled', False) and str(cfg.feishu_webhook).strip():
-            sent = _send_feishu(cfg, title, content, image_path) or sent
-        if getattr(cfg, 'telegram_enabled', False) and str(cfg.telegram_token).strip():
-            sent = _send_telegram(cfg, title, content, image_path) or sent
-        if cfg.win_toast:
-            # win_toast 兼作“桌面通知”开关：Windows 用 Toast，macOS 用 osascript 通知
-            if sys.platform == 'darwin':
-                sent = _send_mac_toast(f'{title} {content}') or sent
-            else:
-                sent = _send_windows_toast(f'{title} {content}', image_path) or sent
-        if str(cfg.onepush_config).strip():
-            sent = _send_onepush(str(cfg.onepush_config), f'{title} {content}',
-                                 image_path) or sent
-        if not sent:
-            log('通知: 未发送成功（未启用渠道、配置不全或发送失败，详见上方日志）')
-        return sent
-    except Exception as e:
-        # 通知本身绝不能再把调度器弄崩：任何异常都记日志后返回失败
-        log(f'通知: 发送过程异常: {e}')
-        return False
+         cfg: NotifyConfig | None = None, *, event_key: str | None = None) -> bool:
+    return bool(send_detailed(title, content, image_path, cfg,
+                              event_key=event_key)['ok'])
 
 
 # ---------------------------------------------------------------- 飞书群机器人
@@ -209,22 +240,29 @@ def _post_json(url: str, payload: dict) -> tuple[bool, str]:
         return False, f'网络错误 {e.reason}'
     except Exception as e:
         return False, f'{type(e).__name__}: {e}'
-    # 飞书：code==0 成功；Telegram：ok==true 成功
+    # A 200 transport response is not enough: require the provider's success flag.
     if isinstance(data, dict):
-        if data.get('code') not in (None, 0):
-            return False, f"code={data.get('code')} {data.get('msg') or ''}".strip()
-        if data.get('ok') is False:
-            return False, str(data.get('description') or 'ok=false')
-    return True, 'ok'
+        if 'ok' in data:
+            return (True, 'ok') if data['ok'] is True else (
+                False, str(data.get('description') or 'ok=false'))
+        code = data.get('code', data.get('StatusCode'))
+        if code is not None:
+            return (True, 'ok') if code == 0 else (
+                False, f"code={code} {data.get('msg') or data.get('StatusMessage') or ''}".strip())
+    return False, '响应缺少成功标记'
 
 
-def _feishu_upload_image(webhook: str, image_path: str) -> str | None:
+def _feishu_upload_image(access_token: str, image_path: str,
+                         webhook: str = '') -> str | None:
     """把图片传到飞书拿 image_key（发图必须先上传）。失败返回 None。
 
-    飞书没有公开的"上传图片"开放接口给自定义机器人，但群机器人收发图走
-    im/v1/images。这里用 multipart 手工拼包（避免依赖 requests）。
+    图片上传需要应用 tenant/user access token，不能用 webhook 代替。
     """
-    url = 'https://open.feishu.cn/open-apis/im/v1/images'
+    if not access_token:
+        log('飞书通知: 未配置图片上传 access token，仅发文本')
+        return None
+    host = 'open.larksuite.com' if 'open.larksuite.com/' in webhook else 'open.feishu.cn'
+    url = f'https://{host}/open-apis/im/v1/images'
     boundary = '----QQPetCopilot' + uuid.uuid4().hex
     try:
         with open(image_path, 'rb') as f:
@@ -247,6 +285,7 @@ def _feishu_upload_image(webhook: str, image_path: str) -> str | None:
     body = b''.join(parts)
     req = Request(url, data=body, method='POST', headers={
         'Content-Type': f'multipart/form-data; boundary={boundary}',
+        'Authorization': f'Bearer {access_token}',
     })
     try:
         with urlopen(req, timeout=HTTP_TIMEOUT) as resp:
@@ -260,8 +299,8 @@ def _feishu_upload_image(webhook: str, image_path: str) -> str | None:
     return None
 
 
-def _send_feishu(cfg: NotifyConfig, title: str, content: str,
-                 image_path: str | None = None) -> bool:
+def _send_feishu_result(cfg: NotifyConfig, title: str, content: str,
+                        image_path: str | None = None) -> tuple[bool, str]:
     """发送飞书群机器人消息。有截图先传图（image 消息），否则发文本。
 
     飞书自定义机器人支持的 msg_type：text / post / image / interactive / share_chat。
@@ -269,7 +308,7 @@ def _send_feishu(cfg: NotifyConfig, title: str, content: str,
     webhook = str(cfg.feishu_webhook).strip()
     if not webhook:
         log('飞书通知: 未填 webhook，跳过')
-        return False
+        return False, '未填 webhook'
     payload: dict = {}
     secret = str(getattr(cfg, 'feishu_secret', '') or '').strip()
     if secret:
@@ -280,8 +319,10 @@ def _send_feishu(cfg: NotifyConfig, title: str, content: str,
     text = f'{title}\n{content}'
     # 有截图：先传图，成功则发一条图片 + 一条文本（图单独发，文本带完整信息）
     sent_any = False
+    image_note = ''
     if image_path and os.path.exists(image_path):
-        key = _feishu_upload_image(webhook, image_path)
+        key = _feishu_upload_image(
+            str(getattr(cfg, 'feishu_access_token', '') or '').strip(), image_path, webhook)
         if key:
             ok, why = _post_json(webhook, {**payload, 'msg_type': 'image',
                                            'content': {'image_key': key}})
@@ -291,41 +332,44 @@ def _send_feishu(cfg: NotifyConfig, title: str, content: str,
                 log(f'飞书通知: 图片消息发送失败: {why}')
         else:
             log('飞书通知: 图片上传未成功，仅发文本')
+            image_note = '，图片上传未成功' if getattr(cfg, 'feishu_access_token', '') else '，未配置图片上传令牌'
     ok, why = _post_json(webhook, {**payload, 'msg_type': 'text',
                                    'content': {'text': text}})
     if ok:
         log('飞书通知: 发送成功')
-        return True
+        return True, f'成功（文本{image_note}）'
     log(f'飞书通知: 发送失败: {why}')
-    return sent_any
+    return False, f'{"图片已发送，但文本失败" if sent_any else "失败"}：{_redact(why, cfg)}'
 
 
 # ---------------------------------------------------------------- Telegram Bot
 
-def _send_telegram(cfg: NotifyConfig, title: str, content: str,
-                   image_path: str | None = None) -> bool:
+def _send_telegram_result(cfg: NotifyConfig, title: str, content: str,
+                          image_path: str | None = None) -> tuple[bool, str]:
     """发送 Telegram 消息（有截图用 sendPhoto，否则 sendMessage）。"""
     token = str(cfg.telegram_token).strip()
     chat_id = str(cfg.telegram_chat_id).strip()
     if not token or not chat_id:
         log('Telegram 通知: token 或 chat_id 未填，跳过')
-        return False
+        return False, '未填 token 或 chat_id'
     text = f'{title}\n{content}'
+    photo_failed = False
     if image_path and os.path.exists(image_path):
         ok, why = _telegram_send_photo(token, chat_id, text, image_path)
         if ok:
             log('Telegram 通知: 发送成功（图片）')
-            return True
-        log(f'Telegram 通知: 图片发送失败（{why}），降级为文本')
+            return True, '成功（图片）'
+        photo_failed = True
+        log(f'Telegram 通知: 图片发送失败（{_redact(why, cfg)}），降级为文本')
     base = f'https://api.telegram.org/bot{token}'
     ok, why = _post_json(f'{base}/sendMessage',
                          {'chat_id': chat_id, 'text': text,
                           'disable_web_page_preview': True})
     if ok:
         log('Telegram 通知: 发送成功')
-        return True
-    log(f'Telegram 通知: 发送失败: {why}')
-    return False
+        return True, '成功（图片失败后已降级文本）' if photo_failed else '成功（文本）'
+    log(f'Telegram 通知: 发送失败: {_redact(why, cfg)}')
+    return False, f'失败：{_redact(why, cfg)}'
 
 
 def _telegram_send_photo(token: str, chat_id: str, caption: str,
@@ -375,39 +419,21 @@ def _telegram_send_photo(token: str, chat_id: str, caption: str,
 def test_notify(target: str = 'all') -> dict:
     """发送一条测试通知（设置页「测试通知」按钮用），返回每个渠道的结果。
 
-    target: all / feishu / telegram —— 便于只测其中一个渠道。
+    target: all / feishu / telegram / onepush / desktop。
     """
-    try:
-        cfg = load_config().notify
-    except Exception as e:
-        return {'ok': False, 'msg': f'读取配置失败: {e}', 'results': {}}
+    if target not in ('all', 'feishu', 'telegram', 'onepush', 'desktop'):
+        return {'ok': False, 'msg': '不支持的测试渠道', 'results': {}}
+    cfg = _notify_cfg()
+    if cfg is None:
+        return {'ok': False, 'msg': '读取配置失败且无可用缓存', 'results': {}}
     stamp = time.strftime('%Y-%m-%d %H:%M:%S')
     text = f'这是一条测试通知（{stamp}）。收到说明配置正确。'
-    results: dict[str, str] = {}
-    ok_any = False
-    if target in ('all', 'feishu'):
-        if not str(cfg.feishu_webhook).strip():
-            results['飞书'] = '未填 webhook'
-        else:
-            ok = _send_feishu(cfg, '[测试] QQ宠物助手', text)
-            results['飞书'] = '成功' if ok else '失败（详见日志）'
-            ok_any = ok_any or ok
-    if target in ('all', 'telegram'):
-        if not (str(cfg.telegram_token).strip() and str(cfg.telegram_chat_id).strip()):
-            results['Telegram'] = '未填 token 或 chat_id'
-        else:
-            ok = _send_telegram(cfg, '[测试] QQ宠物助手', text)
-            results['Telegram'] = '成功' if ok else '失败（详见日志）'
-            ok_any = ok_any or ok
-    if target == 'all':
-        summary = '、'.join(f'{k}:{v}' for k, v in results.items()) or '无可测渠道'
-    else:
-        summary = '、'.join(results.values())
-    return {'ok': ok_any, 'msg': summary, 'results': results}
+    return send_detailed('[测试] QQ宠物助手', text, cfg=cfg, target=target)
 
 
 
-def _send_windows_toast(reason: str, image_path: str | None = None) -> bool:
+def _send_windows_toast(reason: str, image_path: str | None = None, *,
+                        title: str = TITLE) -> bool:
     """发送 Windows Toast 通知。"""
     if not sys.platform.startswith('win'):
         log('告警通知: 非 Windows 平台，跳过 Toast')
@@ -425,7 +451,7 @@ def _send_windows_toast(reason: str, image_path: str | None = None) -> bool:
         icon = ''
     try:
         toast = Notification(
-            app_id='QQPetCopilot', title=TITLE, msg=str(reason), duration='long',
+            app_id='QQPetCopilot', title=title, msg=str(reason), duration='long',
             **({'icon': icon} if icon else {}),
         )
         toast.show()
@@ -436,13 +462,14 @@ def _send_windows_toast(reason: str, image_path: str | None = None) -> bool:
         return False
 
 
-def _send_mac_toast(reason: str) -> bool:
+def _send_mac_toast(reason: str, *, title: str = TITLE) -> bool:
     """发送 macOS 桌面通知（osascript display notification）。"""
     if sys.platform != 'darwin':
         return False
     try:
-        msg = str(reason).replace('"', "'").replace(chr(10), ' ').replace(chr(13), ' ')
-        script = f'display notification "{msg}" with title "{TITLE}"'
+        def escape(value):
+            return str(value).replace('\\', '\\\\').replace('"', '\\"').replace('\n', ' ').replace('\r', ' ')
+        script = f'display notification "{escape(reason)}" with title "{escape(title)}"'
         proc = subprocess.run(
             ['osascript', '-e', script],
             capture_output=True, text=True, timeout=15,
@@ -457,7 +484,8 @@ def _send_mac_toast(reason: str) -> bool:
         return False
 
 
-def _send_onepush(config_text: str, reason: str, image_path: str | None = None) -> bool:
+def _send_onepush(config_text: str, reason: str, image_path: str | None = None, *,
+                  title: str = TITLE) -> bool:
     """发送 OnePush 通知。config_text 为单行 YAML（flow 格式），必须含 provider。"""
     import yaml
 
@@ -486,7 +514,7 @@ def _send_onepush(config_text: str, reason: str, image_path: str | None = None) 
     try:
         notifier = get_notifier(provider)
         payload: dict = dict(cfg)
-        payload['title'] = TITLE
+        payload['title'] = title
         payload['content'] = str(reason)
         if image_path and os.path.exists(image_path):
             payload['image_path'] = image_path
@@ -500,14 +528,36 @@ def _send_onepush(config_text: str, reason: str, image_path: str | None = None) 
             data['title'] = payload['title']
             data['content'] = payload['content']
             payload['data'] = data
+        # OnePush's HTTP transport swallows connection errors and returns None.
+        # Add a timeout to its per-instance request function without changing SMTP.
+        request = notifier.request
+        notifier.request = lambda *args, **kwargs: request(
+            *args, **{'timeout': HTTP_TIMEOUT, **kwargs})
         response = notifier.notify(**payload)
-        status_code = int(getattr(response, 'status_code', 200) or 200)
-        if status_code != 200:
+        if response is None:
+            log(f'告警通知: OnePush 无响应（{provider}）')
+            return False
+        if provider.lower() == 'smtp':
+            ok = isinstance(response, dict) and not response
+            log(f'告警通知: OnePush SMTP {"成功" if ok else "存在拒收地址"}')
+            return ok
+        status_code = int(getattr(response, 'status_code', 0) or 0)
+        if not 200 <= status_code < 300:
             log(f'告警通知: OnePush 推送失败，状态码={status_code}')
             return False
+        try:
+            body = response.json()
+        except (ValueError, AttributeError):
+            body = {}
+        if isinstance(body, dict):
+            code = body.get('code')
+            valid_codes = (200,) if provider.lower() in ('bark', 'pushplus') else (0, 200)
+            if (code is not None and code not in valid_codes) or body.get('ok') is False:
+                log(f'告警通知: OnePush 业务返回失败（{provider}）')
+                return False
         log(f'告警通知: OnePush 推送成功（{provider}）')
         return True
     except Exception as e:
-        detail = str(e).strip() or repr(e)
+        detail = _redact(str(e).strip() or repr(e), NotifyConfig(onepush_config=config_text))
         log(f'告警通知: OnePush 推送失败（{provider}）: {type(e).__name__}: {detail}')
         return False

@@ -18,6 +18,15 @@ export interface Data {
   shots?: Shot[]
   friends?: string[]
   last_line?: string
+  /** 访问权限状态（设置 → 访问码 用；不含访问码本身） */
+  access?: AccessInfo
+}
+
+export interface AccessInfo {
+  /** 访问码是不是用户自己设的（false = 自动生成的长随机串） */
+  custom: boolean
+  /** 自定义访问码的最短长度 */
+  min_length: number
 }
 
 export interface SchedulerInfo {
@@ -174,8 +183,11 @@ export async function saveSettings(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ updates }),
   })
-  if (!r.ok) throw new Error(`保存失败 HTTP ${r.status}`)
-  return (await r.json()) as SettingsResult
+  const body = await r.json().catch(() => null) as SettingsResult | null
+  if (!body || typeof body.ok !== 'boolean' || !Array.isArray(body.rejected)) {
+    throw new Error(`保存失败 HTTP ${r.status}`)
+  }
+  return body
 }
 
 /** 调度器启停（功能栏的两个按钮）的返回体 */
@@ -271,10 +283,40 @@ export const fetchRewards = (date?: string): Promise<RewardsData> =>
   getJSON<RewardsData>(`/api/rewards${date ? `?date=${encodeURIComponent(date)}` : ''}`)
 
 /** 发送一条测试通知（通知页的"发送测试"按钮） */
-export async function testNotify(): Promise<{ ok: boolean; msg?: string }> {
+export async function testNotify(): Promise<{ ok: boolean; msg?: string; results?: Record<string, string> }> {
   const r = await fetch('/api/notify/test', { method: 'POST' })
-  if (!r.ok) throw new Error(`HTTP ${r.status}`)
-  return (await r.json()) as { ok: boolean; msg?: string }
+  const body = await r.json().catch(() => null) as { ok?: boolean; msg?: string; results?: Record<string, string> } | null
+  if (!body || typeof body.ok !== 'boolean') throw new Error(body?.msg || `HTTP ${r.status}`)
+  return { ...body, ok: body.ok }
+}
+
+export interface NotificationRecord {
+  ts: string
+  title: string
+  content: string
+  ok: boolean
+  results: Record<string, string>
+}
+
+export const fetchNotifyHistory = (): Promise<{ records: NotificationRecord[] }> =>
+  getJSON('/api/notify/history')
+
+/** POST /api/access-key —— 自定义仪表盘访问码。
+ *
+ *  ⚠ 后端成功时会**同时换发新 Cookie**（会话 = 访问码的 HMAC，换码后旧会话
+ *  全部失效）。所以这里必须走 credentials: 'same-origin'，否则浏览器丢掉
+ *  Set-Cookie，用户改完码当场被踢回登录页。 */
+export async function changeAccessKey(key: string): Promise<{ ok: boolean; msg?: string }> {
+  const r = await fetch('/api/access-key', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key }),
+  })
+  const body = await r.json().catch(() => null) as { ok?: boolean; msg?: string } | null
+  if (!body || typeof body.ok !== 'boolean') throw new Error(body?.msg || `HTTP ${r.status}`)
+  if (!body.ok) throw new Error(body.msg || '设置失败')
+  return { ok: true, msg: body.msg }
 }
 
 /** 职业解锁哨兵的状态与历史事件 */

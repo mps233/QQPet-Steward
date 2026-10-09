@@ -553,7 +553,7 @@ def config_summary() -> dict:
         head = ' + '.join(chans) if chans else '未启用任何渠道'
         kinds = []
         if nt.get('quota_done', True) and nt.get('event_notify', True):
-            kinds.append('配额达成')
+            kinds.append('收工总账/冒险日报')
         if nt.get('career_notify', True):
             kinds.append('职业解锁')
         return head + ('（推送：' + '、'.join(kinds) + '）' if kinds else '（不推送事件）')
@@ -1202,11 +1202,17 @@ def editable_snapshot() -> dict:
         'career_interval': career.get('check_interval_min', 60),
         # 通知渠道（飞书群机器人 / Telegram Bot）
         'notify_feishu_enabled': bool(notify.get('feishu_enabled', False)),
-        'notify_feishu_webhook': str(notify.get('feishu_webhook') or ''),
-        'notify_feishu_secret': str(notify.get('feishu_secret') or ''),
+        'notify_feishu_webhook': '',
+        'notify_feishu_webhook_set': bool(str(notify.get('feishu_webhook') or '').strip()),
+        'notify_feishu_secret': '',
+        'notify_feishu_secret_set': bool(str(notify.get('feishu_secret') or '').strip()),
+        'notify_feishu_access_token': '',
+        'notify_feishu_access_token_set': bool(str(notify.get('feishu_access_token') or '').strip()),
         'notify_telegram_enabled': bool(notify.get('telegram_enabled', False)),
-        'notify_telegram_token': str(notify.get('telegram_token') or ''),
-        'notify_telegram_chat_id': str(notify.get('telegram_chat_id') or ''),
+        'notify_telegram_token': '',
+        'notify_telegram_token_set': bool(str(notify.get('telegram_token') or '').strip()),
+        'notify_telegram_chat_id': '',
+        'notify_telegram_chat_id_set': bool(str(notify.get('telegram_chat_id') or '').strip()),
         'notify_career': bool(notify.get('career_notify', True)),
         'notify_quota_done': bool(notify.get('quota_done', True)),
         'notify_event_notify': bool(notify.get('event_notify', True)),
@@ -1215,6 +1221,11 @@ def editable_snapshot() -> dict:
 
 
 def apply_settings(updates: dict) -> dict:
+    with _SETTINGS_LOCK:
+        return _apply_settings(updates)
+
+
+def _apply_settings(updates: dict) -> dict:
     """把设置卡改动写入 config.yaml（ruamel 往返保留注释，复用 src/settings 校验）。
 
     调度器每轮重读配置（含 tasks.* 任务级设置），保存后下一轮调度自动生效。
@@ -1308,6 +1319,7 @@ def apply_settings(updates: dict) -> dict:
         'notify_feishu_enabled': ('notify.feishu_enabled', 'bool'),
         'notify_feishu_webhook': ('notify.feishu_webhook', 'str'),
         'notify_feishu_secret': ('notify.feishu_secret', 'str'),
+        'notify_feishu_access_token': ('notify.feishu_access_token', 'str'),
         'notify_telegram_enabled': ('notify.telegram_enabled', 'bool'),
         'notify_telegram_token': ('notify.telegram_token', 'str'),
         'notify_telegram_chat_id': ('notify.telegram_chat_id', 'str'),

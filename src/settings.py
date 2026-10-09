@@ -99,6 +99,7 @@ DEFAULTS = {
     'notify.feishu_enabled': False,
     'notify.feishu_webhook': '',
     'notify.feishu_secret': '',
+    'notify.feishu_access_token': '',
     'notify.telegram_enabled': False,
     'notify.telegram_token': '',
     'notify.telegram_chat_id': '',
@@ -260,10 +261,15 @@ def validate_field(key: str, value):
         text = str(value).strip()
         if not text:
             return True, ''
-        ok = text.startswith('https://') and (
-            'open.feishu.cn/' in text or 'open.larksuite.com/' in text)
+        from urllib.parse import urlparse
+        url = urlparse(text)
+        ok = (url.scheme == 'https'
+              and url.hostname in ('open.feishu.cn', 'open.larksuite.com')
+              and not url.username and not url.password
+              and url.path.startswith('/open-apis/bot/v2/hook/'))
         return (True, text) if ok else (False, default)
-    if key in ('notify.feishu_secret', 'notify.telegram_token', 'notify.telegram_chat_id'):
+    if key in ('notify.feishu_secret', 'notify.feishu_access_token',
+               'notify.telegram_token', 'notify.telegram_chat_id'):
         # 凭据类：去掉首尾空白即可（token 里可能含冒号，chat_id 可能是负数）
         return True, str(value).strip()
     if key == 'notify.onepush_config':

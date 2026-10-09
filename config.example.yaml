@@ -305,6 +305,9 @@ notify:
   feishu_enabled: false
   feishu_webhook: ""
   feishu_secret: ""
+  # 可选：应用 tenant/user access token，仅图片上传使用；留空明确降级纯文本
+  # 此 token 会过期，需由应用鉴权流程更新，不能填机器人加签密钥
+  feishu_access_token: ""
   # ---- Telegram Bot ----
   # 用法：@BotFather 发 /newbot 建机器人拿 Token；先给机器人发一条消息，
   # 再用 @userinfobot 查自己的 Chat ID（群/频道是 -100 开头的负数）
