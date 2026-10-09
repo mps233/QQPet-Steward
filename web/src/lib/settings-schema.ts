@@ -186,6 +186,13 @@ export const GROUPS: Record<string, GroupDef> = {
       { key: 'adb_serial', label: '设备序列号', kind: 'text', placeholder: 'adb devices 查看' },
     ],
   },
+  /** 访问码页没有普通字段：表单在 SettingsPage 里单独渲染（要换发 Cookie、二次确认），
+   *  这里注册 id/标题，好让它照常出现在一级菜单与 `?grp=access` 直达。 */
+  access: {
+    id: 'access',
+    title: '仪表盘访问码',
+    fields: [],
+  },
 }
 
 /** 一级菜单：4 个分区，共 17 个二级页（与 旧版 的 MENU 一致） */
@@ -222,6 +229,7 @@ export const MENU: { section: string; items: { id: string; title: string }[] }[]
     items: [
       { id: 'schedule', title: '调度' },
       { id: 'adb', title: '连接手机（ADB）' },
+      { id: 'access', title: '仪表盘访问码' },
     ],
   },
 ]

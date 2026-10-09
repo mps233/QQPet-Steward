@@ -17,6 +17,7 @@
 
 import errno
 import gzip
+import hmac
 import io
 import json
 import os
@@ -24,11 +25,15 @@ import re
 import signal
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+from src.dashboard_auth import (COOKIE_NAME, LOGIN_HTML, MIN_KEY_LENGTH, authorized,
+                                is_custom_key, load_access_key, same_origin,
+                                save_access_key, session_value, validate_new_key)
 
 BASE = Path(__file__).resolve().parent
 
@@ -72,6 +77,7 @@ except Exception as _qs_err:           # 缺 ruamel/yaml 等极端环境：退�
 LOGS = RUNS / 'logs'
 ADV_LIVE_FILE = RUNS / 'adventure_live.jsonl'   # 冒险统一记录（实验 300 把 + 日常实时）
 DEFAULT_PORT = 8787
+_SETTINGS_LOCK = threading.RLock()
 
 # ---- 静态资源的传输优化（见 docs/review/03-p0-交付链与安全.md B/C 节）----
 # 小于此不压：省 CPU，收益也小。
@@ -1573,6 +1579,16 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         u = urlparse(self.path)
         path = u.path
+        needs_auth = (path.startswith(('/api/', '/stream/', '/files/'))
+                      or path in ('/', '/index.html', '/next', '/next/'))
+        if needs_auth and not authorized(self.headers, getattr(self.server, 'access_key', None)):
+            if path.startswith(('/api/', '/stream/', '/files/')):
+                self._send(401, 'application/json; charset=utf-8',
+                           json.dumps({'ok': False, 'msg': '请刷新页面并完成访问验证'},
+                                      ensure_ascii=False).encode())
+            else:
+                self._send(200, 'text/html; charset=utf-8', LOGIN_HTML.encode())
+            return
         try:
             if path in ('/', '/index.html'):
                 # 新版前端（React + TS）的构建产物。旧版那 4214 行 HTML 常量已随迁移完成删除。
@@ -1687,7 +1703,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_stream(path[len('/stream/'):])
             elif path == '/api/screenshot':
                 try:
-                    data, at, cached = capture_phone()
+                    data, at, _cached = capture_phone()
                     self.send_response(200)
                     self.send_header('Content-Type', 'image/jpeg')
                     self.send_header('Cache-Control', 'no-store')
@@ -1712,7 +1728,7 @@ class Handler(BaseHTTPRequestHandler):
                 name = path[len('/files/'):]
                 f = RUNS / name
                 if re.fullmatch(r'[A-Za-z0-9_.\-]+\.png', name) and f.is_file():
-                    self._send(200, 'image/png', f.read_bytes(), cache='public, max-age=86400')
+                    self._send(200, 'image/png', f.read_bytes(), cache='private, max-age=86400')
                 else:
                     self._send(404, 'text/plain', b'not found')
             else:
@@ -1725,8 +1741,89 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         u = urlparse(self.path)
+        if not same_origin(self.headers):
+            self._send(403, 'application/json', b'{"ok":false,"msg":"Cross-origin request rejected"}')
+            return
+        if u.path == '/api/auth':
+            retry_after = auth_retry_after(self.client_address[0])
+            if retry_after:
+                self._send(429, 'application/json; charset=utf-8',
+                           json.dumps({'ok': False, 'msg': f'尝试过于频繁，请 {retry_after} 秒后再试'},
+                                      ensure_ascii=False).encode())
+                return
+            try:
+                length = int(self.headers.get('Content-Length') or 0)
+                if length < 0 or length > 4096:
+                    raise ValueError('Invalid authentication payload')
+                body = self.rfile.read(length).decode('utf-8')
+                is_json = 'application/json' in self.headers.get('Content-Type', '')
+                key = (json.loads(body).get('key', '') if is_json
+                       else parse_qs(body).get('key', [''])[0])
+                access_key = getattr(self.server, 'access_key', None)
+                valid = bool(access_key and isinstance(key, str)
+                             and hmac.compare_digest(key.strip(), access_key))
+            except (ValueError, TypeError, AttributeError):
+                valid = False
+                is_json = True
+            if not valid:
+                auth_record_failure(self.client_address[0])
+                if is_json:
+                    self._send(401, 'application/json; charset=utf-8',
+                               json.dumps({'ok': False, 'msg': '访问码不正确'},
+                                          ensure_ascii=False).encode())
+                else:
+                    self._send(401, 'text/html; charset=utf-8',
+                               LOGIN_HTML.replace('<form ', '<p role="alert">访问码不正确，请重试。</p><form ', 1).encode())
+                return
+            auth_clear_failures(self.client_address[0])
+            self.send_response(200 if is_json else 303)
+            self.send_header('Set-Cookie', f'{COOKIE_NAME}={session_value(access_key)}; '
+                             'Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000')
+            self.send_header('Cache-Control', 'no-store')
+            if not is_json:
+                self.send_header('Location', '/')
+            payload = b'{"ok":true}' if is_json else b''
+            self.send_header('Content-Length', str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
+        if not authorized(self.headers, getattr(self.server, 'access_key', None)):
+            self._send(401, 'application/json; charset=utf-8',
+                       json.dumps({'ok': False, 'msg': '请刷新页面并完成访问验证'},
+                                  ensure_ascii=False).encode())
+            return
         try:
-            if u.path == '/api/settings':
+            if u.path == '/api/access-key':
+                length = int(self.headers.get('Content-Length') or 0)
+                payload = json.loads(self.rfile.read(length).decode('utf-8') or '{}')
+                ok, fixed = validate_new_key(payload.get('key'))
+                if not ok:
+                    body = json.dumps({'ok': False, 'msg': fixed}, ensure_ascii=False).encode()
+                    self._send(400, 'application/json; charset=utf-8', body)
+                    return
+                key_file = getattr(self.server, 'access_key_file', None)
+                if key_file is None:
+                    body = json.dumps({'ok': False, 'msg': '当前仪表盘没有可写的访问码文件'},
+                                      ensure_ascii=False).encode()
+                    self._send(400, 'application/json; charset=utf-8', body)
+                    return
+                # 会话是访问码的 HMAC：换了访问码所有旧会话立即失效，
+                # 当前浏览器要**同时**换发新 Cookie，否则这次操作会把自己踢下线。
+                with AUTH_LOCK:
+                    save_access_key(Path(key_file), fixed)
+                    self.server.access_key = fixed
+                    auth_clear_failures(self.client_address[0])
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Cache-Control', 'no-store')
+                self.send_header('Set-Cookie', f'{COOKIE_NAME}={session_value(fixed)}; '
+                                 'Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000')
+                payload_out = json.dumps({'ok': True, 'msg': '访问码已更新'}, ensure_ascii=False).encode()
+                self.send_header('Content-Length', str(len(payload_out)))
+                self.end_headers()
+                self.wfile.write(payload_out)
+                audit(f'访问码已更新(来自 {self.client_address[0]})：其余设备需重新验证')
+            elif u.path == '/api/settings':
                 length = int(self.headers.get('Content-Length') or 0)
                 payload = json.loads(self.rfile.read(length).decode('utf-8') or '{}')
                 updates = payload.get('updates') or {}
@@ -1855,6 +1952,10 @@ def main():
     # 端口占用时不要甩一堆 traceback 就死——给出可操作的提示（常见于重复启动/上次没退干净）
     try:
         srv = ThreadingHTTPServer(('0.0.0.0', port), Handler)
+        key_file = Path(os.environ.get('QQPET_DASHBOARD_ACCESS_FILE')
+                        or RUNS / 'dashboard_access.token')
+        srv.access_key = load_access_key(key_file)
+        srv.access_key_file = key_file      # /api/access-key 改码时写回同一个文件
     except OSError as e:
         if e.errno in (errno.EADDRINUSE, errno.EACCES):
             print(f'端口 {port} 已被占用，仪表盘未启动。'
@@ -1868,6 +1969,7 @@ def main():
     audit(f'仪表盘启动: pid={os.getpid()} port={port} '
           f'ppid={os.getppid()} argv={" ".join(sys.argv[1:]) or "-"}')
     print(f'QQ宠物托管仪表盘已启动: http://0.0.0.0:{port} (Ctrl+C 停止)', flush=True)
+    print(f'首次访问需验证；访问码文件: {key_file}', flush=True)
 
     # 客户端的半截连接（刷新/切页/手机休眠断连）不该打堆栈刷屏——静音，交给下面统一记账
     def _quiet_conn_error(request, client_address):

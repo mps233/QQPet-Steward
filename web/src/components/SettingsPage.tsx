@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
+import { changeAccessKey, type AccessInfo } from '../api'
 import { GROUPS, MENU, resolveOpts, type FieldDef } from '../lib/settings-schema'
-import { FGroup, FRow, Switch } from './form'
+import { FGroup, FRow, NoteRow, Switch } from './form'
 import { NavHead } from './NavHead'
 
 const strOf = (ed: Record<string, unknown>, k: string): string => {
@@ -92,6 +93,99 @@ function Field({ f, editable, onSave }: {
   )
 }
 
+/** 访问码卡片：把自动生成的长随机串换成自己好记的口令。
+ *
+ *  两个必须点：① 成功后后端会**换发新 Cookie**（会话是访问码的 HMAC），
+ *  当前浏览器不会掉线、但其它已登录设备会被踢回验证页 —— 界面要提前说明；
+ *  ② 访问码只写不回显，所以这里只有"新码 + 确认"两个框，没有"当前码"。
+ *  长度下限由后端给（`access.min_length`），不写死在前端。 */
+function AccessKeyPanel({ access }: { access?: AccessInfo }) {
+  const minLength = access?.min_length && access.min_length > 0 ? access.min_length : 8
+  const [value, setValue] = useState('')
+  const [again, setAgain] = useState('')
+  const [state, setState] = useState<'idle' | 'saving' | 'done'>('idle')
+  const [error, setError] = useState('')
+  const mismatch = again.length > 0 && value !== again
+  const tooShort = value.length > 0 && value.length < minLength
+  const canSubmit = value.length >= minLength && value === again && state !== 'saving'
+
+  const submit = async () => {
+    if (!canSubmit) return
+    setState('saving')
+    setError('')
+    try {
+      await changeAccessKey(value)
+      setValue('')
+      setAgain('')
+      setState('done')
+    } catch (e) {
+      setError(String(e instanceof Error ? e.message : e))
+      setState('idle')
+    }
+  }
+
+  return (
+    <>
+      <FGroup title="仪表盘访问码" id="access">
+        <FRow k="状态">
+          <span style={{ color: 'var(--sub)', fontSize: 12 }}>
+            {access?.custom ? '已自定义' : '自动生成的随机码'}
+          </span>
+        </FRow>
+        <FRow k="新访问码">
+          <span className="ctrl">
+            <input
+              type="password"
+              aria-label="new_access_key"
+              autoComplete="new-password"
+              value={value}
+              placeholder={`至少 ${minLength} 位，建议用一句你记得住的话`}
+              onChange={(e) => { setValue(e.target.value); setState('idle'); setError('') }}
+              onKeyDown={(e) => { if (e.key === 'Enter') void submit() }}
+            />
+          </span>
+        </FRow>
+        <FRow k="再输一遍">
+          <span className="ctrl">
+            <input
+              type="password"
+              aria-label="confirm_access_key"
+              autoComplete="new-password"
+              value={again}
+              onChange={(e) => { setAgain(e.target.value); setState('idle'); setError('') }}
+              onKeyDown={(e) => { if (e.key === 'Enter') void submit() }}
+            />
+          </span>
+        </FRow>
+        <FRow k="">
+          <span className="ctrl">
+            <button className="minibtn" type="button" disabled={!canSubmit}
+              onClick={() => void submit()}>
+              {state === 'saving' ? '保存中…' : '保存新访问码'}
+            </button>
+          </span>
+        </FRow>
+        <FRow k="" block>
+          <span role={error ? 'alert' : 'status'} aria-live="polite"
+            style={{ color: error ? '#a63224' : 'var(--sub)', fontSize: 12, lineHeight: 1.6 }}>
+            {error
+              || (tooShort ? `访问码至少 ${minLength} 位`
+                : mismatch ? '两次输入不一致'
+                  : state === 'done' ? '已更新：当前浏览器已换用新码，其它设备需要重新验证。'
+                    : '留空不会修改。访问码只写入、不回显；忘了就去电脑上看 runs/dashboard_access.token。')}
+          </span>
+        </FRow>
+        <NoteRow t="生效范围">
+          访问码换掉后，所有旧会话立即失效（当前这台浏览器会自动换成新会话）。
+        </NoteRow>
+        <NoteRow t="安全">
+          只在本机/可信内网使用；登录失败会限流，但短口令仍不如长口令安全，别做公网端口映射。
+        </NoteRow>
+      </FGroup>
+    </>
+  )
+}
+
 /** 设置页：一级菜单（4 个分区 / 17 个二级页）→ 二级表单。
  *  旧版 是把所有字段渲染进 `#setForm` 再用 `.hide` 切组，这边**只渲染当前组**。
  *
@@ -101,6 +195,7 @@ function Field({ f, editable, onSave }: {
  *  （用户实报）。返回按钮同样走 `onBackSub()`（history.back()），与手势同一条路。 */
 export function SettingsPage({
   editable,
+  access,
   onSave,
   onExit,
   grp,
@@ -108,6 +203,8 @@ export function SettingsPage({
   onBackSub,
 }: {
   editable: Record<string, unknown>
+  /** 访问权限状态（设置 → 仪表盘访问码 用） */
+  access?: AccessInfo
   onSave: (u: Record<string, unknown>) => Promise<void>
   onExit: () => void
   /** 当前二级分组（null = 一级菜单列表） */
@@ -153,11 +250,15 @@ export function SettingsPage({
         <span className="navtitle">{g.title}</span>
       </div>
       <div className="form" id="setForm">
-        <FGroup title={g.title} id={g.id}>
-          {g.fields.map((f) => (
-            <Field key={f.key} f={f} editable={editable} onSave={onSave} />
-          ))}
-        </FGroup>
+        {g.id === 'access' ? (
+          <AccessKeyPanel access={access} />
+        ) : (
+          <FGroup title={g.title} id={g.id}>
+            {g.fields.map((f) => (
+              <Field key={f.key} f={f} editable={editable} onSave={onSave} />
+            ))}
+          </FGroup>
+        )}
       </div>
     </>
   )
