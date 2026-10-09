@@ -32,6 +32,10 @@ _PATCH_MODULES = (
     'src.instance',
     'src.hire_quota',
     'src.fatigue',
+    'src.notify',
+    'src.notification_outbox',
+    'src.daily_summary',
+    'src.career_watch',
 )
 
 

@@ -89,8 +89,9 @@ from src.config import (
     load_config,
 )
 from src.fatigue import fatigue_today
-from src.jsonio import write_text_atomic
-from src.notify import notify_error, send_alert, send_career_unlock, send_event
+from src.notify import notify_error, send_alert, remember_config
+from src import notification_outbox
+from src import daily_summary
 from src import instance
 from src import opener
 from src.opener import open_pet_page
@@ -99,11 +100,8 @@ from src.progress import (
     ADVENTURE_PROGRESS_FILE,
     HIRE_FRIEND_PROGRESS_FILE,
     PK_PROGRESS_FILE,
-    SCHOOL_PROGRESS_FILE,
     VISIT_PROGRESS_FILE,
-    WORK_PROGRESS_FILE,
     course_kind,
-    course_seconds,
     count_cross,
     exp_daily_done,
     load_durations,
@@ -140,7 +138,6 @@ SIDE_TASK_RETRY_DELAY = 1800
 # 游戏机制：学习+打工合计时长的收益效率档（用户确认：>8 小时效率 25%、>12 小时 10%）
 # (秒门槛, 效率百分比)，按门槛从高到低匹配。门槛可用配置覆盖（schedule.efficiency_tier*_hours）
 DEFAULT_EFFICIENCY_TIERS = ((12 * 3600, 10), (8 * 3600, 25))
-EFFICIENCY_TIERS = DEFAULT_EFFICIENCY_TIERS  # 兼容旧引用
 
 
 def efficiency_tiers(tier1_hours: int, tier2_hours: int):
@@ -482,10 +479,6 @@ class Runner:
             return False
         return in_time_range(datetime.now().time(), start, end)
 
-    def today_durations(self) -> tuple[int, int]:
-        """当天已累计 (学习秒, 打工秒)；首次运行自动迁移老次数。"""
-        return self._load_durations()
-
     def _load_durations(self) -> tuple[int, int]:
         """读取今日累计时长（带旧版系数迁移）。"""
         return load_durations(self.school_factor, self.work_factor)
@@ -557,7 +550,10 @@ class Runner:
     def _log_quota_over(self, which: str) -> None:
         """“今日配额已满”日志每天每项只记一次（ctx 每轮重建，用日期标记防刷屏）。
 
-        配额 0 表示“今天不做该项”，不算达成，不发通知。
+        配额 0 表示“今天不做该项”，不算达成。**只记日志不发通知**：单条配额
+        达成通知已由 `_daily_summary_tick` 的收工总账（学习+打工一起报）取代
+        —— 学工两项的收益本来就该一起看，分开报还会漏掉学习那条（学习配额
+        与合计停止点撞在同一个数时，学习分支永远轮不到判定）。
         """
         today = date.today()
         if which == 'school':
@@ -566,49 +562,111 @@ class Runner:
             self._study_quota_logged_on = today
             log(f'今日学习配额 {self.study_quota_hours} 小时已满，今天不再学习'
                 + ('（配额 0 = 今天不学习）' if self.study_quota_hours <= 0 else ''))
-            if self.study_quota_hours > 0:
-                self._notify_quota_done('学习', self.study_quota_hours)
         else:
             if self._work_quota_logged_on == today:
                 return
             self._work_quota_logged_on = today
             log(f'今日打工配额 {self.work_quota_hours} 小时已满，今天不再打工'
                 + ('（配额 0 = 今天不打工）' if self.work_quota_hours <= 0 else ''))
-            if self.work_quota_hours > 0:
-                self._notify_quota_done('打工', self.work_quota_hours)
 
-    def _notify_quota_done(self, which: str, quota_hours: int) -> None:
-        """今日配额达成通知（受 notify.quota_done 开关控制）。
+    # ---- 日内收益汇总通知（收工总账 + 冒险日报） ----
 
-        这是当天的主要里程碑：配额就是为了“打满就停”，达成时告知用户。
-        附当前手机截图，便于顺手看一眼状态。
+    def _study_work_finished(self, tasks: dict) -> bool:
+        """学习与打工今天是否**确实跑过并且都不会再跑了**。
+
+        判据用 `_task_done_today`（全项目唯一的“某任务今天是否已完成”口径），
+        所以配额满 / 合计停止点 / 疲劳第二层 / 当天判死 任一命中都算跑完。
+        被关掉的任务不参与判定；两项都没启用则返回 False（没有账可报）。
+
+        **"跑过"这半个条件不能省**：深夜才启动调度器时，疲劳标记或配额可能
+        让两项瞬间都判完 —— 此时若只凭"都完成了"就发通知，用户会收到一条
+        「学习 0.0 小时 · 打工 0.0 小时…两项都已跑完」的空账。
+        """
+        active = [k for k in ('school', 'work')
+                  if tasks.get(k) is not None and tasks[k].cfg.enabled]
+        if not active:
+            return False
+        if not all(self._task_done_today(k, tasks) for k in active):
+            return False
+        study_s, work_s = self._load_durations()
+        return study_s + work_s > 0
+
+    def _notify_daily_summary(self, key: str, title: str, content: str) -> None:
+        """把一条汇总通知投进持久化队列（幂等 + 失败按退避补发）。
+
+        与 `_retry_notifications` 的入队路径同一套：先查是否已送达/已在队列，
+        避免同一 key 重复入队；发送交给后台线程，调度循环不等网络。
         """
         try:
-            cfg = getattr(self, '_last_cfg', None)
-            ncfg = getattr(cfg, 'notify', None) if cfg else None
+            ncfg = getattr(getattr(self, '_last_cfg', None), 'notify', None)
             if ncfg is not None and not getattr(ncfg, 'quota_done', True):
                 return
-            study_s, work_s = load_durations()
-            total_h = (study_s + work_s) / 3600
-            lines = [
-                f'今日{which}配额已达成：{quota_hours} 小时（不再安排{which}）',
-                f'当前累计：学习 {study_s / 3600:.1f}h + 打工 {work_s / 3600:.1f}h = {total_h:.1f}h',
-            ]
-            # 效率档提示是"锦上添花"，取不到（如属性未初始化）就不写这一行，
-            # 不能让整条通知因此发不出去。注意 _eff_tier_hint 的返回**已含**
-            # "效率 N%（…）"前缀，别再拼一次（曾拼成"效率：100%（效率 100%…）"）。
-            try:
-                lines.append(self._eff_tier_hint(study_s, work_s))
-            except Exception:
-                pass
-            if which == '学习' and self.work_quota_hours > 0:
-                lines.append(f'接下来按配额会转到打工（还有 {self.work_quota_hours} 小时额度）')
-            shot = self._capture_alert_image()   # 复用告警截图（存 runs/alert_*.png）
-            ok = send_event('[QQ宠物·今日完成]', '\n'.join(lines), shot)
-            log(f'配额达成通知已推送（{which}）' if ok else
-                f'配额达成通知未发出（{which}；检查「通知」页的渠道配置）')
+            if notification_outbox.delivered_at(key):
+                return
+            if notification_outbox.contains(key):
+                self._retry_notifications()
+                return
+            expires = datetime.combine(date.today() + timedelta(days=1),
+                                       datetime.min.time()).replace(
+                hour=SUMMARY_TTL_HOUR).timestamp()
+            notification_outbox.enqueue(key, 'daily', title, content,
+                                        expires_at=expires)
+            self._retry_notifications()
+            log(f'日报通知已推送（{key}）' if notification_outbox.delivered_at(key)
+                else f'日报通知已入发送队列（{key}；失败会按退避间隔补发）')
         except Exception as e:   # 通知失败绝不能影响调度
-            log(f'配额达成通知发送异常: {e}')
+            log(f'日报通知发送异常（{key}）: {e}')
+
+    def _daily_summary_tick(self, tasks: dict) -> None:
+        """两条日内收益通知的触发点（每轮调度开头调用，幂等由 outbox 的 key 保证）。
+
+        1) 学习+打工当天都跑完 → 收工总账：各跑了多久 + 各自收益
+           （学习=三维属性与学分，打工=工分与金币）；
+        2) 到 23:59 → 冒险日报：当天总次数与总金币。
+
+        只读已落盘的结算记录与时长账本，不截图、不碰设备。
+
+        **绝不抛异常**：调用点在调度主循环里，主循环的 except 会把异常当成
+        "设备/页面出问题"去走重启恢复、连败还发告警退出——一条通知的读文件
+        小错不值得把整套调度掀翻。
+        """
+        try:
+            day = date.today().isoformat()
+            now = datetime.now()
+            if self._study_work_finished(tasks):
+                study_s, work_s = self._load_durations()
+                title, content = daily_summary.report_work_summary(day, study_s, work_s)
+                self._notify_daily_summary(f'daily:work:{day}', title, content)
+            # 冒险日报：23:59 之后（当天内）补发一次。用 `>=` 而不是 `==` 是为了
+            # 容忍轮询粒度 —— 调度循环最多睡 30 秒，正好卡在 23:59:15 也会漏掉。
+            if now.strftime('%H:%M') >= '23:59':
+                title, content = daily_summary.report_adventure(day)
+                self._notify_daily_summary(f'daily:adventure:{day}', title, content)
+        except Exception as e:   # noqa: BLE001 - 汇总失败绝不拦调度
+            log(f'日报汇总检查失败（不影响调度）: {e}')
+
+    def _retry_notifications(self) -> None:
+        """Retry persisted events without changing task scheduling or progress."""
+        try:
+            cfg = getattr(self, '_last_cfg', None)
+            if cfg is None:
+                return
+            notification_outbox.start_flush(cfg.notify)
+            delivered = notification_outbox.delivery_stamps()
+            career_stamps = {key.removeprefix('career:'): stamp
+                             for key, stamp in delivered.items() if key.startswith('career:')}
+            if career_stamps:
+                data = load_unlock_data()
+                changed = False
+                for event in data.get('events', []):
+                    stamp = career_stamps.get(event.get('career'))
+                    if stamp and not event.get('notified_at'):
+                        event['notified_at'] = stamp
+                        changed = True
+                if changed:
+                    save_unlock_data(data)
+        except Exception as e:
+            log(f'通知补发检查失败（不影响调度）: {e}')
 
     def _log_work_over(self, durations: tuple[int, int]) -> None:
         """“打工停止时长已达”日志每天只记一次（条件实时求值，防调度轮询刷屏）。"""
@@ -850,6 +908,8 @@ class Runner:
                          key='reload_config', log=log)
             return
         self._last_cfg = cfg
+        remember_config(cfg.notify)
+        self._retry_notifications()
         sched = cfg.schedule
         self.threshold = sched.coin_threshold
         self.daily_hour_limit = sched.daily_hour_limit
@@ -1263,6 +1323,11 @@ SIDE_TASK_KEYS = ('adventure', 'visit', 'pk', 'hire_friend', 'friend_care', 'gif
 # 没有任务可执行且没有明确等待点时的短轮询间隔（秒），顺带热加载配置
 QUEUE_POLL_INTERVAL = 30
 
+# 日内收益汇总通知（收工总账 / 冒险日报）的存活期：次日 12:00 前发不出去就作废。
+# 不能像旧的配额通知那样设成次日 0 点 —— 冒险日报 23:59 才入队，只剩 1 分钟窗口，
+# 网络抖一下当天的账就永远收不到。
+SUMMARY_TTL_HOUR = 12
+
 # 配置热加载信号文件：设置页保存后写入（内容为时间戳），调度器睡眠期间每秒轮询，
 # 检测到更新就立即醒来重读配置 —— 把"最迟下一轮（最多 30s）生效"变成"秒级生效"。
 RELOAD_SIGNAL = PROJECT_ROOT / 'runs' / 'reload.signal'
@@ -1340,14 +1405,6 @@ def sleep_interruptible(seconds: float, chunk: float = 1.0) -> None:
         except OSError:
             pass
 
-
-def touch_reload_signal() -> None:
-    """写热加载信号（设置保存后调用）。"""
-    try:
-        # 原子写（见 docs/review/07-进程间契约.md S2）
-        write_text_atomic(RELOAD_SIGNAL, str(time.time()))
-    except OSError as e:
-        log(f'写热加载信号失败: {e}')
 
 # 主任务 pending 收尾前 PENDING_FINISH_HORIZON 秒内不执行支线任务：
 # 护理/好友护理等一轮可跑 30~40s，若在收尾点前开跑会把 finish_pending 挤后几十秒
@@ -1482,6 +1539,9 @@ class TaskQueueRunner(Runner):
                 self._apply_tasks_config(tasks, order)
                 # 跨天（进度按天持久化、第二天清零）：清除各任务"当天不可继续"标记
                 self._rollover_dead_flags(tasks)
+                # 日内收益汇总：学工跑完发收工总账、到 23:59 发冒险日报
+                # （幂等，由 outbox 的 daily:* key 保证不重复发）
+                self._daily_summary_tick(tasks)
                 executed = self._run_first_due(tasks, order)
                 # 队列状态写 runs/queue_status.json，供 GUI 状态条显示
                 # （在睡前写，睡眠期间 GUI 读到的是最新状态）
@@ -1777,11 +1837,6 @@ class TaskQueueRunner(Runner):
                 return 'work'  # 兜底：打工当天可继续就可执行
         return None
 
-    def _work_available(self, tasks: dict, study_s: int, work_s: int) -> bool:
-        """打工本轮是否可执行（不含疲劳/任务开关判定，那些在 _main_choice 里）。
-        与 _main_choice 的 work 分支同源，供队列状态显示等处复用。"""
-        return not self._work_blocked(tasks, study_s, work_s)
-
     def _task_due(self, key: str, tasks: dict, ctx: dict) -> bool:
         """任务自身的执行条件（配额/场景时间窗/主任务组统一判定），在 _eligible 之后判定。"""
         if key in MAIN_TASK_KEYS:
@@ -2002,10 +2057,10 @@ class TaskQueueRunner(Runner):
 
     def _career_on_unlock(self, unlocks: dict, attrs: dict, result: dict,
                           tasks: dict | None = None) -> None:
-        """解锁处理：直接推送通知 + 写事件文件（仪表盘横幅），可选自动停止学习。
+        """解锁处理：通知入持久化队列 + 写事件文件，可选自动停止学习。
 
-        通知走 src/notify.py 的 send_career_unlock（飞书 / Telegram / 桌面 / OnePush，
-        在仪表盘设置页「通知」组配置）；发完把事件的 notified_at 置上，避免
+        后台通过 src/notify.py 发送（飞书 / Telegram / 桌面 / OnePush，
+        在仪表盘设置页「通知」组配置）；送达后把事件的 notified_at 置上，避免
         外部脚本（历史上是 Hermes cron）重复推送。
         """
         shots = result.get('unlock_shots') or {}
@@ -2014,8 +2069,6 @@ class TaskQueueRunner(Runner):
         data = load_unlock_data()
         known = {e.get('career') for e in data.get('events', [])}
         fresh = [(c, n) for c, n in unlocks.items() if c not in known]
-        if not fresh:
-            return
         now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         for career, name in fresh:
             event = {
@@ -2025,16 +2078,23 @@ class TaskQueueRunner(Runner):
             data['events'].append(event)
             log(f'🎉 职业解锁：「{career}」（见习·{name}）'
                 + ('——已自动停止学习（职业哨兵触发）' if stop else ''))
-            # 就地推送（含树页截图）；成功才记 notified_at，失败留在事件里便于事后排查
-            if self._notify_career_unlock(career, name, attrs, shots.get(career), stop):
-                event['notified_at'] = now_str
         save_unlock_data(data)
-        if stop:
+        # Existing, unnotified events are also eligible; discovery is not delivery.
+        for event in data.get('events', []):
+            if event.get('notified_at'):
+                continue
+            if self._notify_career_unlock(event['career'], event.get('name') or '',
+                                          event.get('attrs') or {}, event.get('shot'),
+                                          bool(event.get('stopped'))):
+                event['notified_at'] = notification_outbox.delivered_at(
+                    f"career:{event['career']}")
+        save_unlock_data(data)
+        if stop and fresh:
             self._career_stop_study(tasks)
 
     def _notify_career_unlock(self, career: str, name: str, attrs: dict,
                               shot: str | None, stopped: bool) -> bool:
-        """推送一条职业解锁通知，返回是否发出成功（失败只记日志，不影响调度）。"""
+        """职业通知入队，返回是否已经送达；失败由后台退避重试。"""
         a = attrs or {}
         lines = [f'「{career}」已解锁（见习：{name}）',
                  '当前三维：力 {} / 智 {} / 魅 {}'.format(
@@ -2052,9 +2112,13 @@ class TaskQueueRunner(Runner):
             elif s.startswith('/') and os.path.exists(s):
                 image = s
         try:
-            ok = send_career_unlock('\n'.join(lines), image)
+            key = f'career:{career}'
+            notification_outbox.enqueue(key, 'career', '[QQ宠物·职业解锁]',
+                                         '\n'.join(lines), image)
+            self._retry_notifications()
+            ok = bool(notification_outbox.delivered_at(key))
             log('职业哨兵: 解锁通知已推送' if ok else
-                '职业哨兵: 解锁通知未发出（检查仪表盘设置页「通知」组的渠道配置）')
+                '职业哨兵: 解锁通知已入发送队列（失败会按退避间隔补发）')
             return ok
         except Exception as e:  # 通知失败绝不能影响调度
             log(f'职业哨兵: 解锁通知发送异常: {e}')

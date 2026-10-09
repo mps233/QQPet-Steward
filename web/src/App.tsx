@@ -458,6 +458,7 @@ export default function App() {
         <section className="card" data-page="set">
           <SettingsPage
             editable={d.editable ?? {}}
+            access={d.access}
             onSave={saveOne}
             onExit={() => go('main')}
             grp={v.grp}
