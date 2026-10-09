@@ -12,16 +12,16 @@
 > `build.py`、`QQPetCopilot.spec`、`tools/pyi_rth_preload_onnxruntime.py`、
 > `.github/workflows/release.yml` 都已删除，`requirements.txt` 里也摘掉了
 > PyQt6 / PyQt6-Fluent-Widgets / pyinstaller / pywin32（这四个只有它们用）。
-> **下文涉及这些文件的描述仅作历史参考**：本版没有桌面 GUI，界面是 `dashboard.py`
-> （手机浏览器仪表盘），调度入口是 `scenarios/runner.py`（`./run.sh`）。
-> 另外 `adventure.type`（冒险类型）在仪表盘设置页里可改，别再写"只有 GUI 能改"。
+> 本版**没有桌面 GUI、也没有打包链路**：界面是 `web/`（React）+ `dashboard.py`（后端），
+> 调度入口是 `scenarios/runner.py`（`./run.sh`）。`gui.theme`/`gui.mirror` 是那套 GUI
+> 的遗留死配置（全仓无消费者，改它没效果）。
 
 ## 项目概述
 
 QQ 宠物自动化托管脚本。技术栈：Python 3 + uiautomator2（画面、输入与控件定位）+
 RapidOCR（文字/数字识别）。UI 定位分辨率无关：
 优先 u2 控件选择器，游戏内 canvas 自绘按钮靠 OCR 文字（`src/locators.py` 注册表）。
-平台：Windows（Git Bash 环境），目标设备：Android 手机（竖屏）。
+平台：macOS（上游是 Windows，本仓库已移植），目标设备：Android 手机（竖屏）。
 
 游戏机制注意：**护理相关勋章如果要拿的话不能一键！！！**（一键护理不计入勋章进度，
 要拿勋章必须把护理方式配成"ocr检测"手动喂食/洗澡，配置项 `care.method` /
@@ -30,70 +30,60 @@ RapidOCR（文字/数字识别）。UI 定位分辨率无关：
 ## 运行与测试命令
 
 ```bash
-PY=.venv/Scripts/python          # 项目虚拟环境，所有命令用它（Python 3.12）
+PY=.venv/bin/python              # 项目虚拟环境（macOS / Python 3.13），所有命令用它
 
 $PY -m py_compile <files>        # 改完代码最基本的验证，必做
-$PY main.py                      # GUI（scrcpy 嵌入 + 调度控制）
-$PY scenarios/runner.py          # 控制台调度器
+./run.sh                         # 控制台调度器（= $PY scenarios/runner.py，透传参数）
+./dashboard.sh                   # 手机仪表盘（后台常驻 8787，已在跑则提示并退出）
 $PY scenarios/runner.py --test <target>   # 单模块测试：coins / recover / opener / school.X / work.X / adventure.X / care.X / friend_care.X / hire_friend.X
-$PY build.py                     # PyInstaller 打包（onefile），--onedir 目录模式
-$PY build.py --emulator          # 模拟器版（内置 frida 客户端；frida-server xz 不随包，兜底触发时按提示放到 exe 旁 runs/resources/frida-server/），--all 普通版+模拟器版一起打
-# 模拟器模式：main.py / runner.py 加 --emulator [--emulator-device 127.0.0.1:7555]（Root 按需，见 src/opener.py 行）
+$PY -m pytest                    # 单元测试（tests/，依赖见 requirements-dev.txt）
+# 模拟器模式：runner.py 加 --emulator [--emulator-device 127.0.0.1:7555]（Root 按需，见 src/opener.py 行）
 ```
 
 - 无设备测试：用 `DeviceScenario.__new__(DeviceScenario)` 跳过 u2 设备连接，
   桩掉 `see()` / `click()` 后调用被测方法（见历史上对 `wait_end` 的测试方式）。
-- 无头 GUI 测试：`QT_QPA_PLATFORM=offscreen $PY -c ...`，
-  并补丁 `MainWindow._start_all = lambda self: None` 避免拉起 scrcpy/调度器。
-  注意 offscreen 平台**字体库为空**（截图全是豆腐块）：验收截图需先
-  `QFontDatabase.addApplicationFont('C:/Windows/Fonts/msyh.ttc')`（和 segoeui.ttf）；
-  另外 offscreen 下 Mica 无 DWM backdrop，深色主题截图前 `w.setMicaEffectEnabled(False)`
-  走纯色回退底色。
-- **测试时不要污染真实进度文件**（`runs/*.json`）：涉及计数时把进度文件
-  重定向到临时目录（monkeypatch `src.progress` 里的文件常量），或事后回退。
+- 前端（`web/`）：`cd web && node_modules/.bin/tsc --noEmit`（类型检查）、
+  `node src/lib/format.test.mjs`（另有 `stage/notify/optimistic.test.mjs`）、
+  `node_modules/.bin/vite build`（构建到 `web/dist/`，仪表盘按请求读盘、无需重启）。
+- **测试时不要污染真实进度文件**（`runs/*.json`）：`tests/conftest.py` 的 autouse
+  fixture 已自动把各模块指向 `runs/` 的常量重定向到 tmp；新增模块若在模块级持有
+  `runs/` 下的 Path 常量，**要把它加进 `conftest.py` 的 `_PATCH_MODULES`**。
 - **状态新鲜度离线测试**（不连设备、不碰真实进度）：`$PY tools/test_state_freshness.py`
-  （`--no-gui` 跳过 GUI 卡部分）——覆盖队列状态 starting/stopped/pid 判定、
+  （`--no-gui` 跳过界面相关用例）——覆盖队列状态 starting/stopped/pid 判定、
   仪表盘 `work_eta` 的"本轮启动"截断、场景 `probe_activity_state`、
   `wait_busy_end` 重构不变性、调度器启动实测四条分支。改这些逻辑必须跑。
-  仪表盘 HTML 里的 JS 语法可用 macOS 自带
-  `/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/jsc` 解析
-  （`import dashboard` 取 `HTML` 里的 `<script>` 再 `jsc 文件`；DOM 报错正常，只要没有 SyntaxError）。
+  （该脚本里带 "GUI" 字样的历史用例已随桌面 GUI 移除，`--no-gui` 现在是默认路径。）
 
 ## 目录与模块职责
 
 | 路径 | 职责 |
 | --- | --- |
-| `main.py` | PyQt6 GUI，**界面基于 PyQt6-Fluent-Widgets**（requirements 已加 `PyQt6-Fluent-Widgets>=1.11,<2`，不要装 [full] 扩展会拉 scipy）：`MSFluentWindow` + 左侧导航栏（主页/调度/统计/任务/设置；设置页固定导航底部；主题按 `gui.theme` 配置（跟随系统/深色/浅色，`THEME_MAP`），启动时 `setTheme`、设置页改动即时生效）。**顶部全局工具栏**（`_install_toolbar` 把 stackedWidget 包进右侧容器：上工具栏下页面，切页不受影响）：开始 PrimaryPushButton、停止、画面镜像 SwitchButton（开关状态持久化 `gui.mirror`，`_toggle_scrcpy` 里写回，启动时 `load_config().gui.mirror` 恢复）、连接测试、手动重启 + 右侧运行时间 label。主页 = 左侧 scrcpy 画面卡片（SetParent 嵌入，**9:16 竖屏**：`ScrcpyContainer` 报竖屏 sizeHint/heightForWidth，`embed` 优先取 scrcpy 窗口客户区真实尺寸做嵌入比例（自适应任何设备/--max-size，用设备物理分辨率比例会留两侧黑边），`_aspect` 未知按 (9,16) 兜底 `_fit`，画面卡宽度随高度自适应收拢（`_fit_screen_card`：fixed width = 高度×画面比例，嵌入后/窗口缩放重算；**不用 QSplitter**——把手在深色主题下渲染成白色竖条；容器未嵌入时透明背景跟随主题，不写死黑色）+ 右侧卡片列（宠物状态横排一行/任务队列卡/今日统计（两行网格：学习(h)/工作(h) 时长拆分 + 各任务当日次数）/日志卡——三张卡内容都按列等宽均分（单元格 addWidget(cell, 1)，不要挤在左侧）——`log_view` 在主页吃剩余空间，状态/队列/今日卡垂直 sizePolicy Maximum 紧贴内容；**任务队列卡**（当前任务/下一任务/待执行/等待中）调度器运行时读 `runs/queue_status.json`、未运行按配置推算（`_predict_queue_summary` 复用调度页 `_predict_next`，按 `tasks.order` 顺序取第一个非“—”任务为下一任务；重启后状态文件的 PID 与当前子进程不符（或 starting/stopped 占位）时显示“启动检查中…”+按配置推算，不把上一轮的活动当现状，占位宽限期同 `startup_placeholder_active`）；分组卡片全用 `CompactCardWidget`（紧凑版 HeaderCardWidget：标题栏 48→34、内容边距 24→16/10/16/12，原版 chrome 占高 ~96px 一页放不了几组）；注意 `HeaderCardWidget.viewLayout` 是 QHBoxLayout，竖排内容要包一层 body widget）；调度页 = 每任务 开关（SwitchButton 开/关）/执行间隔（每日时间）/启用时段 可直接编辑（保存 config.yaml 热加载生效），下次执行 = 调度器运行时读 `runs/queue_status.json` 的 tasks 段、未运行时按配置推算的详细时间；任务/设置页 = `SETTING_FIELDS`/`TASK_SETTING_FIELDS` 数据驱动表单，按配置键第一段分组进 CompactCardWidget（分组标题映射 `SETTING_GROUP_TITLES`，任务页 = 任务队列顺序 + 场景任务设置，设置页 = 连接/调度引擎/全局规则/告警 + 关于与更新卡片），**分组卡片两列排布**（`TwoColumnCardsPanel`：QHBoxLayout 两个竖列、列尾 stretch 顶格，`_build_settings_form` 填完字段后 `finalize()` 按 sizeHint 高度把卡片平衡进较矮列，等宽；别用 FlowLayout——行高=该行最高卡片会在同列卡片间留白）；切页加载配置按页面 objectName 判定（`_on_tab_changed`，不依赖页序）；表单控件全用 fluent 类（SwitchButton 信号是 `checkedChanged` 不是 stateChanged；devices 下拉用 `_NoInsertEditableComboBox`——EditableComboBox 回车默认把输入追加进下拉，已改写拦截；**fluent ComboBox.addItem 签名是 (text, icon=None, userData=None)，userData 必须关键字传**（位置传参被当 icon、data 全 None，设备序列号下拉曾因此选啥都存成空）；HyperlinkLabel 的 (url, text) 重载要求 url 传 QUrl，传 str 会被当成 (text, parent) 重载（显示原始 URL、点击无效）；非 editable 的 fluent ComboBox **不是** QComboBox 子类但同名 API 基本兼容）、调度器子进程控制、scrcpy 看门狗（设备重启后自动重拉重嵌入；进程活着但没嵌上——多开同时拉起窗口创建慢、嵌入轮询已超时——看门狗补挂嵌入轮询，窗口出现即自动嵌入）、"手动重启"按钮
-（按 `recover.method` 执行一次异常恢复 `reenter_pet`，调度器在跑先停，恢复期间开始/停止按钮禁用，恢复完成自动启动调度器）；设置页"检查更新"按钮 + 启动自动检查一次/每 6 小时一次（`src/update_checker.py`，
-有更新时设置页显示 Release 链接并打日志）；标题栏带版本号（`src/version.py` 的 `APP_VERSION`）；**scrcpy 必须带 `--port=按序列号分配的固定端口`（`_scrcpy_port`，含无头关屏 scrcpy）**：默认范围 27183:27199 在 Windows 下多个 scrcpy 能同时绑定 27183（SO_REUSEADDR 语义），各设备 adb reverse 回连被投递到错误的 scrcpy 进程——双开同时开镜像画面串台/两窗口同一画面/Server connection failed |
-| `src/stats_chart.py` | 统计页：各任务近 N 天次数的平滑折线图（QPainter 自绘 + Catmull-Rom 平滑，数据来自 `runs/*_progress.json` 的 history）；坐标轴文字/网格颜色跟随 Fluent 明暗主题（`_text_color()`/`_grid_color()` 读 `isDarkTheme()`，自绘不吃样式表） |
 | `scenarios/runner.py` | 统一调度器，两种引擎（`runner.engine`）：`task_queue`（默认，`TaskQueueRunner`：执行顺序由 `tasks.order` 配置，> 分隔越靠前越优先，不在 order 里不调度；每任务独立 enabled / trigger（interval 间隔 / daily 每日时间点窗口）/ enabled_time_range / success_interval / failure_interval，见 `tasks` 段）/ `legacy`（`Runner.run` 老主循环，顺序写死：护理 → 冒险 → 踩踩 → PK → 好友雇佣 → 好友护理 → 学习/打工）。共通：场景异常分级重试（回主页面重进 → `recover()` 重启恢复）；都失败时主任务（学习/打工）发告警通知（`src/notify.py`）并退出，支线任务延后重试（legacy 用 `SIDE_TASK_RETRY_DELAY`，队列用各任务 `failure_interval`）；**task_queue 启动实测** `_startup_activity_probe()`：每次启动先出门实测一次“现在到底有没有进行中的活动”（重启会丢内存里的 pending，实测是唯一真相）——命中进行中→登记 pending 延时收尾、撞结算页→点 quit 并按 `count_cross` 计数、被雇佣→交召回流程、空闲→记日志后按最新配置调度；队列状态额外写 `pid`/`started` 供消费端判新鲜度 |
 | `scenarios/school.py` `work.py` `adventure.py` `care.py` `visit.py` `pk.py` `friend_care.py` `hire_friend.py` `employed.py` | 各场景，均继承 `DeviceScenario`（`pk.py`/`friend_care.py` 继承 `visit.py` 复用好友导航；`hire_friend.py` 继承 `friend_care.py` 复用指定好友导航；`employed.py` 只做被雇佣检测，召回复用基类） |
 | `src/scenario.py` | 场景基类：截图/u2+OCR 定位点击/回主页面/等待结束（阻塞 `wait_end` / 非阻塞延时收尾 `defer_busy_end`+`finish_pending`，OCR 剩余时间登记 `pending`）/被雇佣召回/四种进行中状态检测；**结算收益记录** `record_session_reward`/`parse_session_reward`（学习「教师评语」/打工「工资明细+打工总结」结算页 OCR → `runs/session_rewards.jsonl`，页面自带时间戳当去重 `sig`，挂在 `finish_pending`/`wait_end`/`_detect_settlement` 三处；打工页实测字段：岗位「武馆教学助理(10分钟)」/「金币+28」/「工分+3」/「本金22，雇佣加成6」；**另解析** `pet`/`owner`（结算页头部「姓名杨萌萌」/「主人 Serena」；打工页宠物名没有标签 → 用「日期行之后、主人行之前」兜底并排除标题词）、`note`（「小提示」段原文）、`ad_coins`（「看视频+10」，官方文案是「看视频获得N金币」，独立一笔、不计进 `coins`，历史 23 条合计漏记 +589；`pay_detail` 兜底：官方工资构成标题（本金/限时补贴/基础工资）由**服务端下发**、客户端不硬编码，具体词没命中时用「标签+数字」整行兜底并排除已知标签，实测 23/23 命中）；**两个坑**：① 结算页时间戳是 `2026 / 09 /27 11:44`（斜杠两侧带空格），日期正则不容忍空格时 `sig` 会退化成内容 md5（已修）；② 页面上除「金币+28」还有裸的「+28」「看视频+10」，金币只能取带标签的那个数，不能乱认数字；岗位/工分/工资构成**只在 `kind=work` 时解析**，学习页不碰这几个字段；`_classify_busy_screen()` = 出门后一屏的状态判定（结算页优先，再 school/work/adventure/employed），`wait_busy_end()` 与**启动实测** `probe_activity_state()` 共用它——后者非阻塞（不 wait_end、被雇佣不等到分成比例），供调度器启动时实测当前状态） |
-| `src/recover.py` | 异常恢复链路：adb reboot → 等开机 → 启动 QQ → **先试官方 scheme 直开宠物主页**（`mqqapi://qpet/open`，JumpActivity 零点击零权限，`SCHEME_TRY_ROUNDS`=2 轮，平板身份 `ro.build.characteristics` 含 tablet 会被告门禁拦、跳过直开）→ 失败回退点 `Q宠-*` 入口（descriptionStartsWith 前缀匹配，后缀数字不固定；入口紧凑双击用 minitouch 两连击——`d.click` JSON-RPC 往返慢，0.3s 间隔会被识别成两次单击进单击页，点不进主页 back 退回重试）回宠物页，返回新 U2Device；模拟器模式"重启设备"改为重启模拟器整机（MuMu 不支持 adb reboot，会把 adb 服务卡死；**opener 失败但设备在线时先强停 QQ 重开一次**——冷启动 QQ 首启失败比整机重启便宜得多），优先级：配置的 `recover.emulator_restart_cmd` > 留空自动探测模拟器实例分步停/启（`src/emulator.py`，serial 匹配多个实例时依次用 `emulator.type/name/path`、端口实际监听进程命令行消歧）> 回退 adb reboot，随后 connect → 等开机（`_adb_back_online` **不默认 kill-server**——kill-server 会把所有设备（其它模拟器实例/USB 真机）踢下线且 host:port 不会自动恢复，只在 connect **连续 `CONNECT_TIMEOUT_KILL_AFTER`=3 次**超时（服务疑似卡死，单次/偶发超时只是开机慢）才 kill-server 兜底并恢复之前在线过的所有远程设备）；`launch_emulator_if_offline(adb, emulator_cfg)` 启动时目标设备不在线则自动探测并**启动**所属实例（只启动不重启，等开机完成；探测不到返回 False 由调用方按原逻辑报错）——模拟器模式下 GUI `_start_all`（后台线程，设备上线后 scrcpy 看门狗自动重拉）与 `Runner.__init__`（U2Device 连接前）都会调用 |
-| `src/emulator.py` | 多模拟器实例自动探测（参考 ALAS module/device/platform）：MuMu 12/6/X、雷电 3/4/9、夜神、蓝叠 4/5、逍遥；exe→类型靠 `path_to_type`（exe 名+上级目录名），安装目录来源 = 卸载项注册表（子键名精确匹配）+ MuiCache/UserAssist（ROT13）+ 雷电 InstallDir 注册表；serial 算法 = vbox/nemu/memu 的 hostport→5555 转发正则（MuMu12 兜底 16384+32*index、雷电 5555+2*index、蓝叠4 固定 5555、蓝叠5 读 bluestacks.conf）；`scan_serials()`（GUI 设备下拉合并）、`find_instance(serial, type/name/path 消歧)`、`get_serial_pair()`（127.0.0.1:5555+X ↔ emulator-5554+X）、`restart_instance()` 按类型分步停/启 = stop 半边 + `launch_instance()`（仅启动半边，设备未运行时拉起用——模拟器模式启动链路 `launch_emulator_if_offline`，见 recover 行）（有控制台 exe 走控制台：MuMuManager/ldconsole/bsconsole/memuc，蓝叠5/MuMu6/X 杀进程再用主 exe 拉起）；serial 命中多个实例且配置消歧不够时，按端口实际监听进程命令行反查（`_match_by_listener`：MuMu12 每个实例的 .nemu 都转发 7555，MuMuVMMHeadless.exe 的 --comment 即实例名，0.0.0.0 通配与 127.0.0.1 精确绑定并存时精确绑定优先） |
+| `src/recover.py` | 异常恢复链路：adb reboot → 等开机 → 启动 QQ → **先试官方 scheme 直开宠物主页**（`mqqapi://qpet/open`，JumpActivity 零点击零权限，`SCHEME_TRY_ROUNDS`=2 轮，平板身份 `ro.build.characteristics` 含 tablet 会被告门禁拦、跳过直开）→ 失败回退点 `Q宠-*` 入口（descriptionStartsWith 前缀匹配，后缀数字不固定；入口紧凑双击用 minitouch 两连击——`d.click` JSON-RPC 往返慢，0.3s 间隔会被识别成两次单击进单击页，点不进主页 back 退回重试）回宠物页，返回新 U2Device；模拟器模式"重启设备"改为重启模拟器整机（MuMu 不支持 adb reboot，会把 adb 服务卡死；**opener 失败但设备在线时先强停 QQ 重开一次**——冷启动 QQ 首启失败比整机重启便宜得多），优先级：配置的 `recover.emulator_restart_cmd` > 留空自动探测模拟器实例分步停/启（`src/emulator.py`，serial 匹配多个实例时依次用 `emulator.type/name/path`、端口实际监听进程命令行消歧）> 回退 adb reboot，随后 connect → 等开机（`_adb_back_online` **不默认 kill-server**——kill-server 会把所有设备（其它模拟器实例/USB 真机）踢下线且 host:port 不会自动恢复，只在 connect **连续 `CONNECT_TIMEOUT_KILL_AFTER`=3 次**超时（服务疑似卡死，单次/偶发超时只是开机慢）才 kill-server 兜底并恢复之前在线过的所有远程设备）；`launch_emulator_if_offline(adb, emulator_cfg)` 启动时目标设备不在线则自动探测并**启动**所属实例（只启动不重启，等开机完成；探测不到返回 False 由调用方按原逻辑报错）——模拟器模式下仪表盘启动链路与 `Runner.__init__`（U2Device 连接前）都会调用 |
+| `src/emulator.py` | 多模拟器实例自动探测（参考 ALAS module/device/platform）：MuMu 12/6/X、雷电 3/4/9、夜神、蓝叠 4/5、逍遥；exe→类型靠 `path_to_type`（exe 名+上级目录名），安装目录来源 = 卸载项注册表（子键名精确匹配）+ MuiCache/UserAssist（ROT13）+ 雷电 InstallDir 注册表；serial 算法 = vbox/nemu/memu 的 hostport→5555 转发正则（MuMu12 兜底 16384+32*index、雷电 5555+2*index、蓝叠4 固定 5555、蓝叠5 读 bluestacks.conf）；`find_instance(serial, type/name/path 消歧)`、`get_serial_pair()`（127.0.0.1:5555+X ↔ emulator-5554+X）、`restart_instance()` 按类型分步停/启 = stop 半边 + `launch_instance()`（仅启动半边，设备未运行时拉起用——模拟器模式启动链路 `launch_emulator_if_offline`，见 recover 行）（有控制台 exe 走控制台：MuMuManager/ldconsole/bsconsole/memuc，蓝叠5/MuMu6/X 杀进程再用主 exe 拉起）；serial 命中多个实例且配置消歧不够时，按端口实际监听进程命令行反查（`_match_by_listener`：MuMu12 每个实例的 .nemu 都转发 7555，MuMuVMMHeadless.exe 的 --comment 即实例名，0.0.0.0 通配与 127.0.0.1 精确绑定并存时精确绑定优先） |
 | `src/u2dev.py` | uiautomator2 封装：连接（含 atx-agent 首装）、截图、`d.touch` 持续按压；**控制方案**（`control.method`，设置页下拉）：`injectInputEvent`（默认，`d.touch.down/up`，**不用 `d.click`**——UiDevice.click 走 JSON-RPC 模拟器上偶发失效；down/up 间保持 `CLICK_PRESS_SECONDS`=0.05s）/ `minitouch`（openstf minitouch，`MiniTouchSession`：二进制 `resources/minitouch/minitouch-<abi>` 推送设备 → `adb forward localabstract:minitouch` → socket 直发；forward 学习 ALAS 先 `forward --list` 复用、没有才在 20000-21000 随机高端口新建（低端口 Windows bind 10013）；坐标按握手 `^ max_contacts max_x max_y` 等比换算，不硬编码屏幕分辨率；minitouch 单连接限制，连接超时=被 atx-agent /minitouch 等占用），`click/touch_down/move/up` 按方案分派，minitouch 会话懒加载；**自动回退**：minitouch 因非 root/SELinux 权限拒绝打不开 `/dev/input/event*`（`_start_server` 读启动日志分类，抛 `MinitouchUnavailableError`）时自动回退 `injectInputEvent` 并把 `control.method` 写回 config.yaml（下次启动/热加载也走默认方案）；minitouch 自身错误（不可用/被占用/会话断开）不算 u2 连接故障，`_is_conn_error` 不触发 u2 重连自愈；**设备掉线重连**：`_reconnect` 先 `_wait_device_online`——远程模拟器（host:port）adb 抖动时先 `adb connect` + 轮询等 `DEVICE_ONLINE_WAIT`=45s 回线再重连 u2，避免"device not found"被误判成需要整机重启（USB 真机掉线不等待直接抛） |
 | `src/locators.py` | UI 定位注册表 `LOCATORS`：名字 → u2 选择器 / OCR 候选文案；`see()` / `see_all()` |
-| `src/adb/device.py` | adb 封装：设备在线管理（start-server）、屏幕尺寸读取（scrcpy 嵌入比例用）、`reboot_and_wait()` / `launch_app()`（异常恢复用） |
+| `src/adb/device.py` | adb 封装：设备在线管理（start-server）、`getprop()`（recover 判平板身份用）、`reboot_and_wait()` / `launch_app()`（异常恢复用）。屏幕分辨率由 `src/screen_stream.py` 自行跑 `wm size` 读取 |
 | `src/ocr.py` / `src/coins.py` | RapidOCR 封装；主页金币 = 顶部状态栏最右侧数值（全屏 OCR） |
-| `src/version.py` / `src/update_checker.py` | 版本常量（`APP_VERSION`/`APP_GITHUB_REPO`，release 工作流打包前由 `tools/write_version.py --tag <tag>` 写入）；GitHub `releases/latest` 更新检查（纯 stdlib urllib，版本号分段比较） |
 | `src/progress_store.py` | 进度文件统一管理（`runs/*_progress.json`）：跨天规整（旧日期次数归档进 history、清掉旧日期的 `study_secs/work_secs`；`school/duration` 作为会话元数据跨天保留供跨零点结算累计）、原子写入（先写 `.tmp` 再 `os.replace`，进程被杀不留损坏文件）、损坏兜底（解析失败备份成 `*.corrupted.bak` 后按空档继续）；全部进度读写走这里，`src/progress.py` 只做兼容层 |
-| `src/progress.py` | 进度持久化对外兼容入口（常量 + 日志 + 各场景函数签名，内部转发 `src/progress_store.py`）：`log()`（控制台+文件+监听器）、`load_progress/save_progress/increment_progress`（含 history 跨天归档）、`count_cross` 交叉计数、学习/工作时长累计与迁移；进度文件固定 `runs/*.json` 单文件（曾按账号重定向到 `runs/accounts/<账号>/`，账号名靠状态面板 OCR 识别不稳定、数据被拆散，已取消多账号区分） |
+| `src/progress.py` | 进度持久化对外兼容入口（常量 + 日志 + 各场景函数签名，内部转发 `src/progress_store.py`）：`log()`（控制台 + 按日写 `runs/logs/`）、`load_progress/save_progress/increment_progress`（含 history 跨天归档）、`count_cross` 交叉计数、学习/工作时长累计与迁移；进度文件固定 `runs/*.json` 单文件（曾按账号重定向到 `runs/accounts/<账号>/`，账号名靠状态面板 OCR 识别不稳定、数据被拆散，已取消多账号区分） |
 | `src/opener.py` | 模拟器模式集成（**零注入方案**：MuMu 机型伪装 / 设备门禁本地翻转 + 官方 scheme 跳转，旧版常驻 frida 注入被 QQ 风控"使用外挂插件"）：**Root 按需**——`_has_root()` 软检查（`su -c id`），有 Root 才做 `ensure_device_spoof()` 伪装重挂与 MMKV 补丁自检，无 Root 直接 scheme 直开（伪装/补丁都已持久化的设备日常零权限运行；scheme 失败且无 Root 时报错提示开一次 Root 打补丁，之后可永久关闭）；伪装改 MuMu app 级机型映射（`emulator.device_spoof` 开关控制，**默认关闭**——门禁补丁已翻转的设备不需要，设置页"MuMu 机型伪装"开关，opener 每次运行重新 load_config 天然热生效）（`/system/etc/mumu-configs/app-device-prop-*.config` 里 QQ 行从 `yyb.config` 原始模拟器 dump 换成真实手机 profile，root `mount --bind` 覆盖，重启模拟器失效、每次运行幂等重挂，非 MuMu 静默跳过），QQ 以真机身份运行、门禁原生通过、搜索卡片"宠物"入口可用；无伪装时模拟器被 QQ 判成 TABLET（`ro.build.characteristics` 含 tablet），门禁 `PetQQMC.e()` 读 UnitedConfig 107805 的 `enable_tablet`（默认 0）拦截官方跳转，此时 `ensure_gate_open()` 用 root 改本地 MMKV 缓存（`united_config_mmkv_<uin>` 追加 `enable_tablet:1` 记录 + 重算 CRC，`_patch_gate_mmkv` 有格式自检，不符就放弃不冒损坏风险）翻转门禁兜底；然后 `am start -a VIEW -d "mqqapi://qpet/open?..."`（JumpActivity，普通 shell 可发）由 QQ 官方路径打开宠物主页并初始化 SDK；三级调度：scheme 直开 → MMKV 补丁后 scheme → frida 一次性 SDK init + `am_start_pet_page` fragment 直开兜底（伪装名 `perf_daemon`、随机端口、几秒注入窗口，格式变化时启用）；`EMULATOR_MODE`/`GATE_OPEN` 标记由 `run_scheduler`/`--test`/`open_pet_page` 置位，visit 据此选游戏内导航或 am start 好友入口分支；好友入口 uin 由 `ensure_friend_entry()` 一次性注入捕获缓存 `runs/friend_entry.json`（仅兜底模式需要）；`_start_qq` 冷启动重试（`START_QQ_ATTEMPTS`=3）；QQ 服务端重发 107805 会覆盖补丁，每次启动自检重补 |
-| `src/status_cache.py` | 宠物状态缓存（`runs/status_cache.json`，单 default 条目——曾按账号名称组织兼容多账号，账号 OCR 误识别导致状态条多行，已取消）：体力/清洁/心情（care 状态面板 OCR 后）、金币（主页 OCR 后）、香皂/饼干（喂食/洗澡结束时 OCR 控件附近小图；库存角标无文字，取离 `feed_10`/`shower_10` 控件最近的数字）；一键护理后清空体力/清洁/心情/饼干/香皂；GUI 日志页顶部状态条每秒读一次 |
-| `src/queue_status.py` | 任务队列状态缓存（`runs/queue_status.json`）：TaskQueueRunner 每轮调度后写当前任务/下一任务（含等待点时间，HH:MM:SS + next_ts 时间戳，GUI 显示"xx秒后"倒计时）/待执行数量（在等退避/每日窗口/pending 收尾时间，主任务组 pending 也算一项）/等待中数量（现在就可执行、等调度器轮到），执行中任务在 `_execute` 里先写一次；GUI 状态条加一行每秒读一次（调度器未运行时不读，显示"调度器未运行"）；legacy 引擎不写。**状态新鲜度**（用户实报"宠物被送去上课、我手动召回，停掉调度器再启动，显示还是在上课"）：调度器一起来就 `mark_starting()`（清空上一轮活动 + 写自己的 PID）、停止时 `mark_stopped()`（调度器自己退出、GUI `stop_runner`/`closeEvent`、仪表盘 `scheduler_stop` 三条路径都写）；消费端用 `status_is_current()` / `startup_placeholder_active()` 判断"这份状态是不是当前这个进程写的"，对不上就显示"启动检查中/按配置推算"，而不是把上一轮遗留的 `pending: 上课` 当现状（宽限期 `STARTUP_PLACEHOLDER_GRACE_SECONDS`=600s，超过说明该引擎根本不写队列状态） |
+| `src/status_cache.py` | 宠物状态缓存（`runs/status_cache.json`，单 default 条目——曾按账号名称组织兼容多账号，账号 OCR 误识别导致状态条多行，已取消）：体力/清洁/心情（care 状态面板 OCR 后）、金币（主页 OCR 后）、香皂/饼干（喂食/洗澡结束时 OCR 控件附近小图；库存角标无文字，取离 `feed_10`/`shower_10` 控件最近的数字）；一键护理后清空体力/清洁/心情/饼干/香皂；消费方是仪表盘（dashboard 直接读这份 JSON，总览页状态环每秒刷新） |
+| `src/queue_status.py` | 任务队列状态缓存（`runs/queue_status.json`）：TaskQueueRunner 每轮调度后写当前任务/下一任务（含等待点时间，HH:MM:SS + next_ts 时间戳，前端显示"xx秒后"倒计时）/待执行数量（在等退避/每日窗口/pending 收尾时间，主任务组 pending 也算一项）/等待中数量（现在就可执行、等调度器轮到），执行中任务在 `_execute` 里先写一次；仪表盘每秒读一次（调度器未运行时不读，显示"调度器未运行"）；legacy 引擎不写。**状态新鲜度**（用户实报"宠物被送去上课、我手动召回，停掉调度器再启动，显示还是在上课"）：调度器一起来就 `mark_starting()`（清空上一轮活动 + 写自己的 PID）、停止时 `mark_stopped()`（调度器自己退出与仪表盘 `scheduler_stop` 两条路径都写）；消费端用 `status_is_current()` / `startup_placeholder_active()` 判断"这份状态是不是当前这个进程写的"，对不上就显示"启动检查中/按配置推算"，而不是把上一轮遗留的 `pending: 上课` 当现状（宽限期 `STARTUP_PLACEHOLDER_GRACE_SECONDS`=600s，超过说明该引擎根本不写队列状态） |
 | `src/config.py` | dataclass 配置 + 路径规划：`APP_ROOT`（可写）/ `RESOURCE_ROOT`（包内资源），`resource_path()` APP_ROOT 优先 |
 | `src/screen_stream.py` | 手机屏幕实时流（dashboard 用，纯标准库 + 系统 ffmpeg）：scrcpy-server 按需启停（push + `app_process` shell(2000) + `adb forward`，`tunnel_forward=true`）、读 video/control socket（握手 = dummy byte + 64B 设备名 + 4B codec + 12B session packet；帧 = 12B 头 + 裸 H.264）、剥头喂 `ffmpeg -c copy` 输出 fMP4 型 HLS（**`-use_wallclock_as_timestamps 1` 是必需项**：裸流没有 PTS 时 hls muxer 切不出分片、只出 `init.mp4`）、注入（反射 `InputManager.injectInputEvent`，坐标按视频尺寸换算）、后台看门狗空闲回收。协议细节与踩坑见 `tools/scrcpy_agent_probe.py` docstring |
-| `src/settings.py` | ruamel 往返读写 config.yaml（保留注释），GUI 设置页用 |
+| `src/settings.py` | ruamel 往返读写 config.yaml（保留注释）+ 字段校验（`DEFAULTS`/`validate_field`）；消费方是 `dashboard.py`（设置页读写）与 `scenarios/runner.py` |
 | `src/notify.py` | 失败告警通知：Windows Toast（winotify）+ OnePush 多渠道推送（Bark/PushPlus/Server酱/SMTP/自定义 webhook 等），发送失败只记日志 |
 | `tools/dump_hierarchy.py` | 抓当前屏幕控件树 XML 存到 `xml/page.xml`（校准 locators 的 xpath/content-desc 用；`xml/` 已 git 排除） |
-| `tools/fetch_scrcpy.py` | 从官方 GitHub Release 下载解压 scrcpy（win64）到 `resources/scrcpy-win64/`（不入库）；`--version` 指定版本、`--force` 强制覆盖，build.py / CI 打包前自动调用 |
-| `tools/fetch_frida_server.py` | 下载 frida-server 离线包到 `resources/frida-server/`（不入库）；`--version`/`--arch`（可多个）/`--force`，GitHub 直连失败自动试镜像；源码运行 `src/opener.py` 缺失时自动调用（xz 不随 exe 打包，打包版兜底触发时按提示手动放置） |
-| `tools/fetch_minitouch.py` | 下载 minitouch 预编译二进制到 `resources/minitouch/minitouch-<abi>`（不入库，jsDelivr/unpkg/GitHub 多源）；`--arch`（可多个）/`--force`；源码运行 `src/u2dev.py` 控制方案选 minitouch 且缺失时自动调用，build.py 打包前也会调用 |
+| `tools/fetch_scrcpy.py` | 从官方 GitHub Release 下载解压 scrcpy（win64）到 `resources/scrcpy-win64/`（不入库）；`--version` 指定版本、`--force` 强制覆盖；缺失时由 `src/screen_stream.py` 按需自动调用 |
+| `tools/fetch_frida_server.py` | 下载 frida-server 离线包到 `resources/frida-server/`（不入库）；`--version`/`--arch`（可多个）/`--force`，GitHub 直连失败自动试镜像；源码运行 `src/opener.py` 缺失时自动调用 |
+| `tools/fetch_minitouch.py` | 下载 minitouch 预编译二进制到 `resources/minitouch/minitouch-<abi>`（不入库，jsDelivr/unpkg/GitHub 多源）；`--arch`（可多个）/`--force`；源码运行 `src/u2dev.py` 控制方案选 minitouch 且缺失时自动调用 |
 | `resources/` | 第三方二进制/离线包（不入库）：`scrcpy-win64/`（tools/fetch_scrcpy.py 拉取）、`frida-server/`（离线 xz，不随 exe 打包，兜底触发时手动放置/源码运行自动下载）、`minitouch/`（minitouch 二进制，tools/fetch_minitouch.py 拉取，普通版/模拟器版都带上） |
 | `tools/test_locator.py` | 测试 locator 的 xpath 在当前页面的命中稳定性（连设备连续多轮 dump，统计 live/snapshot 两种调用方式的命中率与 bounds 漂移，定位深层 xpath 时有时无/位置漂移问题） |
 | `tools/capture_visit_jump.py` | 抓取 QQ 宠物"访问好友"跳转参数（doJumpAction URL + doAction attrs），真机/模拟器对比、QQ 更新后排查用；`-s` 设备、`-c` 自动点 好友->访问；frida-server 按 opener 的隐身方式自动部署（伪装名 + 随机端口，用完即杀） |
-| `dashboard.py` | 手机仪表盘（纯标准库 HTTP 服务，默认端口 8787，`./dashboard.sh` 后台常驻；日志 3s、数据 6s 自动刷新）。**改 UI 前必读 `qqpet_assets/web/INTEGRATION.md`**（结构/ID 契约、图标路由、验证方式、踩坑记录）+ `UI_SPEC_MEASURED.md`/`UI_TREE_OFFICIAL.md`（官方实测尺寸）。验证：`python3 dashboard.py --port 8899` 起副本（不影响 8787 在跑的实例）。**截图必须走 iframe 承载**：macOS headless Chrome 最小视口 500px，`--window-size=390` 截出的 PNG 宽 390 但页面仍按 500 排版后裁右侧，直接看会误判成"窄屏布局溢出"（见 INTEGRATION.md 5.1）。页面元素位置可自由重排，但 `main > [data-page]` 直系与 `#tabbar button[data-tab]` 两个 JS 契约不能动；**滚动架构别改回去**：`html` 是 `overflow:hidden` 只当画布（文档层不可滚，否则 iOS PWA 整页橡皮筋回弹——`overscroll-behavior` 管不到根滚动器），真正滚动的是 `body`（`height:100%` + `overflow-y:auto` + `overscroll-behavior:none`），内层滚动区（`#logbox`/`.advlist`）同样用 `none`（`contain` 只挡链式传递、回弹照旧）。**历史栈模型（侧滑返回）**：`navDepth` = 导航层级（总览 0 / 内页 1 / 设置二级 2），栈与层级一一对应 —— 往下一层 `pushState`、同级互切 `replaceState`、往上一层 `history.back()`、跨层回总览 `go(-navDepth)`；**"返回"类操作绝不能用 `pushState`**（按钮在压栈、手势在退栈，方向相反 → 侧滑要一路退回访问轨迹，实测 6 页路径要滑 5 次；且侧滑回到"设置一级"时页面名不变，层级同步必须写在 `showTab` 的 `if(name===curTab) return` **之前**，否则会多退一层甚至退出应用，见 INTEGRATION.md 第十二轮）。**实时画面（实时直播）**：shot 页直播卡 + `/stream/*`（`index.m3u8`/`init.mp4`/`segNNNN.m4s`）与 `/api/stream/*`（`status`/`stop`/`tap`/`swipe`）路由；数据源是**设备端 scrcpy-server**（免 root：`app_process` 以 shell(2000) 身份跑，采集与注入都走它）+ 本机 `ffmpeg -c copy` 转 **fMP4 型 HLS**（0.5 秒分片 + 窗口 6 片 = 3 秒：分片时长是延迟下限，**但不要低于 0.5s** —— 更短时 ffmpeg 会写出非法的 `#EXT-X-TARGETDURATION:0`，iOS 原生 HLS 播放器直接拒播（黑屏，踩过）；服务端返回 m3u8 时会兜底把该字段修正为 ≥1；另外窗口不能太小 —— 3 片时播放器会拉不到已被删的分片（404 断流进而被误回收）；实测服务端侧延迟（画面变化 → m3u8 出现新分片）仅 ~131 ms，所以用户感知的延迟几乎全在前端缓冲），实现见 `src/screen_stream.py`；**按需启停**——首个 `index.m3u8` 请求才触发启动，无人观看 `IDLE_STOP_SECONDS`=60s 自动回收（挂机期间零编码开销）；**播放期间前端每 3 秒 POST `/api/stream/ping` 心跳保活** —— 原生 HLS 播放器缓冲够了会暂停拉分片，只靠 `/stream/*` 请求判断"有没有人在看"会把正在操作的会话误回收（踩过"操作 1 分钟后突然不能动"）；**静态截图卡已从页面移除**（`/api/screenshot` 端点保留作服务端兜底，页面不再轮询它——顺带省掉每 15 秒一次、每次约 1.8 秒的 `adb screencap`，不再与调度器的 OCR 截图抢 adb 通道），页面只剩直播卡（`flex:1` 撑满）+「开始直播」/「接管操作」两个按钮；播放双路径：iOS Safari 原生 HLS、桌面（Chrome/Edge/Safari）用 MSE 拉同一份分片；**判据绝不能只看 `canPlayType('application/vnd.apple.mpegurl')` 的真值** —— Chrome 对它返回 `"maybe"`（真值！）会误走原生 HLS 分支，而 Chrome 并不支持 HLS，表现为"流在跑但画面全黑"（只有 Safari/WebKit 返回 `"probably"`）；规则是 iPhone 走原生 HLS、其余一律 MSE。**播放顺序也必须先 pump 灌数据再点火**：`await video.play()` 会等 MSE 有数据才 resolve，而数据要等 pump 去拉，两边互等 → 永远黑屏（headless 实测 segs 恒为 0、按钮卡在"连接中…"）。另外页面内留了诊断：`liveDbgLine()` 返回 `step/codec/init/segs/buf/t/rs/paused/err`，`?live=1` 自动开播时会随 3 秒心跳回传到服务端日志（`[stream diag] ...`），启动失败也会把错误显示出来而不是静默黑屏；**MSE 的 codec 串必须与实际编码 profile 一致**——设备硬编实际输出 High profile（`avc1.64001f`），前端曾写死 Baseline `avc1.42c01f`，`addSourceBuffer` 不匹配时**静默不解码**（流在跑、状态正常，但画面全黑；iOS 原生 HLS 不看该字段，所以同一路流手机端正常、桌面端黑屏）；`status()` 会用 `codec_string` 从 `init.mp4` 的 avcC box 解析真实 profile/level 返回 `codec` 字段，前端优先用它、再按常见 profile 列表兜底；**点击注入必须先点「接管操作」，但接管是"让路"而非"停止"**：dashboard 写 `runs/pause.signal` → 调度器在安全点（每轮调度开头 + `sleep_interruptible` 睡眠切片里的 `wait_if_paused()`）原地等待，**不退出进程、pending 与进度全保留**，交还后从原处继续（实测 3 秒内让路）；`stream_inject` 的放行条件 = 调度器未运行 **或** 已让路（`scheduler_paused()`：信号存在且 mtime 距今 > 2 秒）；接管期间网页每 3 秒 ping 顺便给信号续期，**超过 `PAUSE_MAX_SECONDS`=300 秒无续期自动恢复**（防 dashboard 崩了把调度器永久挂住）；`scheduler_stop()` 顺手清信号防残留；改 `scenarios/runner.py` 后需重启调度器才生效，坐标一律传设备坐标、由 `src/screen_stream.py` 换算到视频坐标系（scrcpy 的 `PositionMapper` 会校验 `screen_size`，不匹配则**静默丢弃**事件）；前端细节：点击事件绑在**透明覆盖层 `#liveTap`** 上而不是 `<video>`（iOS Safari 的 video 会吞掉 click/touch），`pointerdown` 处理里**每个分支都要用 `#liveToast` 给反馈**（未开播/未接管/尺寸未就绪/被 409 拒绝/请求失败——踩过"点了没反应"无从排查的坑），`liveDims()` 会在尺寸缺失时补查一次 status；接管状态每 3 秒跟随 `status.scheduler_alive` 自动失效（别处把调度器拉起来时提示"接管失效"）；占位框按 `--live-ar-w/h` 预留（默认 9:20，`status()` 首次调用懒加载 `wm size` 拿真实比例，重启后也不会退回默认值）；服务端每次注入都往 `runs/dashboard_console.log` 记一行"网页注入 …"，用于判断请求到底有没有到服务端。**延迟治理**：HLS 的延迟 = 分片时长 + 播放器可落后的窗口，所以前端每 3 秒用 `liveLag()`（`seekable` 末端 − `currentTime`）量一次延迟，落后 > 1.0 秒就跳到直播边缘（3 秒内最多追一次防抖）（iOS 原生播放器会自行持续缓冲，不主动追就会从 2~3 秒一路涨到 8~9 秒）；注入返回"流未运行"时前端会自动重连（`liveRestarting` 防重入）；MSE 侧只补最新两片、裁掉 3 秒以前的缓冲（pump 间隔 300 ms）（缓冲无上限增长会撞 QuotaExceeded 导致新分片全部追加失败）。**房间背景**：总览页左上角圆钮 `#btnScene`（棕色衣服 `off_l1_tshirt.png`；原本是置灰死键的"返回"）—— **点按开 `#bgSheet` 选择面板、长按 500ms 切下一张**；背景库 **29 张** = 「自动」+ 官方 5 套房间场景 `room-*`（含 `room-store`）+ 官方「装扮 → 背景」**15 款家居背景** `home-*` + 官方「宠物职业小镇」**7 个打工地点主题**与**高级学院毕业奖励** `career-*`（id↔名字见 `CAREER_PACK_SLUG`；细节在 INTEGRATION 第十五轮）。那 15 款的**真原图**是 app 按背景下载的**素材包**（root 可读，路径/8 张图构成/下载触发方式见 INTEGRATION 第十五轮）：`.../vas_material_folder/pet_353_download/petHomeBackground.<id>.zip/`，明暗两张取自 `normal_bg{,/_dark}.jpg`（免 508×1368 / 付费 720×1939），归档 `qqpet_assets/_raw/pet_home_bg_packs/`，重建 `extract_home_bgs.py --from-packs`。**深色模式必须换图**（`SCENE_INFO.dark` + `sbDark`），别拿亮版调暗。没有 root 时退而求其次：Kuikly 卡片缩略图缓存（300×808 / 720×1939）。**清晰度**：官方 2D 原图上限 720×1939（免 508×1368），页面按 DPR3 要 1170px 宽，所以全部素材过了一遍 **`tools/upscale_images.py`**（Real-ESRGAN anime x4 + 与原图 50% 混合 + 轻锐化）→ 家居+职业明暗 46 张 **1008×2160**、房间 **1080×2908**、商店 **1080×2336**；`room-*.jpg` 原先是官方 508px 的纯 Lanczos 放大，一并换掉。**细节仍有模型补的部分**（源头是官方原图）；改素材照 `extract_home_bgs.py` docstring。**换背景图必须把 JS 里的 `BG_VER` +1**（全部背景统一一个版本号，CSS 里 10 处 `--qp-room-*` 静态声明也带同一个 `?v=`）：`/qp-icons/*` 走 `Cache-Control: max-age=3600`，同名覆盖时浏览器一小时内仍显示旧图（踩过：素材已更新、页面还是旧的，看不到变化）。手动选择存 `localStorage('qpet_scene')` 并**暂停"按任务自动换背景"**（不暂停会被 6 秒一次的 `refreshData` 改回去）；背景图与状态栏采样色都由 JS 内联写到 `html`（色表只在 `SCENE_INFO` 一份），详见 INTEGRATION.md 第十五轮。**日志页拆两个子页**（用户要求）：`#logIndex`（实时日志）与 `#logReward`（收益记录），切换条 `#logSubtabs` 常驻上方；层级同设置页二级（`pushState`→`navDepth` 2，点「实时日志」`history.back()` 退栈）。**两个排版坑**：① `#logSubtabs` 是裸 `.logctl`，内页水平 padding 为 0，必须自己 `margin: 10u 12u 0`；② 多出切换条后 `pre#logbox` 的 `100dvh - 320px` 会把「异常截图」卡切掉，`#logIndex pre#logbox` 单独减到 366px；汇总行无图标行要加同宽占位 `.rwphs`。细节见 INTEGRATION 第七节。`?tab=log&sub=reward` 可直开（**sub 必须在 `showTab` 之前读进变量** —— `showTab` 会把 URL 重写成 `?tab=log`，之后再读 `location.search` 就没有它了，与 `_grpFromUrl` 同一个坑）。数据源 `runs/session_rewards.jsonl`（`src/scenario.record_session_reward` 在结算页记录）+ `GET /api/rewards[?date=YYYY-MM-DD|all]`（`rewards_data()`；汇总里的 `credits_n`/`coins_n` = **解析出数值的条数**，前端据此区分"没收益"与"没解析出来"，不会拿 `+0` 冒充）。**改完 `dashboard.py` 必须重启 8787**（`HTML` 是模块级常量，只在 8899 起副本验证 ≠ 线上已更新）。**调度器单实例守卫**：`src/instance.py`（`runs/runner.pid` + 内核判活，**绝不依赖 ps**；runner 自守卫、多开时后启动者退出 2），详见 INTEGRATION.md 第十七轮。**状态新鲜度**：`work_eta()` 只认最近一次调度器启动（日志里的 `调度引擎: task_queue|legacy` 行，常量 `RUN_START_LOG_RE`，改 runner 那行日志时须同步）之后的“进行中”登记——重启后上一轮的登记作废，否则界面会继续显示“上课中/剩余 xx 分钟”（用户实报）；队列状态 `starting`/`stopped`/PID 与当前调度器对不上时状态条显示“启动中”、任务列表退回按配置渲染，超过 10 分钟宽限期不再显示“启动中”（legacy 引擎不写队列状态）；`scheduler_stop()` 顺手 `mark_stopped()` |
+| `dashboard.py` | 手机仪表盘（纯标准库 HTTP 服务，默认端口 8787，`./dashboard.sh` 后台常驻，已在跑则提示并退出）。**后端只提供接口与静态资源，界面是 React 前端 `web/`**（构建产物 `web/dist/`，按请求读盘、**改前端无需重启仪表盘**；改 `web/` 前必读 [`web/FRONTEND_PITFALLS.md`](web/FRONTEND_PITFALLS.md)）。访问需鉴权：访问码存 `runs/`，`/api/auth` 校验后发 Cookie（`src/dashboard_auth.py`），改 dashboard 路由要留意这条守卫。路由：`/`（`web/dist/index.html`）、`/assets/*`（Vite 产物，带 hash 的长缓存）、`/manifest.json`、`/sw.js`、`/qp-icons/*`（图标与背景，路径归属校验；`Cache-Control: max-age=3600`）、`/files/*`（异常截图等）、`GET /api/data`（总览聚合）`/api/logs` `/api/rewards` `/api/adventure` `/api/friends` `/api/plan` `/api/adb` `/api/notify/history` `/api/stream/status` `/api/screenshot`、`POST /api/auth` `/api/access-key` `/api/settings` `/api/runner/start|stop` `/api/adb/connect` `/api/plan/sync` `/api/preset/alt` `/api/notify/test` `/api/stream/ping|stop|tap|swipe`。验证：`python3 dashboard.py --port 8899` 起副本（不影响 8787 在跑的实例）。**实时画面（实时直播）**：`/stream/*`（`index.m3u8`/`init.mp4`/`segNNNN.m4s`）+ `/api/stream/*`；数据源是**设备端 scrcpy-server**（免 root：`app_process` 以 shell(2000) 身份跑，采集与注入都走它）+ 本机 `ffmpeg -c copy` 转 **fMP4 型 HLS**（0.5 秒分片 + 窗口 6 片 = 3 秒：分片时长是延迟下限，**但不要低于 0.5s** —— 更短时 ffmpeg 会写出非法的 `#EXT-X-TARGETDURATION:0`，iOS 原生 HLS 播放器直接拒播（黑屏，踩过）；服务端返回 m3u8 时会兜底把该字段修正为 ≥1；窗口也不能太小 —— 3 片时播放器会拉不到已被删的分片（404 断流进而被误回收）；实测服务端侧延迟仅 ~131 ms，用户感知的延迟几乎全在前端缓冲），实现见 `src/screen_stream.py`；**按需启停**——首个 `index.m3u8` 请求才触发启动，无人观看 `IDLE_STOP_SECONDS`=60s 自动回收；**播放期间前端每 3 秒 POST `/api/stream/ping` 心跳保活** —— 原生 HLS 播放器缓冲够了会暂停拉分片，只靠 `/stream/*` 请求判断会把正在操作的会话误回收（踩过"操作 1 分钟后突然不能动"）；播放双路径：iPhone 走原生 HLS、其余一律 MSE（**判据绝不能只看 `canPlayType('application/vnd.apple.mpegurl')` 的真值** —— Chrome 返回 `"maybe"`（真值！）会误走原生 HLS 而 Chrome 不支持 HLS，表现为"流在跑但画面全黑"；只有 Safari/WebKit 返回 `"probably"`）；**播放顺序必须先 pump 灌数据再点火**：`await video.play()` 会等 MSE 有数据才 resolve，而数据要等 pump 去拉，两边互等 → 永远黑屏；**MSE 的 codec 串必须与实际编码 profile 一致**——设备硬编实际输出 High profile（`avc1.64001f`），曾写死 Baseline `avc1.42c01f` 导致 `addSourceBuffer` 静默不解码（流正常但桌面端全黑）；`status()` 会从 `init.mp4` 的 avcC box 解析真实 profile/level 返回 `codec` 字段供前端优先使用。**点击注入必须先点「接管操作」，但接管是"让路"而非"停止"**：dashboard 写 `runs/pause.signal` → 调度器在安全点（每轮调度开头 + `sleep_interruptible` 睡眠切片里的 `wait_if_paused()`）原地等待，**不退出进程、pending 与进度全保留**（实测 3 秒内让路）；`stream_inject` 放行条件 = 调度器未运行 **或** 已让路（`scheduler_paused()`：信号存在且 mtime 距今 > 2 秒）；接管期间网页每 3 秒 ping 顺带给信号续期，**超过 `PAUSE_MAX_SECONDS`=300 秒无续期自动恢复**；坐标一律传设备坐标、由 `src/screen_stream.py` 换算到视频坐标系（scrcpy 的 `PositionMapper` 校验 `screen_size`，不匹配则**静默丢弃**）。**房间背景**：总览页圆钮开选择面板——**点按开面板、长按切下一张**；背景库见 `web/src/lib/scene.ts` 的 `SCENE_INFO`（「自动」+ 官方 4 套房间场景 + 15 款家居 `home-*` + 8 个职业主题 `career-*`；**`room-store` 已按用户要求移除**，图片仍在磁盘随时可加回，`readManualScene` 会校验旧 localStorage 值并回落「自动」）；那 15 款的真原图来自 app 下载的**素材包**（root 可读），归档 `qqpet_assets/_raw/pet_home_bg_packs/`，重建 `extract_home_bgs.py --from-packs`；**深色模式必须换图**（`SCENE_INFO.dark` + `sbDark`），别拿亮版调暗；**换背景图必须把 `web/src/lib/scene.ts` 的 `BG_VER` +1**（`/qp-icons/*` 走 `max-age=3600`，同名覆盖时浏览器一小时内仍显示旧图）；手动选择存 `localStorage('qpet_scene')` 并**暂停"按任务自动换背景"**；背景与状态栏采样色由 JS 内联写到 `html`（色表只在 `SCENE_INFO` 一份）。**调度器单实例守卫**：`src/instance.py`（`runs/runner.pid` + 内核判活，**绝不依赖 ps**；runner 自守卫、多开时后启动者退出 2）。**状态新鲜度**：`work_eta()` 只认最近一次调度器启动（日志里的 `调度引擎: task_queue|legacy` 行，常量 `RUN_START_LOG_RE`，改 runner 那行日志时须同步）之后的"进行中"登记——重启后上一轮的登记作废，否则界面会继续显示"上课中/剩余 xx 分钟"（用户实报）；队列状态 `starting`/`stopped`/PID 与当前调度器对不上时状态条显示"启动中"、任务列表退回按配置渲染，超过 10 分钟宽限期不再显示"启动中"（legacy 引擎不写队列状态）；`scheduler_stop()` 顺手 `mark_stopped()` |
 
 ## 关键约定（改动时必须遵守）
 
@@ -178,11 +168,13 @@ $PY build.py --emulator          # 模拟器版（内置 frida 客户端；frida
   （SystemExit）；支线任务（冒险/踩踩/PK/好友护理/好友雇佣）不退出——抛 `ScenarioFailed`，
   由调度循环重新排期延后 `SIDE_TASK_RETRY_DELAY` 秒重试（`retry_after`，
   参考 qq-farm-copilot 的失败间隔队列机制），先执行其他任务。
-- **配置改动**：新配置项加到 `config.yaml` + `src/config.py` 的 dataclass +
-  `main.py` 的 `SETTING_FIELDS`（设置页表单，全局设置）或 `TASK_SETTING_FIELDS`
-  （任务页表单，场景任务相关）+ `src/settings.py` 的 `DEFAULTS`/`validate_field` 四处。
-- **配置热加载**：新增配置项除了上面四处，还必须同步到 `scenarios/runner.py` 的
-  `Runner.reload_config()`（两种引擎每轮调度前都会调用，GUI 设置页保存后下一轮生效）
+- **配置改动**：新配置项加到 `config.yaml`（含 `config.example.yaml` 模板）+ `src/config.py` 的
+  dataclass + `src/settings.py` 的 `DEFAULTS`/`validate_field` + **前端表单**
+  （`web/src/lib/settings-schema.ts` 定义字段，`web/src/components/SettingsPage.tsx` /
+  `NotifyPage.tsx` 渲染，`dashboard.py` 的 `editable_snapshot()` / `apply_settings` 的
+  `mapping` 负责回填与写盘）。**四处缺一处就会"界面上看不见"或"改了不生效"**。
+- **配置热加载**：新增配置项除了上面几处，还必须同步到 `scenarios/runner.py` 的
+  `Runner.reload_config()`（两种引擎每轮调度前都会调用，设置页保存后下一轮生效）
   ——否则运行时改了不生效（历史教训：`work.duration` / `care.interval_seconds` /
   `schedule.encourage_times` / `schedule.main_page_checks` 曾漏同步）。规则：
   - 场景 `__init__` 里从 `self.cfg.xxx` 拷成 `self.xxx` 的**副本属性**必须逐字段同步
@@ -201,16 +193,18 @@ $PY build.py --emulator          # 模拟器版（内置 frida 客户端；frida
     切换方案后下次点击自动按新方案走）；
   - 枚举/取值范围字段先校验、非法回退旧值并记日志（如 `school.attribute`、
     `work.duration`、`work.location`——地点下拉选项统一在 `src/settings.py` 的 `WORK_LOCATIONS`，
-    main.py 下拉和 validate_field 共用，新增地图时只改这一处），不要直接赋值导致运行时 KeyError；
-  - 例外（无需热加载）：`adb.*`（连接层，改完需重启 GUI）、`gui.*`（仅 GUI 用，如 theme 保存时即时 setTheme）、`runner.engine`
+    仪表盘下拉与 validate_field 共用，新增地图时只改这一处），不要直接赋值导致运行时 KeyError；
+  - 例外（无需热加载）：`adb.*`（连接层，改完需重启调度器）、`runner.engine`
     （切换调度引擎需重启调度器）。
-  - **统一失败重试间隔**：`tasks.failure_interval`（设置页"任务失败重试间隔"，`SETTING_FIELDS` + `DEFAULTS`/`validate_field`）是各任务 `failure_interval` 的**唯一入口**——`load_config` 构造完各 `TaskItemConfig` 后用全局值覆盖，改 config.yaml 里各任务单独的 `failure_interval` 无效（config 文件里已删除这些行）。
-- **GUI 线程纪律**：调度器是子进程（`scenarios/runner.py`，打包后为 `exe --runner`，
-  两种入口都走 `run_scheduler()` 按 `runner.engine` 配置选引擎，不要写死 Runner），
-  日志经 stdout → 队列 → QTimer 上屏；worker 线程不直接碰 Qt 控件。
-  界面是 PyQt6-Fluent-Widgets（`MSFluentWindow`）：新增页面用 `addSubInterface` 注册
-  （页面必须 setObjectName），主题切换由 qfluentwidgets 自己处理，
-  自绘/普通 Qt 控件要读 `isDarkTheme()` 或用 fluent 标签类。
+    `gui.*`（`theme`/`mirror`）是**已移除的桌面 GUI 的遗留死配置**：全仓无消费者，
+    改它没有任何效果（保留仅为不让老 config.yaml 报错）。
+  - **统一失败重试间隔**：`tasks.failure_interval`（设置页"任务失败重试间隔"，`DEFAULTS`/`validate_field`）是各任务 `failure_interval` 的**唯一入口**——`load_config` 构造完各 `TaskItemConfig` 后用全局值覆盖，改 config.yaml 里各任务单独的 `failure_interval` 无效（config 文件里已删除这些行）。
+- **进程与线程纪律**：调度器是**独立子进程**（`scenarios/runner.py`，由仪表盘的
+  `/api/runner/start` 拉起），不要写死某种引擎——入口走 `run_scheduler()` 按
+  `runner.engine` 配置选引擎。日志写 stdout + `runs/logs/<日期>.log`，仪表盘读文件上屏。
+  runner 自带**单实例守卫**（`src/instance.py`，见 `runs/runner.pid`），多开时后启动者退出 2。
+  仪表盘是**多线程 HTTP 服务**：静态资源按请求读盘（改前端无需重启），
+  涉及配置写盘/注入的路径要留意 `_SETTINGS_LOCK` 与访问码守卫。
 - **任务队列调度**（默认引擎 `task_queue`）：`TaskQueueRunner` 每轮按 `tasks.order`
   顺序扫描，执行第一个"可执行"的任务（`_eligible`：enabled / enabled_time_range /
   trigger 窗口 / 退避间隔 → `_task_due`：任务自身配额与场景时间窗），跑完一个回顶部
@@ -285,16 +279,6 @@ $PY build.py --emulator          # 模拟器版（内置 frida 客户端；frida
   不再走任务级退避与恢复链路去拖垮"自己的护理"。`friend_care` 已从 `TASK_KEYS` 移除
   （任务列表里不再单独出现），但 `friend_care` 段**原样保留**：开关 / 时间段 / 间隔 /
   好友名 / 方式都没变，所以"单独开关"照旧生效（没开或没到点就什么都不做）。
-  以下老描述仅作历史参考 ——
-- **好友护理调度**（原独立任务口径）：`friend_care.enabled` 开启且配置了 `friend_name` 时，主循环按
-  `friend_care.time_range`（HH:MM-HH:MM，支持跨零点）+ `friend_care.interval_seconds`
-  调度间隔（`friend_care_due()`，距上次巡检完成时间起算）调度；每次调度只做一次
-  护理巡检（进好友家按方式护理一次即回主页面，场景内不再等待/切换好友刷新状态），
-  巡检完成无论是否执行护理动作都返回 True（返回 False 会被任务队列标记当天不可
-  继续，导致间隔后不再复查）；护理方式与护理自己一致（ocr检测 护理到 90 / 一键护理），
-  好友的体力/库存不写自己的状态缓存；好友家有概率卡顿（喂食/洗澡面板打不开、
-  页面卡死），场景内失败后回主页面重新进指定好友家再试（`FRIEND_CARE_RETRIES` 次），
-  仍失败才抛给调度器走恢复链路。
 - **福袋调度**：`gift_bag.enabled` 开启时按 `gift_bag.time_range` + `gift_bag.interval_seconds`
   调度（`gift_bag_due()`，距上次扫描完成起算；间隔默认半小时）。
   **机制来自游戏自带的「玩法规则」**（自己家钱袋面板上那个按钮，点开能读到）：
@@ -364,25 +348,6 @@ $PY build.py --emulator          # 模拟器版（内置 frida 客户端；frida
   加过一轮三选一（defer/wait/panel）被用户否掉（"别弄个选项迷惑人"）：现在 CD 没好
   一律照常去打工（面板挑人），**不空等也不延后**。`hire_friend` 已从 `TASK_KEYS`/`MAIN_TASK_KEYS` 移除，
   `scenarios/hire_friend.py` 保留为被 work 调用的类（`__main__` 仍可单独跑调试）。
-  以下老描述仅作历史参考 —— 老实现（下面这段）用于对照：
-  开启且配置了好友名称时，在
-  `hire_friend.time_range`（HH:MM-HH:MM，支持跨零点）时间段内按
-  `hire_friend.interval_seconds`（默认 5 秒，距上次执行起算，`last_hire_at` 在执行处记录，
-  `hire_friend_due()` 保持纯查询无副作用——`_main_choice` 每轮被主任务组内多个任务的
-  扫描重复评估，判定里记时间会把雇佣卡死）/ 当天次数
-  （`times_per_day`，进度存 `runs/hire_friend_progress.json`）/ 失败延后期调度
-  （`hire_friend_due()`）；**雇佣前预检**：场景先出门检测宠物是否正在打工/学习/冒险/
-  被雇佣中（基类 `detect_busy_remaining()`，OCR 剩余时间，识别不到兜底 60 秒），
-  命中则抛 `TaskDeferred(until)`（`src/scenario.py`，与 `ScenarioFailed` 失败退避
-  语义不同）延后到活动结束——队列引擎 catch 后设 `task.next_at = until`，legacy
-  引擎记 `retry_after['雇佣好友']`，都不算失败，先调度其他任务；场景内进指定好友家，OCR `hire` 控件上的
-  雇佣剩余 CD（如 28:05），有 CD 同样抛 `TaskDeferred` 延后 `HIRE_CD_POLL_SECONDS`
-  （60 秒）复测——不原地等待（CD 可能提前结束）；没有 CD 才点 hire 进打工面板（面板加载固定等 3 秒，
-  期间可能弹职业升级/获得新职业弹窗，先 `dismiss_career_popup()` 处理再检测，
-  未进面板重试点击），按打工流程 select_place 确认/重选打工地点（已是配置地点直接用，
-  不是则 back 重置重选）后按 `work.duration` 选工作选择框（10分钟/45分钟/2小时 ->
-  select_box_1/2/3，打工与雇佣好友共用）、点 work_start 打工一轮；打工结束点 quit
-  后才计数（雇佣好友 + 打工各计一次，不做打工流程里的雇佣部分）。
 - **被雇佣检查调度**：`employed.enabled` 开启时，被雇佣时间段（`employed.time_range`，
   HH:MM-HH:MM 支持跨零点）内按 `employed.interval_seconds`（默认 60 秒）间隔出门
   检查是否被雇佣中（`employed_due()`，`scenarios/employed.py` 场景只做检测）；
@@ -396,7 +361,7 @@ $PY build.py --emulator          # 模拟器版（内置 frida 客户端；frida
     `set_current_school_duration` 写入；旧会话无该字段时回退学园阶段映射
     初级10/中级20/高级30/进修45 分钟）；打工结算按持久化的 `work.duration` 累计
     （`work_progress.json` 的 `duration`：10分钟/45分钟/2小时）。累计时长（秒）存
-    `study_secs`/`work_secs`，`load_durations()` 读取（GUI 日志页“今日”显示
+    `study_secs`/`work_secs`，`load_durations()` 读取（仪表盘“今日”显示
     `已学习/工作/总时长（小时）0.0/0.0/0.0` 1 位小数）；`_duration_over` 判断
     `schedule.daily_hour_limit`（小时，0=不限）达上限后**今天不再学习只打工**；
     `schedule.work_stop_hours`（小时，0=不限）判断 `_work_over`：学习+打工
@@ -471,29 +436,27 @@ $PY build.py --emulator          # 模拟器版（内置 frida 客户端；frida
   游戏内 好友->访问 与真机一致直接可用；仅 frida 兜底模式（门禁仍关）才走
   `visit.py` 的 `_goto_first_friend_emulator`（am start 直开 + `runs/friend_entry.json`
   入口缓存）。
-  frida-server xz 不随 exe 打包（省 ~32MB）：兜底触发时按提示把
-  `frida-server-<版本>-android-<架构>.xz` 放到 exe 旁 `runs/resources/frida-server/`
-  （`tools/fetch_frida_server.py` 下载，源码运行缺失时自动联网下载）；
+  frida-server 由 `tools/fetch_frida_server.py` 拉到 `resources/frida-server/`
+  （`runs/resources/frida-server/` 可覆盖）；源码运行缺失时自动联网下载；
   frida 客户端版本必须与它一致（`requirements.txt` 的 `frida` 锁定版本）。
   Frida 17 起 `Java` 桥不再内置在运行时里（脚本里没有全局 `Java`），注入前由
   `_wrap_java_bridge` 把 frida-tools 的 `frida-java-bridge` 暴露为全局 `Java` 再拼 init 脚本；
-  frida-tools 版本随 frida 一起锁定（`requirements.txt`），普通版打包时排除 frida_tools。
+  frida-tools 版本随 frida 一起锁定（`requirements.txt`）。
   模拟器模式下启动与 `recover()` 都走 opener 打开宠物主页（`src/recover.py` 的 `use_opener` 分支），
-  不再依赖 `Q宠-*` 入口；GUI 手动重启恢复成功后再拉起调度器会传 `--skip-opener`
-  跳过启动时的 opener 打开（宠物主页已由恢复流程打开，避免一次手动重启开两次宠物主页）；
-  打包的模拟器版 exe（`build.py --emulator`）内置
-  `emulator_mode.txt` 标记，启动默认开启模拟器模式（`src/config.py` 的 `is_emulator_build()`）。
-  模拟器没有物理屏幕：模拟器模式下 scrcpy 不带 `--turn-screen-off`（`start_scrcpy`
-  的 `emulator` 参数），关镜像时也不再拉无头关屏 scrcpy（`start_scrcpy_screen_off` 直接跳过）。
+  不再依赖 `Q宠-*` 入口；宠物主页已由恢复流程打开时传 `--skip-opener`
+  跳过启动时的 opener 打开（避免一次流程开两次宠物主页）。
+  打包的模拟器版 exe 内置 `emulator_mode.txt` 标记，启动默认开启模拟器模式
+  （`src/config.py` 的 `is_emulator_build()`）；源码运行用 `--emulator` 显式开启。
 - 不再修改手机分辨率/密度（wm size/density）：定位分辨率无关，无此需求。
   （**例外**：给仪表盘提取官方素材时可临时放大分辨率截图，用完必须
   `wm size reset; wm density reset` 还原，且要在 QQ 没在跑时改 —— 见 dashboard.py 一行的「房间背景」。）
 
 ## 打包
 
-`python build.py`（onefile）。`scrcpy-win64/` 不入库（二进制），打包前
-`build.py` 自动调 `tools/fetch_scrcpy.py` 从官方 Release 拉取。路径约定：打包后
-`APP_ROOT` = exe 所在目录（config.yaml 首启复制、runs/ 生成于此），
-`RESOURCE_ROOT` = `sys._MEIPASS`。exe 旁 `runs/` 目录放同名资源可覆盖包内资源（如 `runs/resources/scrcpy-win64/`、`runs/resources/frida-server/`）。
-Release 工作流打包前会执行 `tools/write_version.py --tag <tag>` 把版本号写进 `src/version.py`
-（exe 内"检查更新"按它比较版本）；本地手动打包发布前如需正确版本号，同样先跑这个命令。
+**本仓库没有打包链路**（上游的 `build.py` / PyInstaller / Windows CI 已移除）——
+源码直接跑：`./run.sh`（调度器）+ `./dashboard.sh`（仪表盘）。
+`src/config.py` 仍保留 `APP_ROOT` / `RESOURCE_ROOT` 双根设计（打包版
+`APP_ROOT` = exe 目录、`RESOURCE_ROOT` = `sys._MEIPASS`），源码运行时两者都是仓库根，
+`resource_path()` 让 `runs/` 下的同名文件可覆盖包内资源（如
+`runs/resources/scrcpy-win64/`）——`resources/` 里的第三方二进制不入库，
+按需用 `tools/fetch_*.py` 拉取。

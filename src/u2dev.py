@@ -518,8 +518,11 @@ class MiniTouchSession:
                 f'python tools/fetch_minitouch.py --arch {abi} 或放到 resources/minitouch/')
         return path
 
-    def _start_server(self, adb_bin: str, serial: str) -> None:
+    def _start_server(self) -> None:
         """启动 minitouch（普通 shell 优先，失败用 su）；重复调用无副作用。
+
+        adb 路径与设备序列号都走 `self._adb()`（它从 `self.dev.adb` 取），
+        不需要参数。
 
         启动失败时读启动日志分类：SELinux/权限拒绝（打不开 /dev/input/event*，
         常见于非 root 真机）抛 MinitouchUnavailableError，其余抛 RuntimeError。
@@ -594,7 +597,7 @@ class MiniTouchSession:
         # 推送并加可执行权限
         self._adb('push', str(binary), '/data/local/tmp/minitouch')
         self._adb('shell', 'chmod', '755', '/data/local/tmp/minitouch')
-        self._start_server(dev.adb.adb, dev.adb.serial)
+        self._start_server()
         # adb forward minitouch 的 abstract socket 到本地端口，socket 直连。
         # 学习 ALAS：优先复用已有 forward（forward --list），新建用随机高端口，
         # 避免 Windows 低端口 bind 10013；连接不上说明是残留 forward，删掉重建。

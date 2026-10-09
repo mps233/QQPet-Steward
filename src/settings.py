@@ -315,16 +315,6 @@ def save_raw(data) -> None:
     os.replace(tmp, CONFIG_FILE)
 
 
-def get_value(data, dotted_key: str, default=None):
-    """按 'school.attribute' 形式的点路径取值。"""
-    cur = data
-    for part in dotted_key.split('.'):
-        if not isinstance(cur, dict) or part not in cur:
-            return default
-        cur = cur[part]
-    return cur
-
-
 def set_value(data, dotted_key: str, value) -> None:
     """按点路径写值，中间层级不存在则创建。"""
     parts = dotted_key.split('.')

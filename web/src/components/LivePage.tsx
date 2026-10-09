@@ -62,6 +62,14 @@ export function LivePage() {
     return pickDims(infoRef.current)
   }, [])
 
+  const syncVideoSize = useCallback(() => {
+    const v = videoRef.current
+    const card = v?.closest<HTMLElement>('.livecard')
+    if (!v?.videoWidth || !v.videoHeight || !card) return
+    card.style.setProperty('--live-ar-w', String(v.videoWidth))
+    card.style.setProperty('--live-ar-h', String(v.videoHeight))
+  }, [])
+
   const lag = useCallback((): number | null => {
     const v = videoRef.current
     if (!v) return null
@@ -355,7 +363,7 @@ export function LivePage() {
   return (
     <>
       <div className="scenecard livecard">
-        <video ref={videoRef} playsInline muted />
+        <video id="liveVideo" ref={videoRef} playsInline muted onLoadedMetadata={syncVideoSize} onResize={syncVideoSize} />
         {/* 透明覆盖层接收点击（iOS 的 <video> 会吞掉 click/touch） */}
         <div className="livetap" onPointerDown={(e) => void onTap(e)} />
         {hint ? <div className="livehint">{hint}</div> : null}

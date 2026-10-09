@@ -187,6 +187,42 @@ def audit(msg: str) -> None:
         pass
 
 
+#: 访问码校验失败限流：自定义访问码可以短到 8 位，必须挡住局域网内的穷举。
+AUTH_FAIL_LIMIT = 8
+AUTH_FAIL_WINDOW = 300
+#: RLock：改访问码时要在同一临界区里写文件、换 server 上的访问码、
+#: 再清掉本机失败计数，而 auth_clear_failures() 自己也要拿这把锁（否则自锁死）。
+AUTH_LOCK = threading.RLock()
+AUTH_FAILURES: dict[str, list[float]] = {}
+
+
+def auth_retry_after(ip: str) -> int:
+    """还剩多少秒处于锁定中；0 = 现在可以尝试。"""
+    now = time.time()
+    with AUTH_LOCK:
+        stamps = [t for t in AUTH_FAILURES.get(ip, []) if now - t < AUTH_FAIL_WINDOW]
+        if stamps:
+            AUTH_FAILURES[ip] = stamps
+        else:
+            AUTH_FAILURES.pop(ip, None)
+        if len(stamps) < AUTH_FAIL_LIMIT:
+            return 0
+        return max(1, int(AUTH_FAIL_WINDOW - (now - stamps[-1])))
+
+
+def auth_record_failure(ip: str) -> None:
+    now = time.time()
+    with AUTH_LOCK:
+        stamps = [t for t in AUTH_FAILURES.get(ip, []) if now - t < AUTH_FAIL_WINDOW]
+        stamps.append(now)
+        AUTH_FAILURES[ip] = stamps[-AUTH_FAIL_LIMIT * 2:]
+
+
+def auth_clear_failures(ip: str) -> None:
+    with AUTH_LOCK:
+        AUTH_FAILURES.pop(ip, None)
+
+
 def scheduler_info() -> dict:
     pids = _runner_pids()
     uptime = ''
@@ -1363,7 +1399,9 @@ def _apply_settings(updates: dict) -> dict:
         if kind == 'int':
             fixed = int(fixed)
         S.set_value(data, key, fixed)
-        applied[field] = fixed
+        applied[field] = ('[configured]' if fixed else '') if field in (
+            'notify_feishu_webhook', 'notify_feishu_secret', 'notify_feishu_access_token',
+            'notify_telegram_token', 'notify_telegram_chat_id') else fixed
     if applied:
         S.save_raw(data)
     return {'ok': not rejected, 'applied': applied, 'rejected': rejected}
@@ -1464,6 +1502,8 @@ def build_data() -> dict:
     if p:
         log_lines = tail_lines(p, 400)
     accounts = (read_json('status_cache.json').get('accounts') or {})
+    key_file = Path(os.environ.get('QQPET_DASHBOARD_ACCESS_FILE')
+                    or RUNS / 'dashboard_access.token')
     try:
         import yaml
         sched_cfg = (yaml.safe_load((BASE / 'config.yaml').read_text('utf-8')) or {}).get('schedule') or {}
@@ -1482,6 +1522,9 @@ def build_data() -> dict:
         'last_line': log_lines[-1] if log_lines else '',
         'editable': editable_snapshot(),
         'friends': list_friends(),
+        # 访问权限卡（设置 → 访问码）用；不回传访问码本身
+        'access': {'custom': is_custom_key(key_file),
+                   'min_length': MIN_KEY_LENGTH},
     }
 
 
@@ -1674,6 +1717,22 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/data':
                 body = json.dumps(build_data(), ensure_ascii=False).encode('utf-8')
                 self._send(200, 'application/json; charset=utf-8', body)
+            elif path == '/api/notify/history':
+                from src.notify import HISTORY_FILE
+                records = []
+                # 历史文件是首次发送成功后才创建的；缺失不是错误，空列表即可
+                # （否则手机端"最近发送的通知"首屏直接 500）。
+                history_lines = tail_lines(HISTORY_FILE, 20) if HISTORY_FILE.is_file() else []
+                for line in history_lines:
+                    try:
+                        record = json.loads(line)
+                        if isinstance(record, dict):
+                            records.append(record)
+                    except ValueError:
+                        pass
+                self._send(200, 'application/json; charset=utf-8',
+                           json.dumps({'records': records[::-1]},
+                                      ensure_ascii=False).encode())
             elif path == '/api/adb':
                 # 单独一个接口（而不是并进 /api/data）：它要真跑一次 adb devices，
                 # 几百毫秒起步，放 /api/data 会拖慢每 6 秒一次的整体刷新。
