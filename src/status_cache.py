@@ -1,4 +1,4 @@
-"""宠物状态缓存：体力/清洁/心情/金币/香皂/饼干，供 GUI 日志页顶部状态条显示。
+"""宠物状态缓存：体力/清洁/心情/金币/香皂/饼干，供仪表盘总览页状态环显示。
 
 runs/status_cache.json 单条目（曾经按账号名称组织兼容多账号，但账号名靠
 状态面板 OCR 识别不稳定——时钟会被误识别成账号，状态条出现多行——已取消
@@ -13,7 +13,8 @@ runs/status_cache.json 单条目（曾经按账号名称组织兼容多账号，
 - care.check_and_care：状态面板 OCR 后写 体力/清洁/心情/宠物名称
 - care 喂食/洗澡结束：OCR 控件附近区域写 香皂/饼干 库存（同时刷新刚喂完/洗完的数值）
 - runner.read_main_coins：主页金币 OCR 后写 金币
-GUI 每 5 秒读一次刷新状态条。缓存只是展示用途，读写失败都不影响调度。
+消费方是仪表盘（`dashboard.py` 直接读这份 JSON）。缓存只是展示用途，
+读写失败都不影响调度。
 """
 from __future__ import annotations
 
@@ -26,16 +27,6 @@ from .progress import log
 
 STATUS_CACHE_FILE = PROJECT_ROOT / 'runs' / 'status_cache.json'
 
-# 缓存字段 -> 状态条显示名（GUI 按这个顺序展示；pet_name 存了但不显示）
-FIELDS = (
-    ('energy', '体力'),
-    ('clean', '清洁'),
-    ('mood', '心情'),
-    ('coins', '金币'),
-    ('biscuit', '饼干'),
-    ('soap', '香皂'),
-)
-
 DEFAULT_ACCOUNT = 'default'
 
 
@@ -47,11 +38,6 @@ def _load() -> dict:
     except (OSError, ValueError):
         pass
     return {'accounts': {}}
-
-
-def load_accounts() -> dict[str, dict]:
-    """读取状态缓存（{default: {字段: 值}}），供 GUI 状态条显示。"""
-    return _load()['accounts']
 
 
 def _save(data: dict) -> None:

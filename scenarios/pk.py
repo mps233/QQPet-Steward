@@ -51,7 +51,7 @@ from src.progress import (
     log_history,
     save_progress,
 )
-from src.scenario import CLICK_INTERVAL, DeviceScenario, NAV_TIMEOUT
+from src.scenario import CLICK_INTERVAL, DeviceScenario
 from scenarios.care import CareScenario
 from scenarios.visit import FRIEND_ITEM_XPATH, VisitScenario
 
@@ -455,7 +455,7 @@ class PKScenario(VisitScenario):
             if not item:
                 log(f'PK 打手: 列表里没有 {name}')
                 continue
-            _, nx, ny = item
+            _, _nx, ny = item
             if any(('不可雇佣' in t or '被雇佣中' in t or '已达上限' in t)
                    and abs(iy2 - ny) <= 120 for t, _, iy2, _ in res):
                 log(f'PK 打手: {name} 当前不可雇（不可雇佣/被雇佣中/已达上限）')

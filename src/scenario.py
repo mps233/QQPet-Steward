@@ -424,10 +424,6 @@ class DeviceScenario:
         log(f'拖动 ({ax1}, {ay1}) -> ({ax2}, {ay2})')
         self.dev.swipe(ax1, ay1, ax2, ay2)
 
-    def click_rel(self, x: int, y: int) -> None:
-        """点击 720x1280 参考坐标（内部换算到当前分辨率）。"""
-        self.click(*self.dev.rel(x, y))
-
     def click_until_gone_or_see(self, click_name: str, wait_name: str, stage: str,
                                 max_attempts: int = NAV_TIMEOUT) -> None:
         """点击 click_name，直到看见 wait_name；点击后 click_name 消失也视为已跳转。

@@ -27,7 +27,6 @@ import argparse
 import json
 import re
 import sys
-from collections import Counter
 from pathlib import Path
 
 BASE = Path(__file__).resolve().parent.parent

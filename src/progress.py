@@ -38,19 +38,6 @@ def log(msg: str) -> None:
             f.write(line + '\n')
     except OSError:
         pass
-    for listener in _log_listeners:
-        try:
-            listener(line)
-        except Exception:
-            pass
-
-
-_log_listeners: list = []
-
-
-def add_log_listener(fn) -> None:
-    """注册日志监听器（GUI 实时日志用），每行日志都会回调 fn(line)。"""
-    _log_listeners.append(fn)
 
 
 from . import progress_store  # noqa: E402  (需要先定义 log 再注册给 store)

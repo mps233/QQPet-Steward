@@ -31,7 +31,6 @@ from PIL import Image
 from src.progress import log
 from src.ocr import ocr_texts
 from src.scenario import CLICK_INTERVAL, DeviceScenario
-from scenarios.friend_care import in_time_range, parse_time_range  # noqa: F401（供 runner 复用）
 from scenarios.visit import VisitScenario
 
 # 袋口检测搜索区（1080x2412 基准坐标）。

@@ -1,12 +1,11 @@
-"""adb 设备封装：设备检测与连接管理、屏幕属性读取、adb 命令管道。
+"""adb 设备封装：设备检测与连接管理、adb 命令管道。
 
 画面截图与点击/滑动等操控已改由 uiautomator2 负责（见 src/u2dev.py），
-这里只保留 u2 连接前的 adb server/设备在线管理，以及 main.py
-嵌入 scrcpy 时需要的屏幕宽高比读取。
+这里只保留 u2 连接前的 adb server/设备在线管理。屏幕分辨率由
+`src/screen_stream.py` 自行执行 `wm size` 读取（实时画面用）。
 """
 from __future__ import annotations
 
-import re
 import socket
 import subprocess
 import sys
@@ -26,15 +25,6 @@ _SERVER_BROKEN_HINTS = ("no route to host", "cannot connect to daemon", "protoco
 
 # 判断"adb 连不上但目标本身可达"用的 TCP 探测超时（秒）
 _TCP_PROBE_TIMEOUT = 3.0
-
-
-# 模拟器 ro.hardware 的已知取值（真机是 qcom/mtXXXX 等平台名，不会是这些）
-_EMU_HARDWARE = ("goldfish", "ranchu", "vbox86", "vbox86p", "nox", "ttvm_hdragon", "houdini")
-# 模拟器 ro.product.model 中的特征词
-_EMU_MODEL_WORDS = ("sdk", "emulator", "google_sdk", "droid4x", "nox",
-                    "mumu", "ldplayer", "bluestacks", "memu")
-# 模拟器 ro.product.manufacturer 的已知取值
-_EMU_MANUFACTURERS = ("genymotion",)
 
 
 class AdbError(RuntimeError):
@@ -205,12 +195,6 @@ class Device:
             return ""
         return proc.stdout.decode("utf-8", "replace").strip()
 
-    def screen_size(self) -> tuple[int, int]:
-        out = self._run("shell", "wm", "size").stdout.decode("utf-8", "replace")
-        # 形如 "Physical size: 1080x2400"
-        size = out.strip().split(":")[-1].strip().split("x")
-        return int(size[0]), int(size[1])
-
     def reboot_and_wait(self, timeout: float = 180.0, interval: float = 5.0) -> None:
         """重启设备并等待开机完成（sys.boot_completed=1），超时抛 AdbError。"""
         self._run("reboot")
@@ -238,26 +222,3 @@ class Device:
         """用 monkey 启动应用主 Activity（无需知道具体 Activity 名）。"""
         self._run("shell", "monkey", "-p", package,
                   "-c", "android.intent.category.LAUNCHER", "1")
-
-    def is_emulator(self) -> bool:
-        """根据 getprop 的具体键值判断是否为模拟器。
-
-        不能在整个 getprop 输出里做子串匹配：真机也可能带
-        ro.kernel.qemu.gles=0 这类属性（高通内核残留，值为 0 表示非 qemu），
-        必须按键解析、按值/已知取值判断。
-        """
-        out = self._run("shell", "getprop").stdout.decode("utf-8", "replace").lower()
-        props = dict(re.findall(r"^\[(.+?)\]: \[(.*)\]$", out, re.M))
-        # qemu 标志位必须为 1 才算（值为 0 是"支持但未启用"）
-        if props.get("ro.kernel.qemu") == "1" or props.get("qemu.hw.mainkeys") == "1":
-            return True
-        if "emulator" in props.get("ro.build.characteristics", ""):
-            return True
-        if props.get("ro.hardware") in _EMU_HARDWARE:
-            return True
-        if props.get("ro.product.board") == "goldfish":
-            return True
-        if props.get("ro.product.manufacturer") in _EMU_MANUFACTURERS:
-            return True
-        model = props.get("ro.product.model", "")
-        return any(w in model for w in _EMU_MODEL_WORDS)

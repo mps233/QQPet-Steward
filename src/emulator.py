@@ -85,7 +85,6 @@ MEMU = 'MEmuPlayer'
 EMULATOR_TYPES = [MUMU12, MUMU6, MUMUX, LD3, LD4, LD9, NOX, NOX64, BS4, BS5, MEMU]
 LD_FAMILY = (LD3, LD4, LD9)
 NOX_FAMILY = (NOX, NOX64)
-MUMU_FAMILY = (MUMU6, MUMUX, MUMU12)
 
 # 卸载项注册表子键名（精确匹配，ALAS known_emulator_registry_name）
 _KNOWN_UNINSTALL_KEYS = {
@@ -581,11 +580,6 @@ def scan_instances() -> list[EmulatorInstance]:
         seen_dirs.add(key)
         instances.extend(iter_instances(exe))
     return instances
-
-
-def scan_serials() -> list[str]:
-    """全部实例的可连 serial（GUI 设备下拉用）。"""
-    return [s for inst in scan_instances() for s in inst.serials]
 
 
 def get_serial_pair(serial: str) -> str:

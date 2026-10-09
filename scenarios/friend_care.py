@@ -208,35 +208,6 @@ class FriendCareScenario(VisitScenario):
 
     # ---- 好友导航 ----
 
-    def switch_to_friend(self, name: str, max_switches: int = MAX_FRIEND_SWITCHES) -> bool:
-        """在好友列表里找到名称含 name 的好友并点击切换，返回是否成功。
-
-        列表滚动加载（控件树里只有当前可见项）：可见项没有目标时按 visit 的
-        累积名单逻辑切下一个好友加载更多，直到找到或没有更多好友。
-        """
-        for _ in range(max_switches):
-            visible = self._friend_items()
-            if not visible:
-                # 点访问后 visit 消失不代表好友家已渲染完（模拟器上加载慢），
-                # 列表还是空的就等一轮再抓，避免误判"好友不存在"
-                log('好友列表还没加载出来，等待重试')
-                time.sleep(CLICK_INTERVAL)
-                continue
-            new = [desc for desc, _, _ in visible if desc and desc not in self._friends]
-            for desc in new:
-                self._friends.append(desc)
-            for desc, x, y in visible:
-                if name in desc:
-                    log(f'切换到好友 {desc} ({x}, {y})')
-                    self.click(x, y)
-                    time.sleep(CLICK_INTERVAL)
-                    self._friend_index = self._friends.index(desc)
-                    return True
-            if not self.next_friend():
-                return False
-        log(f'切换 {max_switches} 次仍未找到好友 {name}')
-        return False
-
     def read_friend_pet_name(self, attempts: int = 2) -> str | None:
         """读当前好友宠物页顶部的宠物名（大字第二行；上一行是主人昵称）。
 

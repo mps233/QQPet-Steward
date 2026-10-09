@@ -41,7 +41,6 @@ from src.progress import (
     SHORT_COURSE as SHORT_COURSE_IMPORT,
     count_cross,
     course_kind as course_kind_import,
-    course_seconds,
     load_progress,
     log,
     log_history,

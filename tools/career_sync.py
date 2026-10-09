@@ -16,8 +16,6 @@ from pathlib import Path
 BASE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE))
 
-import cv2  # noqa: E402
-
 from src.ocr import ocr_fullscreen  # noqa: E402
 from scenarios.work import WorkScenario  # noqa: E402
 
