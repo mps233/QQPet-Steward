@@ -2,6 +2,46 @@
 
 export const pad2 = (n: number): string => String(n).padStart(2, '0')
 
+/** 运行时长满 24 小时后显示天数，兼容 ps 的 "D-HH:MM:SS" 兜底格式。 */
+export function formatUptime(uptime: string): string {
+  const match = /^(?:(\d+)-)?(\d+):([0-5]\d):([0-5]\d)$/.exec(uptime)
+  if (!match) return uptime
+  const hours = Number(match[1] || 0) * 24 + Number(match[2])
+  if (!Number.isSafeInteger(hours) || hours < 24) return uptime
+  return `${Math.floor(hours / 24)} 天 ${pad2(hours % 24)}:${match[3]}:${match[4]}`
+}
+
+/** 后端运行时长 → 秒，包含 ps 的 "MM:SS" / "D-HH:MM:SS" 兜底格式。 */
+export function parseUptimeSeconds(uptime: string): number | null {
+  const match = /^(?:(\d+)-)?(\d+):([0-5]\d)(?::([0-5]\d))?$/.exec(uptime)
+  if (!match || (match[1] && !match[4])) return null
+  const hours = match[4] ? Number(match[2]) : 0
+  const minutes = Number(match[4] ? match[3] : match[2])
+  if (minutes > 59) return null
+  const seconds = (Number(match[1] || 0) * 24 + hours) * 3600
+    + minutes * 60 + Number(match[4] || match[3])
+  return Number.isSafeInteger(seconds) ? seconds : null
+}
+
+/** 两次后端同步之间按实际经过的时间走表，不依赖定时器执行次数。 */
+export function advanceUptime(uptime: string, elapsedMs: number): string {
+  const base = parseUptimeSeconds(uptime)
+  const elapsed = Math.max(0, Math.floor(elapsedMs / 1000))
+  if (base === null || !Number.isFinite(elapsed) || elapsed === 0) return formatUptime(uptime)
+  const seconds = base + elapsed
+  if (!Number.isSafeInteger(seconds)) return formatUptime(uptime)
+  return formatUptime(
+    `${pad2(Math.floor(seconds / 3600))}:${pad2(Math.floor(seconds % 3600 / 60))}:${pad2(seconds % 60)}`,
+  )
+}
+
+/** Unix 秒时间戳 → 剩余秒数；0 表示已到点，null 表示没有可用时间。 */
+export function countdownSeconds(targetSeconds: number | null | undefined, nowMs: number): number | null {
+  if (typeof targetSeconds !== 'number' || !Number.isFinite(targetSeconds)
+    || targetSeconds <= 0 || !Number.isFinite(nowMs)) return null
+  return Math.max(0, Math.ceil(targetSeconds - nowMs / 1000))
+}
+
 /** 秒 → "H:MM:SS" / "MM:SS" */
 export function hms(sec: number): string {
   const s = Math.max(0, Math.floor(sec))

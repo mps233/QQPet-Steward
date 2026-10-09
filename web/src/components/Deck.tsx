@@ -1,5 +1,7 @@
 import type { Data } from '../api'
 import { hms, pad2 } from '../lib/format'
+import { useCountdowns } from '../lib/useCountdowns'
+import { useUptime } from '../lib/useUptime'
 
 /** 状态图标：跟着"正在做的事"换图标。
  *  **文件名必须与 旧版 的 RUNICON 表逐字一致** —— 这些是官方素材、按名字放在
@@ -26,6 +28,8 @@ const ICON_IDLE = '/qp-icons/official/globe.png'
 /** 底部抽屉（官方 x=215 y=728）：当前在做什么 + 倒计时 + 今日统计 */
 export function Deck({ data }: { data: Data }) {
   const sch = data.scheduler
+  const uptime = useUptime(sch)
+  const { nextRemaining, workRemaining } = useCountdowns(data)
   const eta = data.work_eta
   const td = data.today_duration
   const q = data.queue
@@ -61,11 +65,14 @@ export function Deck({ data }: { data: Data }) {
   // 等待时的**具体原因**（后端 queue.next_reason，如"雇佣好友：想雇的「墨瞳」正打工中
   // （不换人，等到空闲再雇）"）。没有它就只能干说一句"等待下一项任务"——用户实报"太宽泛"。
   const nextReason = q.next_reason || ''
-  const nextLabel = q.next ? `下一项 ${q.next}${q.next_at ? ` ${q.next_at}` : ''}` : ''
+  const nextTime = nextRemaining === null
+    ? (q.next_at ? ` ${q.next_at}` : '')
+    : nextRemaining > 0 ? ` · ${hms(nextRemaining)}后` : ' · 等待执行'
+  const nextLabel = q.next ? `下一项 ${q.next}${nextTime}` : ''
   const hint = !running || qStarting
     ? ''
     : busyEta
-      ? `剩余 ${hms(remain ?? 0)}`
+      ? `剩余 ${hms(workRemaining ?? remain ?? 0)}`
       : finishing && eta
         ? `预计 ${eta.eta_clock} 结束`
         : nextLabel
@@ -76,7 +83,7 @@ export function Deck({ data }: { data: Data }) {
       : busyEta
         ? // 有"为什么在做这件事"的说明就先说它（如"打工要雇的「柠檬..」正忙，先去冒险；
           // 到点回去雇他"）——剩余时间在右上角 hint 里已经有了，不必挤在这行
-          q.note || `剩余 ${hms(remain ?? 0)} · 结束后自动开启下一项`
+          q.note || `剩余 ${hms(workRemaining ?? remain ?? 0)} · 结束后自动开启下一项`
         : finishing
           ? '收尾中… · 结束后自动开启下一项'
           : curTask
@@ -88,6 +95,10 @@ export function Deck({ data }: { data: Data }) {
   const stat = td
     ? `今日：学习 ${td.learn_min} 分 · 打工 ${td.work_min} 分 · 合计 ${td.total_min} 分 · 效率 ${td.eff_pct}%`
     : ''
+  const hintTitle = !hint ? undefined
+    : busyEta || finishing
+      ? (eta?.eta_clock ? `预计 ${eta.eta_clock} 结束` : undefined)
+      : (q.next_at ? `下一项 ${q.next} · 预计 ${q.next_at} 执行` : undefined)
 
   return (
     <div className="flt deck">
@@ -108,7 +119,7 @@ export function Deck({ data }: { data: Data }) {
           {/* 剩余时间单独成行（原先在 .dtitle 里、被 .dhint{display:none} 关掉了）。
               为什么不放回标题行：.drawer 只有 62u 宽（390px 屏约 67px），
               标题行是 white-space:nowrap 的 flex，再塞"剩余 01:59:00"必然溢出。 */}
-          <div className="dhint" id="runnerHint">
+          <div className="dhint" id="runnerHint" title={hintTitle}>
             {hint}
           </div>
           <div className="dsub" id="workSub">
@@ -123,7 +134,7 @@ export function Deck({ data }: { data: Data }) {
               删掉，把空间让给真正有信息量的"剩余时间"。 */}
         </div>
         <span className="dmeta" id="runnerMeta">
-          {running ? `PID ${sch.pid}${sch.uptime ? ` · 已跑 ${sch.uptime}` : ''}` : '未运行'}
+          {running ? `PID ${sch.pid}${uptime ? ` · 已跑 ${uptime}` : ''}` : '未运行'}
         </span>
       </div>
     </div>

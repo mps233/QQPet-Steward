@@ -1,5 +1,6 @@
 import type { Data, PetStatus } from '../api'
 import { petVal } from '../lib/format'
+import { useUptime } from '../lib/useUptime'
 
 /** 三行状态：图标 + 名称 + 数值 + 进度条 + ›
  *  （› 在官方是"进详情页"，本工具没有那些页面，只作视觉还原，CSS 里 pointer-events:none） */
@@ -31,6 +32,8 @@ export function IdCard({
 }) {
   const st: PetStatus = data.status
   const sch = data.scheduler
+  const uptime = useUptime(sch)
+  const runText = sch.alive ? `已跑 ${uptime}` : '未运行'
   const v = PET_STATS.map(([k]) => petVal(st as unknown as Record<string, unknown>, k))
 
   return (
@@ -41,8 +44,8 @@ export function IdCard({
         </span>
         <div className="idtxt">
           <div className="idname">QQ宠物托管</div>
-          <div className="idsub" id="schedTxt">
-            {sch.alive ? `运行中 · 已跑 ${sch.uptime || ''}` : '未运行'}
+          <div className="idsub" id="schedTxt" title={runText}>
+            {runText}
           </div>
         </div>
         <button
