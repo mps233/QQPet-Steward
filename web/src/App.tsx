@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { TASK_GROUP, TASK_NAME, isLoopTask, keyOfTaskName, runnerStart, runnerStop, saveSettings, type Data } from './api'
 import { Overview, type PageKey } from './components/Overview'
 import { OverviewV2 } from './components/OverviewV2'
@@ -17,6 +17,7 @@ import { useScene } from './lib/useScene'
 /** 一个"视图" = 页面 + 二级键（设置分组 / 日志子页）。
  *  转场按**视图粒度**做，所以"设置一级 → 二级"与"总览 → 内页"共用同一套滑动动画。 */
 type View = { page: PageKey; grp: string | null; sub: string | null }
+type LeavingView = View & { scrollTop: number }
 
 /** 真正的滚动容器：**当前页的 `.page-slot`**。
  *
@@ -32,16 +33,12 @@ type View = { page: PageKey; grp: string | null; sub: string | null }
  *  转场期间退场页 `.page-leave-*` 也在 DOM 里，必须锁定 `.page-enter`。 */
 function scrollerEl(): HTMLElement | null {
   const enter = document.querySelector('.page-slot.page-enter')
-  if (enter instanceof HTMLElement && enter.scrollHeight > enter.clientHeight) return enter
-  const slot = document.querySelector('.page-slot')
-  if (slot instanceof HTMLElement && slot.scrollHeight > slot.clientHeight) return slot
-  return null
+  return enter instanceof HTMLElement ? enter : null
 }
 
 export default function App() {
   const { data, error, reload } = useData(6000)
   const [busy, setBusy] = useState('')
-  const [page, setPage] = useState<PageKey>('main')
   /**
    * 历史栈模型（与 旧版 的 showTab / popstate 一一对应）：
    *   navDepth = 0（总览）/ 1（内页）/ 2（二级：设置 grp、日志子页）
@@ -69,6 +66,8 @@ export default function App() {
     }
   }, [])
 
+  // 首帧就按 URL 落在目标视图，直开内页不会先闪过总览。
+  const [page, setPage] = useState<PageKey>(() => parseLoc().page)
   // 二级（设置分组 / 日志子页）：两个都从 URL 初始化，直开 ?tab=set&grp=work 也能落在二级
   const [grp, setGrp] = useState<string | null>(() => parseLoc().grp)
   const [sub, setSub] = useState<string | null>(() => parseLoc().sub)
@@ -78,8 +77,8 @@ export default function App() {
     loc.page === 'main' ? 0 : loc.grp || loc.sub ? 2 : 1
 
   // ---- 各视图的滚动位置记忆 ----
-  // 设置一级菜单滚到下面 → 点进二级 → 返回时停在顶部（用户实报）：真正滚动的是 `body`
-  // （见 AGENTS 的滚动架构），二级内容短，浏览器会把 body.scrollTop 直接 clamp 成 0，
+  // 设置一级菜单滚到下面 → 点进二级 → 返回时停在顶部（用户实报）：真正滚动的是 `.page-slot`，
+  // 二级内容短，浏览器会把 scrollTop 直接 clamp 成 0，
   // 再回一级时内容虽然变回来，滚动位置不会自动恢复。
   // 做法：**在 DOM 更新前**（各导航入口里）存下当前视图的 scrollTop，视图 key 变了再写回去。
   // key = 页面 或 页面:二级键 —— 一级与二级各记各的，不会互相覆盖。
@@ -182,7 +181,7 @@ export default function App() {
   }, [parseLoc, saveScroll])
 
   // 直开 ?tab=xxx[&grp=yyy][&sub=zzz]（便于分享链接 / 截图 / 调试）
-  useEffect(() => {
+  useLayoutEffect(() => {
     const loc = parseLoc()
     setPage(loc.page)
     setGrp(loc.grp)
@@ -192,7 +191,7 @@ export default function App() {
 
   // 视图（页面 + 二级）变化后，把记住的滚动位置写回去。
   // 新视图没记录过 → 落在顶部（进二级/进内页从顶部开始，符合预期）。
-  useEffect(() => {
+  useLayoutEffect(() => {
     const key = scrollKeyOf(page, grp, sub)
     scrollKeyRef.current = key
     const y = scrollMemo.current[key] ?? 0
@@ -200,6 +199,7 @@ export default function App() {
       const el = scrollerEl()   // 每次现取：转场中/渲染后 .page-enter 可能是新节点
       if (el) el.scrollTop = y
     }
+    put()   // 首帧前恢复，避免先显示顶部再跳到记忆位置。
     const raf = window.requestAnimationFrame(put)
     const t = window.setTimeout(put, 90)   // 兜底：iOS 上布局偶尔晚一帧才算完
     return () => {
@@ -211,19 +211,25 @@ export default function App() {
   const [orderMsg, setOrderMsg] = useState('')
 
   // ---- iOS 式转场：前后两个**视图**同时在场（旧视图左让 / 新视图右入，返回时反过来）----
-  // leaving = 正在退场的那个视图（只活 340ms，动画结束就卸载）；dir 决定方向。
+  // leaving = 正在退场的视图及其滚动位置，动画结束就卸载；dir 决定方向。
   // **视图 = 页面 + 二级**：设置一级↔二级、日志↔子页也走同一套滑动，不再只有页面级才有动画
   // （早先这里只认 PageKey，所以"进二级"是硬切，看着像动画丢了；实际是从来没挂过）。
-  const [leaving, setLeaving] = useState<View | null>(null)
+  const [leaving, setLeaving] = useState<LeavingView | null>(null)
   const [dir, setDir] = useState<'fwd' | 'back'>('fwd')
   const [transiting, setTransiting] = useState(false)
   const prevView = useRef<View | null>(null)
   const leaveTimer = useRef<number>()
+  const leaveSlot = useRef<HTMLDivElement>(null)
+  const finishTransition = useCallback(() => {
+    window.clearTimeout(leaveTimer.current)
+    setLeaving(null)
+    setTransiting(false)
+  }, [])
 
-  /** 视图一变就起转场。放在 effect 里而不是塞进各个导航函数，是为了不受定义顺序约束。
+  /** 首帧前准备转场，不能先画目标页、下一帧才把它移到动画起点。
    *  首次渲染不触发（prevView 还是 null）。方向按**层级**判：变深 = fwd、变浅 = back；
    *  同级互切（日志子页 index↔reward）不滑，直接换内容。 */
-  useEffect(() => {
+  useLayoutEffect(() => {
     const cur: View = { page, grp, sub }
     const from = prevView.current
     prevView.current = cur
@@ -232,22 +238,27 @@ export default function App() {
         && (from.sub || '') === (cur.sub || '')) {
       return   // 同一个视图（只是数据刷新）→ 不动画
     }
+    window.clearTimeout(leaveTimer.current)
     const dFrom = depthOf(from)
     const dTo = depthOf(cur)
-    if (dFrom === dTo) {
-      setLeaving(null)
-      setTransiting(false)
-      return     // 同级互切：不滑
+    if (dFrom === dTo || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      finishTransition()
+      return
     }
     setDir(dTo > dFrom ? 'fwd' : 'back')
-    setLeaving(from)
+    setLeaving({
+      ...from,
+      scrollTop: scrollMemo.current[scrollKeyOf(from.page, from.grp, from.sub)] ?? 0,
+    })
     setTransiting(true)
-    window.clearTimeout(leaveTimer.current)
-    leaveTimer.current = window.setTimeout(() => {
-      setLeaving(null)
-      setTransiting(false)
-    }, 340)
-  }, [page, grp, sub])
+    // animationend is the primary cleanup; this only covers cancelled/disabled animations.
+    leaveTimer.current = window.setTimeout(finishTransition, 600)
+    return () => window.clearTimeout(leaveTimer.current)
+  }, [page, grp, sub, finishTransition])
+
+  useLayoutEffect(() => {
+    if (leaving && leaveSlot.current) leaveSlot.current.scrollTop = leaving.scrollTop
+  }, [leaving])
 
   // 自动换背景要跟着「当前任务 + 进行中的活动」走
   // 场景键统一用**任务键**：pending 时后端给的就是键（pending_key），平时
@@ -267,7 +278,7 @@ export default function App() {
   //    的房间暖色**（旧版是 showTab() 里 setAttribute 的，见 git 历史 web/legacy/app.js）。
   // 2) `theme-color` meta —— iOS 18 及以前读它画状态栏那条带；iOS 26+ 改为采样 html 的
   //    background-color（那条路靠 CSS 的 --qp-statusbar，本身已经对）。
-  useEffect(() => {
+  useLayoutEffect(() => {
     const root = document.documentElement
     root.setAttribute('data-page', page)
     const dark = !!window.matchMedia?.('(prefers-color-scheme: dark)').matches
@@ -476,13 +487,24 @@ export default function App() {
       {/* className 带的方向 class 变化即触发滑入动画（不需要给 main 加 key，
           key 会重建整棵子树、把内页状态和滚动位置一起清掉）。 */}
       <main>
-        {/* iOS 式转场：退场的那一页还在（往左/右让开），新页从另一侧推入 */}
+        {/* 退场与进场 key 分开：快速返回时同一视图会短暂同时扮演两个角色。 */}
         {leaving ? (
-          <div className={'page-slot page-leave-' + dir} aria-hidden="true">
+          <div
+            key={'leave:' + scrollKeyOf(leaving.page, leaving.grp, leaving.sub)}
+            ref={leaveSlot}
+            className={'page-slot page-leave page-leave-' + dir}
+            aria-hidden="true"
+            onAnimationEnd={(e) => {
+              if (e.target === e.currentTarget) finishTransition()
+            }}
+          >
             {renderView(leaving, data)}
           </div>
         ) : null}
-        <div className={'page-slot page-enter' + (transiting ? ' page-enter-' + dir : '')}>
+        <div
+          key={'enter:' + scrollKeyOf(page, grp, sub)}
+          className={'page-slot page-enter' + (transiting ? ' page-enter-' + dir : '')}
+        >
           {renderView({ page, grp, sub }, data)}
         </div>
       </main>

@@ -6,7 +6,7 @@
 # （web/FRONTEND_PITFALLS.md:35-52 记过两次）。
 #
 # 用法：
-#   ./tools/layout-check.sh                          # 默认 6 档尺寸 × 2 页
+#   ./tools/layout-check.sh                          # 13 档尺寸 × 首页/展开/设置/测试视频
 #   ./tools/layout-check.sh --sizes "390x844"        # 只跑一档
 #   ./tools/layout-check.sh --port 8899
 #   ./tools/layout-check.sh --keep                   # 保留中间产物供排查
@@ -18,8 +18,8 @@ set -uo pipefail
 
 PORT=8787
 KEEP=0
-SIZES="320x568 360x640 390x844 430x932 768x1024 844x390"
-PAGES="main set"
+SIZES="320x568 360x640 390x844 430x932 520x844 521x844 639x844 640x844 768x1024 844x390 1024x768 1440x900 390x420"
+PAGES="main main-open set shot"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DIST="$ROOT/web/dist"
@@ -53,9 +53,15 @@ if [ "$code" != "200" ]; then
   echo "❌ dashboard 未响应（$BASE → ${code:-无}）。先起：python3 dashboard.py" >&2
   exit 2
 fi
+api_code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$BASE/api/data" || true)
+if [ "$api_code" = "401" ]; then
+  echo "⚠ dashboard 已启用访问验证；此 CLI 探针没有浏览器会话，跳过而不是把登录页误判成布局损坏。"
+  echo "请使用已验证的浏览器检查，或在隔离测试服务上运行探针。"
+  exit 2
+fi
 
 TMP="$(mktemp -d)"
-cleanup() { [ "$KEEP" = 1 ] || rm -rf "$TMP"; [ "$KEEP" = 1 ] && echo "（中间产物保留在 $TMP）"; }
+cleanup() { [ "$KEEP" = 1 ] || rm -rf "$TMP"; [ "$KEEP" = 1 ] && echo "（中间产物保留在 ${TMP}）"; }
 trap cleanup EXIT
 
 REPORT="$TMP/report.jsonl"
@@ -65,75 +71,21 @@ mkdir -p "$DIST/assets"
 for size in $SIZES; do
   W="${size%x*}"; H="${size#*x}"
   for page in $PAGES; do
+    TAB="${page%-open}"
     # 探针页必须放在 /assets/ 下（路由只服务 index.html 与 /assets/*）。
     # ⚠ 下面的 JS 里不能出现反引号模板串 —— heredoc 会展开 ${...}。
     cat > "$PROBE" <<HTML
 <!doctype html><html lang="zh-CN"><head><meta charset="utf-8"></head>
 <body style="margin:0;background:#888">
-<iframe id="f" src="/?tab=${page}" width="${W}" height="${H}" style="border:0;display:block"></iframe>
+<iframe id="f" data-page="${page}" src="/?tab=${TAB}" width="${W}" height="${H}" style="border:0;display:block"></iframe>
 <script>
-var f = document.getElementById('f')
-var SIZE = "${W}x${H}", PAGE = "${page}", done = false
-function send() {
-  if (done) return
-  done = true
-  var d = f.contentDocument, w = f.contentWindow
-  if (!d) {
-    document.body.setAttribute('data-probe', encodeURIComponent(JSON.stringify({ size: SIZE, page: PAGE, probeMissing: true })))
-    return
-  }
-  var q = function (s) { return d.querySelector(s) }
-  var home = q('.home'), slot = q('.page-slot.page-enter') || q('.page-slot'), main = q('main')
-  // 内页没有 .home，容器是 section[data-page]（.card / .shotpage，见 App.tsx:394-434）
-  var sec = q('section[data-page]')
-  var rules = []
-  var walk = function (list) {
-    for (var i = 0; i < list.length; i++) {
-      var r = list[i]
-      if (r.cssRules) { walk(r.cssRules); continue }        // 递归 @media
-      var sel = r.selectorText
-      if (!sel || !/\bmain\b/.test(sel)) continue            // 只体检 main 相关的骨架契约
-      var n = -1
-      try { n = d.querySelectorAll(sel).length } catch (e) { n = -3 }
-      rules.push([sel.slice(0, 140), n])
-    }
-  }
-  for (var s = 0; s < d.styleSheets.length; s++) {
-    try { walk(d.styleSheets[s].cssRules) } catch (e) { rules.push(['<CORS>', -2]) }
-  }
-  var out = {
-    size: SIZE, page: PAGE,
-    vp: [w.innerWidth, w.innerHeight],
-    homeH: home ? +home.getBoundingClientRect().height.toFixed(2) : null,
-    secH: sec ? +sec.getBoundingClientRect().height.toFixed(2) : null,
-    // 光看 scrollHeight-clientHeight 不够：overflow:hidden 时元素依然"内容比盒子高"，
-    // 但用户滚不动。真正的判据是 computed overflow-y 是否为 visible/hidden。
-    homeOverflowY: home ? getComputedStyle(home).overflowY : null,
-    homeOverflow: home ? home.scrollHeight - home.clientHeight : null,
-    slotOverflow: slot ? slot.scrollHeight - slot.clientHeight : null,
-    mainKids: main ? [].map.call(main.children, function (e) {
-      return e.tagName.toLowerCase() + (e.className ? '.' + String(e.className).trim().split(/\s+/).join('.') : '')
-    }) : [],
-    btnW: q('.rbtn') ? +q('.rbtn').getBoundingClientRect().width.toFixed(1) : null,
-    fsTask: q('.mname') ? getComputedStyle(q('.mname')).fontSize : null,
-    uVar: getComputedStyle(d.documentElement).getPropertyValue('--u').trim(),
-    ready: !!(q('.home') && d.querySelectorAll('.cap').length >= 3),
-    rules: rules
-  }
-  // 单行无缩进（FRONTEND_PITFALLS.md:63-65：带缩进会让 grep 抓不到）；
-  // URL 编码避免属性值里的引号打架。
-  document.body.setAttribute('data-probe', encodeURIComponent(JSON.stringify(out)))
-}
-f.addEventListener('load', function () {
-  var n = 0
-  var tick = function () { if (done || ++n > 40) send(); else setTimeout(tick, 250) }
-  tick()
-})
-</script></body></html>
 HTML
+    cat "$ROOT/tools/layout-probe.js" >> "$PROBE"
+    printf '\n</script></body></html>\n' >> "$PROBE"
 
     dom="$TMP/dom-${size}-${page}.html"
     "$CHROME" --headless=new --disable-gpu --no-first-run --hide-scrollbars \
+      --autoplay-policy=no-user-gesture-required \
       --window-size=$(( W + 40 )),$(( H + 40 )) \
       --virtual-time-budget=30000 \
       --dump-dom "$BASE/assets/_layout-probe.html" > "$dom" 2>/dev/null

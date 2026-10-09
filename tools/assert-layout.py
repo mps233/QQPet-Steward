@@ -14,24 +14,72 @@
 退出码：0 全通过 / 1 有断言失败 / 2 输入为空
 
 断言：
-    P1  .home 高度 ≈ 视口高（±1.5px）      —— 高度链是否还连着
-    P2  总览页 .home 不溢出                 —— 整页多出一条可滚区
+    P1  V1 高度锁 / V2 至少填满可用高度     —— 高度链是否还连着
+    P2  V2 短屏在 page-slot 滚动，不遮挡内容
     P3  main 直系子全为 div.page-slot       —— 有人往骨架插了新 wrapper
-    P4  main 相关选择器命中数 > 0           —— 直系选择器被"多包一层"打断（静默失效）
-    P5  --u <= 1.35px（提示级）             —— 单位基准上限未生效
+    P4  骨架选择器命中数 > 0
+    P5  单位固定 / 小屏宽度 / 底栏重叠 / 列表可达 / 测试视频缩放
 """
 from __future__ import annotations
 
 import json
 import sys
-from pathlib import Path
 
 HOME_TOLERANCE_PX = 1.5
-U_MAX_HINT = 1.35
 # 亚像素溢出容差：.deck 这类元素的 top 由 calc() 算出，会产生 448.0001 这类值，
 # 而 scrollHeight 是向上取整的整数 → 总差 1px。这是浮点噪音而非布局错误，
 # 但会在输出里标注（"能多滑 1px"正是 git 历史里用户实报过的那一类现象）。
 OVERFLOW_TOLERANCE_PX = 1
+
+
+def overlaps(a, b) -> bool:
+    if not a or not b:
+        return False
+    return (min(a[0] + a[2], b[0] + b[2]) - max(a[0], b[0]) > HOME_TOLERANCE_PX
+            and min(a[1] + a[3], b[1] + b[3]) - max(a[1], b[1]) > HOME_TOLERANCE_PX)
+
+
+def responsive_failures(r: dict) -> list[str]:
+    notes = []
+    if r.get('bodyOverflowX', 0) > OVERFLOW_TOLERANCE_PX:
+        notes.append('页面横向溢出')
+    u = (r.get('uVar') or '').strip()
+    if u.endswith('px') and abs(float(u[:-2]) - 1) > 0.000001:
+        notes.append('默认舞台单位不是 1px：' + u)
+
+    if r.get('homeVariant') == 'v2' and r.get('page', '').startswith('main'):
+        center = r.get('centerRect')
+        for key in ('idRect', 'capsRect'):
+            box = r.get(key)
+            if center and box and (box[0] < center[0] - HOME_TOLERANCE_PX
+                                  or box[0] + box[2] > center[0] + center[2] + HOME_TOLERANCE_PX):
+                notes.append(key + ' 超出中间列')
+        if any(n > OVERFLOW_TOLERANCE_PX for n in r.get('capOverflow', [])):
+            notes.append('胶囊行横向溢出')
+        for key in ('panelRect', 'funcRect'):
+            if overlaps(r.get(key), r.get('deckRect')):
+                notes.append(key + ' 与底栏重叠')
+        panel, tasks = r.get('panelRect'), r.get('listRect')
+        if not tasks or tasks[2] < 60 or tasks[3] < 44:
+            notes.append('任务列表被挤没或无法操作')
+        elif panel and tasks[1] + tasks[3] > panel[1] + panel[3] + HOME_TOLERANCE_PX:
+            notes.append('任务列表被面板裁切')
+        if r.get('listLastVisible') is False:
+            notes.append('滚到列表底仍看不全最后一项')
+        if r.get('ringHit') is False:
+            notes.append('宠物状态环被其他元素挡住')
+        if r.get('page') == 'main-open' and not r.get('expanded'):
+            notes.append('宠物状态未展开')
+
+    if r.get('page') == 'shot':
+        card, video, native = r.get('liveRect'), r.get('videoRect'), r.get('videoSize')
+        if not card or not video or not native or min(native) <= 0:
+            notes.append('测试视频未就绪')
+        elif max(abs(a - b) for a, b in zip(card, video)) > HOME_TOLERANCE_PX:
+            notes.append('视频没有填满直播容器（尺寸样式未匹配）')
+        elif abs(card[2] - card[3] * native[0] / native[1]) > HOME_TOLERANCE_PX:
+            notes.append('直播容器未跟随视频实际比例')
+    return notes
 
 
 def main(path: str) -> int:
@@ -45,29 +93,33 @@ def main(path: str) -> int:
                 continue
             r = json.loads(line)
             tag, notes = 'PASS', []
-            # 只有总览页有 .home；内页是 section.card / section.shotpage
-            # （见 web/src/App.tsx:351,363 vs 394-434）。这里提前判定，
-            # 保证 probeMissing 分支也能安全引用。
-            is_home_page = r.get('page') == 'main'
+            is_home_page = r.get('page', '').startswith('main')
 
             if r.get('probeMissing'):
                 tag = 'FAIL'
                 notes.append('探针无输出（页面没渲染完 / 导航失败？）')
             else:
                 vp = r.get('vp') or [0, 0]
-                vh = vp[1]
+                vh = r.get('availableH') or vp[1]
+                is_v2 = r.get('homeVariant') == 'v2'
 
                 if is_home_page:
-                    # P1 舞台高度：.home 高 ≈ 视口高
                     home_h = r.get('homeH')
                     if home_h is None:
                         tag = 'FAIL'
-                        notes.append('总览页找不到 .home')
-                    elif abs(home_h - vh) > HOME_TOLERANCE_PX:
+                        notes.append('总览页找不到舞台')
+                    elif (home_h < vh - HOME_TOLERANCE_PX if is_v2
+                          else abs(home_h - vh) > HOME_TOLERANCE_PX):
                         tag = 'FAIL'
                         notes.append(
-                            '.home 高 %.2f ≠ 视口高 %d（差 %+.2f）'
+                            '舞台高 %.2f 与可用高 %d 不符（差 %+.2f）'
                             % (home_h, vh, home_h - vh))
+                    elif is_v2 and home_h > vh + HOME_TOLERANCE_PX:
+                        if (r.get('slotOverflow') or 0) <= 0 or r.get('slotOverflowY') not in ('auto', 'scroll'):
+                            tag = 'FAIL'
+                            notes.append('短屏内容增加，但 page-slot 无法滚动')
+                        else:
+                            notes.append('短屏由 page-slot 滚动，内容保留')
                 else:
                     # 内页：section 比一屏高是**正常**的（内容更长），
                     # 关键是滚动必须发生在 .page-slot 上，而不是让整页/body 滚
@@ -95,7 +147,7 @@ def main(path: str) -> int:
                 # 只有 computed overflow-y 为 auto/scroll 时，那点溢出才会变成可滚动。
                 overflow = r.get('homeOverflow')
                 overflow_y = (r.get('homeOverflowY') or '').lower()
-                if is_home_page and overflow not in (None, 0):
+                if is_home_page and not is_v2 and overflow not in (None, 0):
                     scrollable = overflow_y in ('auto', 'scroll', 'overlay')
                     if not scrollable:
                         notes.append(
@@ -116,23 +168,20 @@ def main(path: str) -> int:
                     tag = 'FAIL'
                     notes.append('main 直系子异常：%s' % kids)
 
-                # P4 选择器失效体检：命中数为 0 的 main 相关规则 = 静默回归
+                # 只检查所有视图都应存在的骨架，不把别的页面的条件规则判为失效。
                 dead = [s for s, n in (r.get('rules') or []) if n == 0]
                 if dead:
                     tag = 'FAIL'
                     notes.append('失效规则：' + ' | '.join(dead[:3]))
 
-                # P5 基准上限（提示级，不改判定）
-                u = (r.get('uVar') or '').strip()
-                if u.endswith('px'):
-                    try:
-                        if float(u[:-2]) > U_MAX_HINT:
-                            notes.append('--u=%s 超过 1.2 上限（04-E 未修？）' % u)
-                    except ValueError:
-                        pass
+                issues = responsive_failures(r)
+                if issues:
+                    tag = 'FAIL'
+                    notes.extend(issues)
 
                 if r.get('ready') is False:
-                    notes.append('数据未加载完（断言仍有效：骨架高度与数据无关）')
+                    tag = 'FAIL'
+                    notes.append('页面数据未加载完')
 
             rows.append((
                 r.get('size', '?'), r.get('page', '?'), tag,

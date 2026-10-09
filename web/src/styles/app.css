@@ -124,9 +124,8 @@
   --qp-room-record:url('/qp-icons/bg/room-record.jpg?v=5');
   --qp-room-store:url('/qp-icons/bg/room-store.jpg?v=5');
   --qp-room:var(--qp-room-main);
-  /* 1u = 1dp：手机上就是 1 CSS px（推导见 web/src/lib/stage.ts 的文件头）。
-     由 JS 写 --vu；兜底值给桌面浏览器用（那里视口宽、不能按手机算）。 */
-  --u:var(--vu, calc(100vw / 430));
+  /* 控件保持 1dp = 1 CSS px；宽屏由版心限宽适配，不放大控件。 */
+  --u:var(--vu, 1px);
 }
 
 /* ---------- 2. 基础 ---------- */
@@ -246,15 +245,17 @@ main section[data-page]{min-height:100%}  /* .home 与内页共用（内页另�
 
    ↑ 以上规则的**声明**已集中到文件顶部 S0 区块（main .page-slot），此处仅留说明。 */
 .page-enter{z-index:2}
-.page-leave{z-index:1}
+.page-leave{z-index:1;pointer-events:none}
+.page-leave-back{z-index:3}
 @keyframes qp-enter-fwd{from{transform:translateX(100%)}to{transform:translateX(0)}}
 @keyframes qp-leave-fwd{from{transform:translateX(0)}to{transform:translateX(-30%)}}
 @keyframes qp-enter-back{from{transform:translateX(-30%)}to{transform:translateX(0)}}
 @keyframes qp-leave-back{from{transform:translateX(0)}to{transform:translateX(100%)}}
-.page-enter-fwd{animation:qp-enter-fwd 320ms cubic-bezier(.32,.72,0,1)}
-.page-leave-fwd{animation:qp-leave-fwd 320ms cubic-bezier(.32,.72,0,1)}
-.page-enter-back{animation:qp-enter-back 320ms cubic-bezier(.32,.72,0,1)}
-.page-leave-back{animation:qp-leave-back 320ms cubic-bezier(.32,.72,0,1)}
+/* Keep both endpoints until cleanup so an outgoing page cannot snap back underneath the overview. */
+.page-enter-fwd{animation:qp-enter-fwd 320ms cubic-bezier(.32,.72,0,1) both}
+.page-leave-fwd{animation:qp-leave-fwd 320ms cubic-bezier(.32,.72,0,1) both}
+.page-enter-back{animation:qp-enter-back 320ms cubic-bezier(.32,.72,0,1) both}
+.page-leave-back{animation:qp-leave-back 320ms cubic-bezier(.32,.72,0,1) both}
 @media (prefers-reduced-motion: reduce){
   .page-enter-fwd,.page-leave-fwd,.page-enter-back,.page-leave-back{animation:none}
 }
@@ -500,6 +501,10 @@ main section[data-page]{min-height:100%}  /* .home 与内页共用（内页另�
   border-radius:calc(var(--u) * var(--h-card) / 2);
   box-shadow:var(--sh-1);
   box-sizing:border-box;
+  /* 展开态行区的高度：**唯一数字源**。V2（正常文档流布局）要用等量负下边距
+     把这部分高度"吃掉"，两个值必须严格相等，否则收起/展开时会推挤下方
+     （见 overview-v2.css 的 .v2-home .idcard.open）。 */
+  --idrows-h:calc(var(--u) * 133);
 }
 /* 展开态（点右侧状态环）：胶囊原位向下展开，把体力/清洁/心情三行显示在名字下面 ——
    官方就是这么做的手势（2026-09-28 真机实测：点环后卡片原位展开、没有遮罩/弹窗，
@@ -523,7 +528,7 @@ main section[data-page]{min-height:100%}  /* .home 与内页共用（内页另�
    = 46u 头部 + 133.7u 行区）。**尺寸全按官方原图量**（`qqpet_assets/01_ui_screenshots/
    05_pet_status.png` 1080×2412，÷3 = CSS px，而页面的 --u = 100vw/360 正好等于 CSS px；
    早先误按 ÷2.769（390 宽）量，整体大了 8%，字号/行距/条粗全偏 —— 用户实报）。 */
-.idcard.open .idrows{height:calc(var(--u) * 133)}
+.idcard.open .idrows{height:var(--idrows-h)}
 /* 官方：头部（46u）与第一行中心（99.4u）之间有 3.3u 间隙。用 margin 加在第一行上，
    收起态因为容器 height:0 + overflow:hidden 不受影响。 */
 .idrows .prow:first-child{margin-top:calc(var(--u) * 3.3)}

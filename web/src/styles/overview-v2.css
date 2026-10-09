@@ -24,13 +24,7 @@
    ========================================================================== */
 
 /* ---------- 单位基准 ----------
-   继承全局 `--u`（= 1dp，手机上 1 CSS px；上限逻辑见 web/src/lib/stage.ts）。
-   曾在这里写 `--u:clamp(0.9px, var(--vu, ...), 1.2px)` 来"限死平板上的放大" ——
-   那个上限现在属于 stage.ts 的职责（它按"视口宽 / 限定的逻辑宽"算），
-   在 CSS 里再 clamp 一次会与它打架。
-   V1 的 `--u` 也走同一个 stage.ts —— 所以两版的按钮在手机上都会是 1dp = 1css px，
-   与官方一致。（V1 的布局是按旧基准调的，改后它的元素尺寸会一起变化；
-   这正是"与官方一致"要的结果。） */
+   继承全局 1u = 1 CSS px；宽屏限宽，不按视口放大控件。 */
 
 /* ---------- 容器 ----------
    横向按**官方 dump 的固定 dp 布局**（不是居中！）：
@@ -42,7 +36,8 @@
    我先前写成 `justify-content:center` + 定宽内容列 —— 那是错的：
    实测在 480px 视口下左钮跑到 x82.5（官方 20）、内容列 x136.5（官方 74.2）。
 
-   纵向：两行 —— 上（左右栏 + 中间内容），下（底栏，绝对定位贴底）。 */
+   纵向：两行 —— 上（左右栏 + 中间内容），下（底栏，正常流）。
+   常规屏幕填满一屏；极短屏保留最小可操作高度，由 .page-slot 滚动。 */
 .v2-home{
   display:grid;
   /* 中间列 `minmax(0, 1fr)` = 弹性：**吃掉剩余宽度**。
@@ -52,22 +47,19 @@
        （auto，由内容定宽），形成循环依赖会被浏览器忽略（实测无效）。
      也别用 100vw —— 平板/桌面下 .v2-home 被 max-width 限宽居中，视口宽不是容器宽。 */
   grid-template-columns:auto minmax(0, 1fr) auto;
-  grid-template-rows:1fr auto;
+  grid-template-rows:minmax(min-content, 1fr) auto;
   justify-content:start;                  /* **靠左**，不居中 */
-  align-items:start;
-  height:100%;
-  min-height:0;
+  align-items:stretch;
+  height:auto;
+  min-height:100%;
   box-sizing:border-box;
   column-gap:0;                           /* 间隙由各自 margin 控制（官方 12dp，不是统一 gap） */
+  row-gap:calc(var(--u) * 16);
   padding:0;
 }
 .v2-rail.left{ grid-column:1; grid-row:1 }
 .v2-center   { grid-column:2; grid-row:1; display:flex; flex-direction:column; min-width:0; min-height:0 }
 .v2-rail.right{ grid-column:3; grid-row:1 }
-/* ⚠ 底栏**不要**写 grid-column/grid-row：它是接下去那条 position:absolute 的元素，
-   而绝对定位的 grid 子项，其包含块是**它所属的 grid area**（不是整个容器）——
-   实测写了之后 left:0/right:0 只铺满那个 area（339px），而 V1 的底栏是满宽 390。
-   去掉 grid placement 后它相对 .v2-home（position:relative）定位，才是满宽。 */
 /* ⚠ grid/flex 的经典陷阱：子项默认 min-width:auto，会被内容撑开而溢出容器。
    实测：不写时 .v2-home 是 390px 而内部各行被撑到 523px（溢出 133px，
    右侧圆钮与功能栏被推到屏幕外）。 */
@@ -80,6 +72,7 @@
 .v2-top{
   display:flex;
   flex-direction:column;
+  flex:0 0 auto;
   /* 官方：资料卡 y26.2 高46.2 → 底 72.4；胶囊 y86.2 → 间隙 **13.8dp** */
   gap:calc(var(--u) * 13.8);
   padding:0;
@@ -93,7 +86,34 @@
    （先前我误用了容器 FrameLayout 的 bounds（331.8dp，那是**外框**含留白），
     把胶囊拉宽到 331.8 —— 错的。`.v2-center` 仍是 331.8，但胶囊只占 207.1。） */
 .v2-top .idcard,
-.v2-top .caps{ width:calc(var(--u) * 207.1); align-self:flex-start }
+.v2-top .caps{ width:min(100%, calc(var(--u) * 207.1)); align-self:flex-start }
+/* 第二行也允许收缩；旧 flex:0 0 auto 会被较长的次数/时长撑出卡片。 */
+.v2-top .caps-row:nth-child(2) .cap{ flex:1 1 0; min-width:0 }
+.v2-home .cap{ padding:0 }
+
+/* ---------- 展开态：卡片原位展开，**不推挤下方**（V1 的行为） ----------
+   app.css 的 `.idcard.open` 是给 V1 写的：展开时卡片高度 46u → 179u（多出 133u
+   的行区）。在 V1 里卡片是**绝对定位的浮动层**，长高只会向下盖住胶囊与任务卡；
+   V2 是正常文档流，同一份 height 变化会**把胶囊和整个任务卡一起往下顶**。
+
+   实测（390×844，?ui=v1 与 ?ui=v2 并排对照，探针量 getBoundingClientRect）：
+     V1 展开：卡片 y34.3 h46→179；胶囊 y92.3 **不动**；任务卡 y162.3 **不动**
+     V2 展开：卡片 y26.2 h46→179；胶囊 y86.0 → **219.0**；任务卡 y156.0 → **289.0**
+   —— 用户实报"展开以后把下面的东西往下顶"，指的就是 V2 这一列。
+
+   修法：用**等量的负下边距**把这 133u 吃掉。flex 布局里 item 的占位 = 边框盒 + margin，
+   负 margin 直接减少占位 → 卡片的视觉高度照旧长（背景/圆角/三行都在），
+   但在流里占的高度恒为 46u，胶囊与任务卡一动不动。
+   ⚠ 负 margin 必须与行区高度**恒等**：值取 app.css 的 --idrows-h（唯一数字源），
+     不要在这里再写一个 133，否则以后改行高就会一边动一边不动。
+   ⚠ 过渡要跟 .idrows 的 height 同步（同一时长/缓动），否则收起时下方"先跳一下再收"。
+   ⚠ 只在 V2 作用域内生效 —— V1 是浮动层，多一个负 margin 会改变重叠关系，一行都别动。 */
+.v2-home .v2-top .idcard{
+  transition:margin-bottom .22s cubic-bezier(.22,.61,.36,1);
+}
+.v2-home .v2-top .idcard.open{
+  margin-bottom:calc(var(--idrows-h) * -1);
+}
 
 /* ---------- 行 2：圆钮列 + 任务卡 ----------
    V1 实测：左圆钮 x22..68、内容列 x80..304（**宽 224、基本居中**）、右圆钮 x323..369。
@@ -140,6 +160,7 @@
      漏了这条时资料卡从 y=0 起，看起来"顶部没和左右按钮对齐"。
      胶囊随之落到官方 y=86.2（= 26.2 + 46.2 资料卡高 + 13.8 间隙）。 */
   padding-top:calc(var(--u) * 26.2);
+  height:100%;
   min-width:0; min-height:0;
 }
 /* 任务卡**按内容自适应 + 上限**，与 V1 一致。
@@ -155,7 +176,9 @@
   flex-direction:column;
   margin-top:calc(var(--u) * 12);
   min-width:0;
-  min-height:0;
+  /* 固定 flex basis，避免列表的内容高度成为 grid 的不可收缩下限。 */
+  height:0;
+  min-height:calc(var(--u) * 140);
   flex:1 1 auto;
 }
 .v2-seat .qpanel{
@@ -163,18 +186,19 @@
   min-height:0;
   max-height:100%;
 }
+.v2-seat .qhead{ flex:0 0 auto }
 /* 任务列表：V1 用「负 margin-right + 等量 padding-right」把滚动条贴到卡片边框上，
    那套在**固定宽度**下成立；V2 里宽度由 flex 决定，负边距会把内容推出卡片
    （实测：右侧"待结算/按住拖动排序"被裁到卡片外）。V2 里取消这个技巧。 */
 .v2-seat .tasklist{
   overflow-y:auto;
+  overflow-x:hidden;
   overscroll-behavior:none;
   margin-right:0;
   padding-right:0;
-  /* flex:0 1 auto 时会被 flex 的默认收缩压掉一点高度（实测 311 → 307），
-     于是本来放得下的列表出现内滚 → flex-shrink:0 按内容高。 */
-  flex:0 0 auto;
-  max-height:100%;
+  flex:0 1 auto;
+  min-height:0;
+  max-height:none;
 }
 .v2-seat .tasklist::-webkit-scrollbar{ width:3px }
 
@@ -186,14 +210,11 @@
    V1 里 `.deck` 本身就是底栏，没有外层容器。
    这里让 `.v2-bottom` 只做 grid 的定位单元（不画任何东西），
    视觉全部由 `.deck` 承担 —— 与 V1 完全一致。 */
-/* V1 的底栏是**满宽、贴屏幕底**的弧形面板（x0..390 y698..844），
-   不受内容列约束。V2 的 grid 三列总宽只有 339，所以底栏不能用列宽算 ——
-   直接绝对定位贴底（它本来就是"覆盖在背景上的装饰层"，这点用绝对定位是合理的）。
-   ⚠ 曾用 `margin-left:calc((100% - 总宽)/-2)` 试图突破列宽：那个 100% 是**列宽**
-   不是容器宽，结果把底栏推到 x-364（实测）。 */
+/* 底栏跨三列并实际占据第二行，任务卡与功能栏不会再穿进底栏。 */
 .v2-bottom{
-  position:absolute;
-  left:0;right:0;bottom:0;
+  position:relative;
+  grid-column:1 / -1;
+  grid-row:2;
   display:flex;
   align-items:stretch;
   background:none;
@@ -203,14 +224,10 @@
   -webkit-backdrop-filter:none;
   padding:0;
 }
-/* 绝对定位后它脱离了 grid 流 —— 用 grid-area 让它仍占第 2 行的位置，
-   给中间内容留出底部空间（避免任务卡被底栏盖住）。 */
 .v2-home{ position:relative }
-/* 中间列的底部留出底栏高度，等价 V1 里 .scene 的 max-height 减去底栏 + 16u 缝 */
-.v2-center{ padding-bottom:calc(var(--u) * 135) }
 /* `.deck` 在 V2 里重新成为底栏本体（它在 V1 里就是）。
    位置：V1 是 absolute bottom:0 / height:135u —— V2 用正常流表达同一结果。 */
-.v2-bottom .deck{
+.v2-home .v2-bottom .deck{
   position:relative;
   left:auto;top:auto;right:auto;bottom:auto;
   width:100%;
@@ -317,9 +334,21 @@
   .v2-seat{ margin-top:calc(var(--u) * 10) }
 }
 
+@media(max-width:340px){
+  .v2-rail.left{ margin-left:calc(var(--u) * 8) }
+  .v2-rail.right{ margin-right:calc(var(--u) * 8) }
+  .v2-center{ margin-left:calc(var(--u) * 8); margin-right:calc(var(--u) * 8) }
+}
+
+/* 短屏保留 44px 操作按钮；画面仍可从右侧圆钮进入，不重复占用高度。 */
+@media(max-height:620px){
+  .v2-funcseat{ margin-top:calc(var(--u) * 12) }
+  .v2-funcseat .funcbar .fab{ height:calc(var(--u) * 44) }
+  .v2-funcseat .funcbar .fb-group:nth-child(2){ display:none !important }
+}
+
 /* ---------- 平板/宽屏：限宽居中 ----------
-   V1 在宽屏下整页横向拉满、元素被等比放大（--u 无上限）；
-   V2 因为 --u 有上限 + 版心限宽，观感与手机一致。 */
+   控件保持手机尺寸，只限制版心宽度。 */
 @media(min-width:640px){
   .v2-home{
     max-width:430px;

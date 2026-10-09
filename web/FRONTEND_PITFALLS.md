@@ -116,6 +116,31 @@ iOS 会先判定"这是滚动还是交互"，判定成滚动就发 `pointercance
 
 **改结构前 `grep -n "main >"`，改后逐条确认。**
 
+### 绝对定位子组件搬进正常流：`position:static` 会连带改掉「长高时盖住谁」
+
+V2 把所有 `.flt` 组件改成 `position:static` 参与文档流。这**不只是**换定位：
+
+- 视觉上"卡片变高了"在 V1 里是**浮层向下盖住**（`.idcard.open{z-index:6}`，
+  胶囊/任务卡坐标恒定）；
+- 在 V2 里同一份 `height` 变化会**把下面的胶囊和整个任务卡顶下去**。
+
+用户实报（2026-10-09）："面板展开以后把下面的东西往下顶，之前不是覆盖上去吗"。
+实测（390×844，`?ui=v1` 与默认 V2 并排，探针量 `getBoundingClientRect`）：
+
+| | 卡片 | 胶囊 y | 任务卡 y |
+| --- | --- | --- | --- |
+| V1 收起 → 展开 | h 46 → 179 | 92.3 → **92.3** | 162.3 → **162.3** |
+| V2 收起 → 展开（修前） | h 46 → 179 | 86.0 → **219.0** | 156.0 → **289.0** |
+
+**修法**：用与增量**等量**的负 `margin-bottom` 在流里抵消（`overview-v2.css` 的
+`.v2-home .v2-top .idcard.open`）—— 视觉照旧长高、占位恒定。
+两个硬约束：① 负 margin 与行区高度必须同源（走 `app.css` 的 `--idrows-h`，
+别各写一个 133）；② 过渡时长/缓动要与 `.idrows` 的 `height` 一致，
+否则收起时下方"先跳一下再收"。**只在 V2 作用域内加，V1 一行都别动。**
+
+→ **搬组件到正常流时，逐条问"这个元素在旧版是浮层还是流内元素"**：
+浮层的"长高/位移"在流里都会变成"推挤兄弟"，全部要单独处理。
+
 ### `:not(...)` 的参数也计入特异性
 
 `main section[data-page]:not([data-page="main"])` 是 **(0,2,2)**，不是 (0,1,2)。
@@ -156,6 +181,23 @@ grep -nE "addEventListener|setAttribute|\.style\.|dataset\." /tmp/legacy-app.js
 （真实事故：探针被误提交进 `main.tsx`，页面每 2.6 秒自动弹一次背景面板）。
 
 用 `git checkout -- <file>` 恢复；或者探针写进独立文件注入。
+
+### headless 探针的四个必踩点（2026-10-09 又踩了其中三个）
+
+1. **`--virtual-time-budget` 不推进 CSS 过渡**（合成器时钟不走）——不先注入
+   `*{transition:none!important;animation:none!important}`，展开/折叠类改动会永远量到
+   `height:0`、误判成"改了没生效"。早期探针版本有这一步，重写时丢过。
+2. **点 `#idRing` 要按"当前节点"点并校验结果**：React 轮询会重渲染、替换节点，
+   对着**已废弃的节点** `click()` 不冒泡到 root 的事件委托，静默无效。
+   点完必须断言 `.idcard.open` 真的出现，没出现就重取节点重试。
+   （症状是 `openEls=1` 但 `height=0`——"点上但过渡没跑"与"根本没点上"会混在一起。）
+3. **探针页用静态 `?tab=` HTML 最稳**：若改成 JS 动态 `createElement('iframe')`，
+   必须**先 append 探针再设 `f.src`** —— 探针在 `load` 事件里启动，
+   先设 src 后注入会错过这次 load（表现为 `probeMissing`）。
+4. 本机 Chrome 154 的 `--headless=new --dump-dom` **dump 完不退出**，要后台跑 + 轮询
+   `data-probe` 出现后 kill（`tools/layout-check.sh` 直接串行调用会挂住到天荒地老）。
+   另外 dashboard 开了访问验证时 `layout-check.sh` 会**跳过**（退出码 2）——
+   等于布局改动没验证，探针页要先 `POST /api/auth` 拿 cookie 再挂 iframe。
 
 ---
 

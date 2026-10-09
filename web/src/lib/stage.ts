@@ -27,37 +27,23 @@
  *
  * ## 现在怎么算
  *
- * - 手机（视口 ≤ `PHONE_MAX_VW`）：`u = 1px` —— 1dp 就是 1 CSS px，与官方一致
- * - 更宽（平板/桌面）：按"可用宽度 / 逻辑宽"缩放，逻辑宽限制在 [MIN, MAX]，
- *   避免整页变成巨物（那正是 docs/review/04 的 E 节问题）
+ * - 默认 `u = 1px`，手机、平板和桌面保持同一套控件尺寸。
+ * - 宽度变化由 grid 与版心限宽处理，不按整个视口放大控件：
+ *   总览版心只有 430px，按视口放大反而会把中间任务列挤到 0px。
  *
  * 调试覆盖：URL 带 `?u=<数值>` 时直接用该值
  * （例如 `?u=1.0833` 可复现旧的"视口宽/360"行为，便于对比）。
  *
- * CSS 侧 `--u: var(--vu, ...)` 优先用这里算的值；
- * **不用 100vw** 兜底：它把滚动条宽度也算进去（实测 clientWidth 489 vs 100vw 500），
- * 会让所有坐标偏大约 2%。
+ * CSS 侧 `--u: var(--vu, 1px)` 保持首帧与这里一致。
  */
 
-/** 视口宽 ≤ 这个值时认定"这是一块手机屏"，u 取 1px（1dp = 1css px）。 */
-const PHONE_MAX_VW = 520
-
-/** 逻辑宽上限：更宽的设备按这个逻辑宽等比缩放，不让元素无限变大。
- *  取 430 ≈ 主流大屏手机（iPhone Pro Max 逻辑宽 430dp）。 */
-const MAX_LOGICAL_W = 430
-
-/** 逻辑宽下限：极窄设备（老机型 320dp）保证元素不至于小到点不中。 */
-const MIN_LOGICAL_W = 320
-
 /** 导出供测试用。 */
-export function computeUnit(vw: number, override?: string | null): number {
+export function computeUnit(_vw: number, override?: string | null): number {
   if (override) {
     const n = Number(override)
     if (Number.isFinite(n) && n > 0) return n
   }
-  if (vw <= PHONE_MAX_VW) return 1
-  const logicalW = Math.min(Math.max(vw, MIN_LOGICAL_W), MAX_LOGICAL_W)
-  return vw / logicalW
+  return 1
 }
 
 export function installStageUnit(): void {
