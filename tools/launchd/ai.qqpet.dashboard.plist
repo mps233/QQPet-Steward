@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  QQ 宠物托管 · 仪表盘（launchd 托管版）
+  ============================================================
+  **为什么必须由 launchd 托管**（2026-10-09 实测死因）：
+
+  之前用 `./dashboard.sh` 起仪表盘，再用仪表盘的「启动调度器」按钮拉起
+  `scenarios/runner.py`。两者虽然都写了 `start_new_session=True`（等价 setsid），
+  但 **setsid 只换 POSIX 会话/进程组，不换 macOS 的 application coalition**。
+  结果 11:30:25 从 Dock 强制退出 ChatGPT 时，系统把联盟内的成员一并收走：
+
+      Dock _LSForceQuitApplication: "ChatGPT" (4101),
+           coalition pids to consider killing:[, 84529, 84531, 88553, 95815]
+      Dock killPID: pid=88553 hard=NO succeeded      # 调度器
+      Dock killPID: pid=95815 hard=NO succeeded      # 仪表盘
+
+  两个常驻进程一起消失、手机停在冒险页、11:30:40 该收尾的那把没人收。
+  交给 launchd 后进程联盟是 launchd 的，不再随任何 App 退出而被连带杀。
+
+  **只托管仪表盘，不托管调度器**：调度器由仪表盘按钮按需启停
+  （/api/runner/start 拉起、/api/runner/stop 发 SIGINT 优雅收尾），
+  若给它套上 KeepAlive，按钮「停止」会被 launchd 立刻拉回，破坏现有交互。
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.qqpet.dashboard</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__PROJECT_ROOT__/.venv/bin/python</string>
+        <string>__PROJECT_ROOT__/dashboard.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__PROJECT_ROOT__</string>
+
+    <!-- launchd 的默认 PATH 不含 Homebrew：实时流要用 ffmpeg、adb 在 /opt/homebrew/bin -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>PYTHONUNBUFFERED</key>
+        <string>1</string>
+        <key>PYTHONIOENCODING</key>
+        <string>utf-8</string>
+        <key>LANG</key>
+        <string>zh_CN.UTF-8</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- 崩溃/被杀自动拉起；定期维护用 launchctl bootout（见 install.sh --uninstall） -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- 秒退循环（端口被占等）时的重启节流，别把 launchd 打爆 -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>__PROJECT_ROOT__/runs/dashboard_console.log</string>
+    <key>StandardErrorPath</key>
+    <string>__PROJECT_ROOT__/runs/dashboard_console.log</string>
+</dict>
+</plist>
