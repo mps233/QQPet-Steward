@@ -21,9 +21,11 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import html
 import json
 import mimetypes
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -41,8 +43,30 @@ TITLE = '[QQ宠物助手告警]'
 # 错误/降级通知（"出错了但没崩"类，如配置读取失败后沿用旧配置）
 ERROR_TITLE = '[QQ宠物·异常]'
 HTTP_TIMEOUT = 20
+# Telegram 单条消息正文上限是 4096 字符，超了整条被 API 拒收（不是截断）。
+# 留一点余量给 title 与省略号：宁可末尾少显示几行，也不能整条丢。
+TELEGRAM_TEXT_LIMIT = 4000
 HISTORY_FILE = PROJECT_ROOT / 'runs' / 'notifications.jsonl'
 _HISTORY_LOCK = threading.Lock()
+
+
+def _balance_pre(text: str) -> str:
+    """补齐被截断的 `<pre>` 收尾标签（标签不配平会被 TG 直接 400 拒收）。"""
+    if text.count('<pre>') > text.count('</pre>'):
+        text += '</pre>'
+    return text
+
+
+def _fit_telegram(text: str, limit: int = TELEGRAM_TEXT_LIMIT) -> tuple[str, bool]:
+    """把文本压进 Telegram 的长度上限，返回 (文本, 是否被截断)。
+
+    超限在 Telegram 是**整条拒收**而不是自动截断，所以必须自己砍。
+    `<pre>` 被砍剩半截会让标签不配平 → 同样被拒，所以顺手补上收尾标签。
+    """
+    if len(text) <= limit:
+        return text, False
+    head = _balance_pre(text[:limit].rstrip())
+    return head + '\n…（内容过长已截断，完整内容见仪表盘）', True
 
 
 def send_alert(reason: str, image_path: str | None = None) -> bool:
@@ -139,29 +163,106 @@ def _redact(text: str, cfg: NotifyConfig) -> str:
     return text
 
 
+# 通知正文允许带**受限 HTML**：Telegram 的富消息靠它渲染原生表格（`<table>`）。
+# 其它渠道不认这些标签，统一剥成纯文本再发，免得用户看到一堆 `<table>` 字样。
+_TAG_RE = re.compile(
+    r'</?(?:pre|code|b|strong|i|em|u|s|del|blockquote|table|tr|th|td|ul|ol|li|br)'
+    r'\b[^>]*>', re.IGNORECASE)
+# 富消息专用标签：出现这些说明必须走 sendRichMessage（parse_mode=HTML 会 400）
+_RICH_ONLY_RE = re.compile(r'</?(?:table|tr|th|td)\b', re.IGNORECASE)
+# Telegram HTML parse mode 支持的实体：& < > 与数字实体
+_ENTITY_RE = re.compile(r'&(?:amp|lt|gt|quot|#\d{1,6});', re.IGNORECASE)
+
+
+def _table_to_text(block: str) -> str:
+    """把一段 `<table>…</table>` 转成一行一条的纯文本（列间制表符、无空行）。
+
+    **只把列边界换成制表符，单元格内部的空格要原样保留** —— 曾经在这里做了
+    `[ \\t]+ → \\t` 的全行归一，结果 `491 次` 被拆成 `491\\t次`、`+5465` 之类
+    看着像两列（踩过）。列边界靠 `</td><td>` 识别，本来就精确。
+    """
+    block = re.sub(r'</t[dh]>\s*(?=<t[dh])', '\t', block, flags=re.I)
+    block = re.sub(r'</t[dh]>', '', block, flags=re.I)
+    block = re.sub(r'</tr>', '\n', block, flags=re.I)
+    block = re.sub(r'</?table[^>]*>', '\n', block, flags=re.I)
+    block = re.sub(r'</?t[dh][^>]*>', '', block, flags=re.I)
+    lines = [ln.strip() for ln in block.splitlines()]
+    lines = [re.sub(r'\t{2,}', '\t', ln) for ln in lines]
+    return '\n'.join(ln for ln in lines if ln)
+
+
+def _join_title(title: str, content: str) -> str:
+    """标题 + 正文拼一条消息；**空标题不留空行**。
+
+    标题可以为空（如冒险日报已改为不带 `[QQ宠物·冒险日报]` 前缀，靠正文首行
+    自报家门）。若照旧 `f'{title}\\n{content}'`，空标题会在最前面顶出一个空行。
+    """
+    title = str(title or '').strip()
+    return f'{title}\n{content}' if title else str(content)
+
+
+def _escape_plain(content: str) -> str:
+    """纯文本渠道：把富消息 HTML 剥成可读纯文本。
+
+    **表格单独处理**：表体剥成一行一条（列间制表符、行间不留空行），其余正文按
+    常规保留段落空行 —— 一视同仁地压空行会把标题与正文之间该有的空行也吃掉
+    （踩过：整条通知挤成一坨）。
+    """
+    text = str(content)
+    # 先把表格区域抽出来逐块转换，避免表格与正文的换行规则互相干扰
+    text = re.sub(r'<table\b[^>]*>.*?</table>', lambda m: _table_to_text(m.group(0)),
+                  text, flags=re.I | re.S)
+    text = re.sub(r'</(?:pre|blockquote|ul|ol|li)>', '\n', text, flags=re.I)
+    text = re.sub(r'<br\b[^>]*/?>', '\n', text, flags=re.I)
+    text = _TAG_RE.sub('', text)
+    text = _ENTITY_RE.sub(lambda m: html.unescape(m.group(0)), text)
+    text = re.sub(r'[ \t]+\n', '\n', text)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip('\n')
+
+
 def send_detailed(title: str, content: str, image_path: str | None = None,
                   cfg: NotifyConfig | None = None, *,
                   target: str = 'all', event_key: str | None = None) -> dict:
-    """Return channel results. Desktop success never masks a failed remote push."""
+    """Return channel results. Desktop success never masks a failed remote push.
+
+    正文可含受限 HTML：**含 `<table>` 的正文走 Telegram 富消息**（`sendRichMessage`，
+    渲染原生表格；`parse_mode=HTML` 不支持 table 会直接 400），其余渠道剥成纯文本。
+    """
     cfg = cfg or _notify_cfg()
     if cfg is None:
         return {'ok': False, 'msg': '读取配置失败且无可用缓存', 'results': {}}
     content = _redact(content, cfg)
+    plain = _escape_plain(content) if _TAG_RE.search(content) else content
+    rich = bool(_RICH_ONLY_RE.search(content))
     results: dict[str, str] = {}
     successes: set[str] = set()
     remote_enabled: set[str] = set()
+
+    def deliver_telegram():
+        """含表格先试富消息；富消息不可用（旧服务器/权限）就回落普通消息。
+
+        回落是**保住通知**的关键：表格只是排版，发不出去才是真丢东西。
+        """
+        if rich:
+            ok, why = _send_telegram_rich_result(cfg, title, content)
+            if ok:
+                return ok, why
+            log(f'Telegram 通知: 富消息发送失败（{why}），改用普通消息')
+        return _send_telegram_result(cfg, title, plain)
+
     channels = (
         ('飞书', 'feishu', cfg.feishu_enabled,
          bool(str(cfg.feishu_webhook).strip()),
-         lambda: _send_feishu_result(cfg, title, content, image_path)),
+         lambda: _send_feishu_result(cfg, title, plain, image_path)),
         ('Telegram', 'telegram', cfg.telegram_enabled,
          bool(str(cfg.telegram_token).strip() and str(cfg.telegram_chat_id).strip()),
-         lambda: _send_telegram_result(cfg, title, content, image_path)),
+         deliver_telegram),
         ('OnePush', 'onepush', bool(str(cfg.onepush_config).strip()), True,
-         lambda: _send_onepush(str(cfg.onepush_config), content, image_path, title=title)),
+         lambda: _send_onepush(str(cfg.onepush_config), plain, image_path, title=title)),
         ('桌面', 'desktop', cfg.win_toast, True,
-         lambda: (_send_mac_toast(content, title=title) if sys.platform == 'darwin'
-                  else _send_windows_toast(content, image_path, title=title))),
+         lambda: (_send_mac_toast(plain, title=title) if sys.platform == 'darwin'
+                  else _send_windows_toast(plain, image_path, title=title))),
     )
     for label, key, enabled, complete, deliver in channels:
         if target not in ('all', key):
@@ -192,7 +293,9 @@ def send_detailed(title: str, content: str, image_path: str | None = None,
         with _HISTORY_LOCK:
             append_jsonl(HISTORY_FILE, {
                 'ts': time.strftime('%Y-%m-%d %H:%M:%S'), 'title': title,
-                'content': _redact(content, cfg),
+                # 历史存**剥标签的纯文本**：仪表盘「最近发送的通知」是 pre-wrap 渲染，
+                # 存原文会让用户看到一堆 <pre>；表格靠空格对齐，纯文本照样能看
+                'content': _redact(plain, cfg),
                 'image': Path(image_path).name if image_path else None,
                 'event_key': event_key, 'ok': ok, 'results': results,
             })
@@ -316,7 +419,7 @@ def _send_feishu_result(cfg: NotifyConfig, title: str, content: str,
         payload['timestamp'] = str(ts)
         payload['sign'] = _feishu_sign(secret, ts)
 
-    text = f'{title}\n{content}'
+    text = _join_title(title, content)
     # 有截图：先传图，成功则发一条图片 + 一条文本（图单独发，文本带完整信息）
     sent_any = False
     image_note = ''
@@ -344,27 +447,100 @@ def _send_feishu_result(cfg: NotifyConfig, title: str, content: str,
 
 # ---------------------------------------------------------------- Telegram Bot
 
+# Telegram Bot API 10.1（2026-06）起的 Rich Messages：sendRichMessage 能渲染
+# **原生表格**（<table bordered striped>）、32k 字符上限。旧的 sendMessage +
+# parse_mode=HTML 明确不支持 <table>（塞进去 400 拒收），所以表格只能走这条路。
+RICH_LIMIT = 32000
+
+
+def _telegram_send_rich(token: str, chat_id: str, html: str) -> tuple[bool, str]:
+    return _post_json(f'https://api.telegram.org/bot{token}/sendRichMessage',
+                      {'chat_id': chat_id, 'rich_message': {'html': html}})
+
+
+def _fit_rich(html: str, limit: int = RICH_LIMIT) -> str:
+    """把富消息压进长度上限，并保证标签配平。
+
+    超限在 Telegram 是**整条拒收**；而按字符硬切会把 `<table>` 切成半截、
+    `<td>` 落单，同样拒收。所以：先切到上限，再把未闭合的单元格/行/表格补齐，
+    最后仍放不下就退到**丢弃最后一张未闭合的表**（宁可少一张表也不能整条发不出）。
+    """
+    if len(html) <= limit:
+        return html
+    cut = html[:limit]
+    # 丢掉被切在半途的最后一个标签（形如 `<t...` 的残片，补齐也没法补）
+    cut = re.sub(r'<[^<>]*$', '', cut)
+    # 补齐未闭合的嵌套标签（由内到外回填，保证配平）
+    for open_name, close_tag in (('td', '</td>'), ('th', '</th>'),
+                                 ('tr', '</tr>'), ('table', '</table>')):
+        if cut.count(f'<{open_name}') > cut.count(close_tag):
+            if open_name == 'table' and len(cut) + len(close_tag) > limit:
+                # 连收尾标签都放不下：整段丢掉最后这张表，别硬凑
+                last = cut.rfind('<table')
+                cut = (cut[:last] if last >= 0 else cut).rstrip()
+                break
+            cut += close_tag
+    return cut + '\n…（内容过长已截断，完整内容见仪表盘）'
+
+
+def _send_telegram_rich_result(cfg: NotifyConfig, title: str, content: str,
+                               image_path: str | None = None) -> tuple[bool, str]:
+    """用 Rich Message 发正文（表格走这条）。失败返回失败原因，由调用方回落。"""
+    token = str(cfg.telegram_token).strip()
+    chat_id = str(cfg.telegram_chat_id).strip()
+    if not token or not chat_id:
+        return False, '未填 token 或 chat_id'
+    # 标题为空时不发 `<b></b>`（那会渲染出一行空粗体，还占掉一点行高）
+    title = str(title or '').strip()
+    head = f'<b>{_escape_rich(title)}</b>\n' if title else ''
+    html = _fit_rich(f'{head}{content}')
+    ok, why = _telegram_send_rich(token, chat_id, html)
+    if ok:
+        log('Telegram 通知: 发送成功（富消息·表格）')
+        return True, '成功（富消息）'
+    return False, _redact(why, cfg)
+
+
+def _escape_rich(text) -> str:
+    return (str(text).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;'))
+
+
 def _send_telegram_result(cfg: NotifyConfig, title: str, content: str,
                           image_path: str | None = None) -> tuple[bool, str]:
-    """发送 Telegram 消息（有截图用 sendPhoto，否则 sendMessage）。"""
+    """发送 Telegram 消息（有截图用 sendPhoto，否则 sendMessage）。
+
+    正文若含受限 HTML（等宽表格），走 `parse_mode=HTML`；否则仍是纯文本，
+    这样老通知的排版不变。**HTML 解析失败必须能自愈**：TG 对非法实体直接
+    400 拒收整条消息，所以失败后用剥标签的纯文本再发一次，宁可丢表格也不丢通知。
+    """
     token = str(cfg.telegram_token).strip()
     chat_id = str(cfg.telegram_chat_id).strip()
     if not token or not chat_id:
         log('Telegram 通知: token 或 chat_id 未填，跳过')
         return False, '未填 token 或 chat_id'
-    text = f'{title}\n{content}'
+    text, clipped = _fit_telegram(_join_title(title, content))
+    # 截断可能吃掉末尾的标签，富文本判定要按**实际发出的文本**来
+    rich = bool(_TAG_RE.search(text))
+    if clipped:
+        log(f'Telegram 通知: 正文超过 {TELEGRAM_TEXT_LIMIT} 字符，已截断后发送')
     photo_failed = False
     if image_path and os.path.exists(image_path):
-        ok, why = _telegram_send_photo(token, chat_id, text, image_path)
+        ok, why = _telegram_send_photo(token, chat_id, text, image_path, html=rich)
         if ok:
             log('Telegram 通知: 发送成功（图片）')
             return True, '成功（图片）'
         photo_failed = True
         log(f'Telegram 通知: 图片发送失败（{_redact(why, cfg)}），降级为文本')
     base = f'https://api.telegram.org/bot{token}'
-    ok, why = _post_json(f'{base}/sendMessage',
-                         {'chat_id': chat_id, 'text': text,
-                          'disable_web_page_preview': True})
+    ok, why = _telegram_send_message(token, chat_id, text, html=rich)
+    if not ok and rich:
+        # HTML 被拒（非法实体/标签不被支持）→ 剥标签重发纯文本
+        log(f'Telegram 通知: HTML 正文被拒（{_redact(why, cfg)}），改用纯文本重发')
+        plain, _ = _fit_telegram(_join_title(title, _escape_plain(content)))
+        ok, why = _telegram_send_message(token, chat_id, plain, html=False)
+        if ok:
+            return True, ('成功（图片失败后已降级文本）' if photo_failed
+                          else '成功（文本·HTML 被拒后降级）')
     if ok:
         log('Telegram 通知: 发送成功')
         return True, '成功（图片失败后已降级文本）' if photo_failed else '成功（文本）'
@@ -372,9 +548,22 @@ def _send_telegram_result(cfg: NotifyConfig, title: str, content: str,
     return False, f'失败：{_redact(why, cfg)}'
 
 
+def _telegram_send_message(token: str, chat_id: str, text: str, *,
+                           html: bool = False) -> tuple[bool, str]:
+    """sendMessage；html=True 时用 parse_mode=HTML（等宽 <pre> 表格靠它渲染）。"""
+    payload = {'chat_id': chat_id, 'text': text, 'disable_web_page_preview': True}
+    if html:
+        payload['parse_mode'] = 'HTML'
+    return _post_json(f'https://api.telegram.org/bot{token}/sendMessage', payload)
+
+
 def _telegram_send_photo(token: str, chat_id: str, caption: str,
-                         image_path: str) -> tuple[bool, str]:
-    """multipart 上传图片 + caption（标准库手工拼包，不依赖 requests）。"""
+                         image_path: str, *, html: bool = False) -> tuple[bool, str]:
+    """multipart 上传图片 + caption（标准库手工拼包，不依赖 requests）。
+
+    caption 带 HTML 时同样要 parse_mode=HTML（字段排在 caption 之前，
+    TG 解析 multipart 时才能把 caption 当富文本）。
+    """
     boundary = '----QQPetCopilot' + uuid.uuid4().hex
     try:
         with open(image_path, 'rb') as f:
@@ -383,10 +572,17 @@ def _telegram_send_photo(token: str, chat_id: str, caption: str,
         return False, f'读取截图失败 {e}'
     ctype = mimetypes.guess_type(image_path)[0] or 'image/png'
     name = os.path.basename(image_path)
-    # caption 上限 1024 字符，超了截断（避免整条发送失败）
+    # caption 上限 1024 字符，超了截断（避免整条发送失败）。
+    # 带 HTML 时截断同样可能砍断 <pre>，标签不配平会被 TG 400 拒收整张图，
+    # 所以顺手把收尾标签补上（与 _fit_telegram 同一套做法）。
     cap = caption if len(caption) <= 1000 else caption[:1000] + '…'
+    cap = _balance_pre(cap)
     parts = []
-    for k, v in (('chat_id', chat_id), ('caption', cap)):
+    fields = [('chat_id', chat_id)]
+    if html:
+        fields.append(('parse_mode', 'HTML'))
+    fields.append(('caption', cap))
+    for k, v in fields:
         parts.append(f'--{boundary}\r\n'.encode())
         parts.append(f'Content-Disposition: form-data; name="{k}"\r\n\r\n'.encode())
         parts.append(v.encode('utf-8') + b'\r\n')
@@ -451,8 +647,8 @@ def _send_windows_toast(reason: str, image_path: str | None = None, *,
         icon = ''
     try:
         toast = Notification(
-            app_id='QQPetCopilot', title=title, msg=str(reason), duration='long',
-            **({'icon': icon} if icon else {}),
+            app_id='QQPetCopilot', title=_fallback_title(title), msg=str(reason),
+            duration='long', **({'icon': icon} if icon else {}),
         )
         toast.show()
         log('告警通知: Windows Toast 推送成功')
@@ -462,10 +658,21 @@ def _send_windows_toast(reason: str, image_path: str | None = None, *,
         return False
 
 
+def _fallback_title(title: str) -> str:
+    """桌面通知的标题兜底。
+
+    桌面通知的标题是**系统级独立字段**（不像消息正文可以靠首行自报家门），
+    空标题会让通知栏里那一条没有名字、分不清来源 —— 所以空的时候回落到
+    通用名（冒险日报已改为不带标题前缀，就是这条路）。
+    """
+    return str(title or '').strip() or TITLE
+
+
 def _send_mac_toast(reason: str, *, title: str = TITLE) -> bool:
     """发送 macOS 桌面通知（osascript display notification）。"""
     if sys.platform != 'darwin':
         return False
+    title = _fallback_title(title)
     try:
         def escape(value):
             return str(value).replace('\\', '\\\\').replace('"', '\\"').replace('\n', ' ').replace('\r', ' ')
@@ -514,7 +721,7 @@ def _send_onepush(config_text: str, reason: str, image_path: str | None = None, 
     try:
         notifier = get_notifier(provider)
         payload: dict = dict(cfg)
-        payload['title'] = title
+        payload['title'] = _fallback_title(title)   # 空标题回落到通用名（同上）
         payload['content'] = str(reason)
         if image_path and os.path.exists(image_path):
             payload['image_path'] = image_path
