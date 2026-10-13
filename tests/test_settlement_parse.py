@@ -135,5 +135,58 @@ class TestRobustness:
             'credits', 'attrs', 'course', 'grade', 'coins', 'tired',
             'workpoints', 'job', 'job_duration', 'pay_detail',
             'pet', 'owner', 'note', 'ad_coins',
+            'hired_pet', 'hired_owner', 'hired_by', 'hired_by_owner',
         }
         assert expected <= set(r), f'缺少键：{expected - set(r)}'
+
+
+class TestHiredPet:
+    """打工总结里的雇佣对象。
+
+    **两种句式语义相反**，实测 102 条打工记录里正向 83 条、反向 4 条，互斥无冲突，
+    合计恰好等于"有雇佣加成"的 87 条 —— 解析正确性直接拿这个判据校验。
+    """
+
+    def test_i_hired_someone(self):
+        r = parse_session_reward('work', [
+            '打工总结', '我雇佣了张二狗（主人：柠檬）。TA的主人居然完全没发现！'])
+        assert r['hired_pet'] == '张二狗' and r['hired_owner'] == '柠檬'
+        assert r['hired_by'] == ''          # 反向字段不能同时被填
+
+    def test_i_was_hired_by_someone(self):
+        """「我被X雇佣了」= 加成被对方拿走，方向必须与正向区分开。"""
+        r = parse_session_reward('work', [
+            '打工总结', '我被张二狗（主人：柠檬）雇佣了。画收尾的时候…'])
+        assert r['hired_by'] == '张二狗' and r['hired_by_owner'] == '柠檬'
+        assert r['hired_pet'] == ''
+
+    def test_owner_name_split_across_ocr_lines(self):
+        """主人名被 OCR 断行劈成两半时仍要能拼回来（实测踩过）。
+
+        原文：`我雇佣了莫须有（主人：放肆的青春诠释了悲` + `伤）。TA的主人…`
+        """
+        r = parse_session_reward('work', [
+            '打工总结',
+            '我雇佣了莫须有（主人：放肆的青春诠释了悲',
+            '伤）。TA的主人居然完全没发现！我拿走了更多',
+            '的分成增益。'])
+        assert r['hired_pet'] == '莫须有'
+        assert r['hired_owner'] == '放肆的青春诠释了悲伤'
+
+    def test_owner_name_with_trailing_symbol_is_kept(self):
+        """主人名带非结构符号（实测「喵帕斯~」）不能截断。"""
+        r = parse_session_reward('work', ['打工总结', '我雇佣了杨小喵（主人：喵帕斯~）。'])
+        assert r['hired_pet'] == '杨小喵' and r['hired_owner'] == '喵帕斯~'
+
+    def test_no_hire_text_leaves_fields_empty(self):
+        """没雇人时留空 —— 不能凭空认一个名字出来。"""
+        r = parse_session_reward('work', [
+            '工资明细', '武馆教学助理(10分钟)', '金币+28', '本金22，雇佣加成',
+            '打工总结', '我一个人把活干完了。'])
+        assert r['hired_pet'] == '' and r['hired_by'] == ''
+
+    def test_school_page_does_not_parse_hire_fields(self):
+        """学习页不碰这几个字段（两页若出现同形文案也不该互相污染）。"""
+        r = parse_session_reward('school', [
+            '宠物成绩单', '教师评语', '我雇佣了张二狗（主人：柠檬）。'])
+        assert r['hired_pet'] == '' and r['hired_by'] == ''

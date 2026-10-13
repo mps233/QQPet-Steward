@@ -104,6 +104,15 @@ _REWARD_OWNER_RE = re.compile(_LEAD_JUNK + r'主人\s*[:：]?\s*(\S.*)$')
 # "小提示"那段说明（疲惫等原因）的终止锚点：撞到已知标题就不再往下吃
 _REWARD_NOTE_STOP = ('教师评语', '打工总结', '分享', '继续学习', '继续打工', '继续冒险',
                      '宠物成绩单', '工资明细', '小提示')
+# 打工总结里的雇佣对象。**两种句式语义相反，必须分开**（实测 102 条打工记录：
+# 正向 83 条、反向 4 条、互斥无冲突，合计恰好等于"有雇佣加成"的 87 条）：
+#   正向「我雇佣了张二狗（主人：柠檬）」= 我雇了别人，加成归我
+#   反向「我被张二狗（主人：柠檬）雇佣了」= 别人雇了我，加成被对方拿走
+# （反向的语境是「主人未及时赶到，加成部分被对方拿走了很多」）
+# 名字可能带非结构符号（实测有「喵帕斯~」），所以只排除结构符；
+# 主人名实测有「四月南檐上雨」这类长名，给到 20 字符。
+_REWARD_HIRE_RE = re.compile(
+    r'我(雇佣了|被)([^（）()，。！？!?]{1,12})[（(]\s*主人\s*[:：]\s*([^）)]{1,20})[）)]')
 # 结算页固定标题词：定位宠物名时不能把它们当成昵称
 _REWARD_TITLE_WORDS = ('成绩', '宠物成绩单', '工资明细', '打工总结', '教师评语',
                        '小提示', '分享', '内容由AI生成')
@@ -118,8 +127,11 @@ def parse_session_reward(kind: str, texts) -> dict:
     打工结算页（"工资明细"+页面下方"打工总结"，实测 2026-09-27）：
         武馆教学助理(10分钟) / 大字 +28 / 本金22，雇佣加成6 / 限时补贴 /
         工分+3 / 金币+28 / 看视频+10 / 疲惫，收益减少 / 分享·继续打工
+        打工总结正文里另有**雇佣对象**：「我雇佣了张二狗（主人：柠檬）」
+        （正向，我雇了别人）或「我被张二狗（主人：柠檬）雇佣了」
+        （反向，别人雇了我、加成被对方拿走）。
       → 金币取**带"金币"标签的那个数**（页面上还有裸的 "+28" 和 "看视频+10"，
-        不能乱认数字）；工分另记；岗位名与档位、工资构成一起存下来。
+        不能乱认数字）；工分另记；岗位名与档位、工资构成、雇佣对象一起存下来。
 
     只认"能确定"的字段，认不出一律留空/None，不猜。
     """
@@ -127,7 +139,8 @@ def parse_session_reward(kind: str, texts) -> dict:
     out = {'credits': None, 'attrs': {}, 'course': '', 'grade': '',
            'coins': None, 'tired': False,
            'workpoints': None, 'job': '', 'job_duration': '', 'pay_detail': '',
-           'pet': '', 'owner': '', 'note': '', 'ad_coins': None}
+           'pet': '', 'owner': '', 'note': '', 'ad_coins': None,
+           'hired_pet': '', 'hired_owner': '', 'hired_by': '', 'hired_by_owner': ''}
     gi = next((i for i, t in enumerate(toks) if '成绩' in t), -1)
     for i, t in enumerate(toks):
         if not out['course']:
@@ -173,6 +186,15 @@ def parse_session_reward(kind: str, texts) -> dict:
             m = _REWARD_OWNER_RE.match(t)
             if m and 1 <= len(m.group(1).strip()) <= 16:
                 out['owner'] = m.group(1).strip()
+        # 雇佣对象（只在打工页解析；学习页没有这段文案）
+        if kind == 'work' and not out['hired_pet'] and not out['hired_by']:
+            m = _REWARD_HIRE_RE.search(t)
+            if m:
+                verb, who, owner = m.group(1), m.group(2).strip(), m.group(3).strip()
+                if verb == '雇佣了':                 # 我雇了别人
+                    out['hired_pet'], out['hired_owner'] = who, owner
+                else:                                # 我被别人雇了
+                    out['hired_by'], out['hired_by_owner'] = who, owner
         if '疲惫' in t or '收益减少' in t:
             out['tired'] = True
     # 成绩等级：只在"成绩"那一行附近取（单字母 token 满地都是，不能全屏乱认）。
@@ -209,6 +231,28 @@ def parse_session_reward(kind: str, texts) -> dict:
                         and re.fullmatch(r'[\w\u4e00-\u9fff·]+', s)):
                     out['pet'] = s
                     break
+    # 雇佣对象兜底：结算文案**会跨 token 断行**（OCR 按视觉行切分，实测
+    # 「我雇佣了莫须有（主人：放肆的青春诠释了悲」＋「伤）。…」把主人名劈成两半），
+    # 单 token 匹配会整条失配。所以按"打工总结"起点做**相邻 2~3 项窗口合并**再匹配，
+    # 命中即停。只在单 token 没命中时做（正常情况零成本）。
+    if kind == 'work' and not out['hired_pet'] and not out['hired_by']:
+        si = next((i for i, t in enumerate(toks) if '打工总结' in t), -1)
+        window = toks[si + 1:si + 11] if si >= 0 else toks
+        m = None
+        for i in range(len(window)):
+            for span in (2, 3):
+                joined = ''.join(window[i:i + span])
+                m = _REWARD_HIRE_RE.search(joined)
+                if m:
+                    break
+            if m:
+                break
+        if m:
+            verb, who, owner = m.group(1), m.group(2).strip(), m.group(3).strip()
+            if verb == '雇佣了':
+                out['hired_pet'], out['hired_owner'] = who, owner
+            else:
+                out['hired_by'], out['hired_by_owner'] = who, owner
     # 工资构成行兜底（只在具体词没命中时用）：认「标签+数字」整行，供服务端换标题时不至于全丢
     if kind == 'work' and not out['pay_detail']:
         for t in toks:
