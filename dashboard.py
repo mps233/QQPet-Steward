@@ -1175,6 +1175,7 @@ def editable_snapshot() -> dict:
     career = cfg.get('career') or {}
     notify = cfg.get('notify') or {}
     hf = cfg.get('hire_friend') or {}
+    tgbot = cfg.get('tgbot') or {}
     return {
         # 连接层：ADB 路径与设备序列号（设置页「连接手机」卡片；改完需重启调度器）
         'adb_path': str((cfg.get('adb') or {}).get('path') or ''),
@@ -1268,6 +1269,24 @@ def editable_snapshot() -> dict:
         'notify_quota_done': bool(notify.get('quota_done', True)),
         'notify_event_notify': bool(notify.get('event_notify', True)),
         'notify_error_notify': bool(notify.get('error_notify', True)),
+        # ---- TG 控制机器人（反向通道）----
+        # 凭据类（token / api_key）只回「是否已配置」，原值不回传（与通知页同一规则）。
+        'tgbot_enabled': bool(tgbot.get('enabled', False)),
+        'tgbot_token': '',
+        'tgbot_token_set': bool(str(tgbot.get('token') or '').strip()),
+        'tgbot_allowed_chats': str(tgbot.get('allowed_chats') or ''),
+        'tgbot_llm_enabled': bool(tgbot.get('llm_enabled', False)),
+        'tgbot_llm_base_url': str(tgbot.get('llm_base_url') or ''),
+        'tgbot_llm_model': str(tgbot.get('llm_model') or ''),
+        'tgbot_llm_api_key': '',
+        'tgbot_llm_api_key_set': bool(str(tgbot.get('llm_api_key') or '').strip()),
+        # 只读状态（设置页显示"线程在不在跑 / 最近一次错误 / 白名单几个人"）
+        'tgbot_running': bool(_tg_bot_status().get('running')),
+        'tgbot_last_error': str(_tg_bot_status().get('last_error') or ''),
+        'tgbot_allowed_count': _tg_bot_status().get('allowed', 0),
+        # 最近一次成功长轮询的时刻（"" = 从没成功过）。排查"线程在但收不到消息"。
+        'tgbot_last_ok': str(_tg_bot_status().get('last_ok') or ''),
+        'tgbot_handled': _tg_bot_status().get('handled', 0),
     }
 
 
@@ -1378,6 +1397,16 @@ def _apply_settings(updates: dict) -> dict:
         'notify_quota_done': ('notify.quota_done', 'bool'),
         'notify_event_notify': ('notify.event_notify', 'bool'),
         'notify_error_notify': ('notify.error_notify', 'bool'),
+        # ---- TG 控制机器人（反向通道）----
+        # token 留空 = 复用 notify.telegram_token；allowed_chats 留空 = 只认
+        # notify.telegram_chat_id（见 src/tg_bot.py 的 _resolve_token / _allowed_chats）。
+        'tgbot_enabled': ('tgbot.enabled', 'bool'),
+        'tgbot_token': ('tgbot.token', 'str'),
+        'tgbot_allowed_chats': ('tgbot.allowed_chats', 'str'),
+        'tgbot_llm_enabled': ('tgbot.llm_enabled', 'bool'),
+        'tgbot_llm_base_url': ('tgbot.llm_base_url', 'str'),
+        'tgbot_llm_model': ('tgbot.llm_model', 'str'),
+        'tgbot_llm_api_key': ('tgbot.llm_api_key', 'str'),
     }
     data = S.load_raw()
     applied, rejected = {}, []
@@ -1416,7 +1445,11 @@ def _apply_settings(updates: dict) -> dict:
         S.set_value(data, key, fixed)
         applied[field] = ('[configured]' if fixed else '') if field in (
             'notify_feishu_webhook', 'notify_feishu_secret', 'notify_feishu_access_token',
-            'notify_telegram_token', 'notify_telegram_chat_id') else fixed
+            'notify_telegram_token', 'notify_telegram_chat_id',
+            # TG 控制机器人：token 与模型 key 同样只回「已配置/已清空」，
+            # 否则 apply_settings 的返回值（以及 /api/settings 的响应体）会把
+            # 密钥原样回显一遍，等于把凭据写到日志和浏览器里。
+            'tgbot_token', 'tgbot_llm_api_key') else fixed
     if applied:
         S.save_raw(data)
     return {'ok': not rejected, 'applied': applied, 'rejected': rejected}
@@ -1431,6 +1464,138 @@ def _adb_settings() -> tuple[str, str]:
         return '', ''
     adb_cfg = cfg.get('adb') or {}
     return str(adb_cfg.get('path') or ''), str(adb_cfg.get('device_serial') or '')
+
+
+def _tg_bot_status() -> dict:
+    """TG 控制机器人线程状态（模块没起来/导入失败都返回空壳，绝不让页面挂掉）。"""
+    try:
+        from src import tg_bot
+        return tg_bot.status()
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _tg_logs(n: int) -> list[str]:
+    """最近 n 行日志（今天没有就翻到上一个有内容的日志文件）。"""
+    p = today_log_path()
+    return tail_lines(p, n) if p else []
+
+
+def _tg_status() -> dict:
+    """给机器人看的运行摘要：复用 /api/data 的那几个构件，但不做全量聚合
+    （build_data 会读截图列表、友邻列表等，机器人用不上，还慢）。"""
+    return {
+        'scheduler': scheduler_info(),
+        'queue': read_json('queue_status.json'),
+        'config': config_summary(),
+        'today_duration': _tg_today_duration(),
+        'work_eta': _tg_work_eta(),
+        'last_line': (_tg_logs(1) or [''])[-1],
+        # 宠物属性与职业进度（力/智/魅、工分、金币门槛、解锁路线）。
+        # **不能漏**：用户问"我现在力量多少"时，机器人早先只能回"我看不到"——
+        # 因为它只被喂了设置项与调度状态，属性数据在 career_plan.json 里。
+        'attrs': _tg_attrs(),
+        'pet': _tg_pet_status(),
+    }
+
+
+def _tg_attrs() -> dict:
+    """力/智/魅 + 职业解锁进度（数据源与仪表盘「职业」页同源：career_plan.json）。"""
+    try:
+        d = plan_data()
+    except Exception:  # noqa: BLE001
+        return {}
+    values = d.get('values') or {}
+    return {
+        'force': values.get('力', 0),        # 力量
+        'intel': values.get('智', 0),        # 智力
+        'charm': values.get('魅', 0),        # 魅力
+        'total': d.get('total', 0),
+        'total_target': d.get('total_target', 0),
+        'workpoints': values.get('工分', 0),
+        'coins': values.get('金币', 0),
+        'gates': d.get('gates') or {},
+        'steps': (d.get('steps') or [])[:6],
+        'updated': d.get('updated', ''),
+    }
+
+
+def _tg_pet_status() -> dict:
+    """宠物当前状态环（体力/清洁/心情/金币/库存），数据源 runs/status_cache.json。"""
+    try:
+        cache = read_json('status_cache.json') or {}
+        info = (cache.get('accounts') or {}).get('default') or {}
+    except Exception:  # noqa: BLE001
+        return {}
+    keep = ('energy', 'clean', 'mood', 'coins', 'soap', 'cookie', 'name', 'updated')
+    return {k: info[k] for k in keep if k in info}
+
+
+def _tg_today_duration():
+    try:
+        import yaml
+        sched = (yaml.safe_load((BASE / 'config.yaml').read_text('utf-8')) or {}).get('schedule') or {}
+    except Exception:  # noqa: BLE001
+        sched = {}
+    p = today_log_path()
+    return today_duration(cross_day_log_lines(tail_lines(p, 400), p) if p else [],
+                          efficiency_tiers_of(sched))
+
+
+def _tg_work_eta():
+    p = today_log_path()
+    if not p:
+        return None
+    return work_eta(cross_day_log_lines(tail_lines(p, 400), p))
+
+
+def start_tg_bot() -> None:
+    """装配 Bridge 并启动轮询线程（失败只记日志，绝不影响仪表盘启动）。"""
+    try:
+        from src import tg_bot
+        from src.tg_bot import Bridge
+
+        def _scheduler_action(action: str) -> dict:
+            fn = {'start': scheduler_start, 'stop': scheduler_stop,
+                  'pause': scheduler_pause, 'resume': scheduler_resume}.get(action)
+            if fn is None:
+                return {'ok': False, 'msg': f'不支持的动作：{action}'}
+            return fn()
+
+        def _tg_apply(updates: dict) -> dict:
+            """TG 改配置走这里 —— **必须留审计**。
+
+            HTTP 那条路的审计写在 /api/settings 路由里（`audit('设置保存(来自 ip)')`），
+            而 TG 经 Bridge 直接调 apply_settings，不经过那个路由。不在这里补一笔，
+            聊天通道改了配置就查无实据 —— 出问题时没法回答"是谁、什么时候改的"。
+            """
+            result = apply_settings(updates)
+            audit(f'设置保存(来自 TG 机器人): 提交 {updates} '
+                  f'→ 生效 {result["applied"]}'
+                  + (f' 拒绝 {result["rejected"]}' if result['rejected'] else ''))
+            # 与 HTTP 路径一致：唤醒调度器立即重读配置，别等它 30s 轮询睡醒
+            if result.get('ok') and result.get('applied'):
+                try:
+                    write_text_atomic(RUNS / 'reload.signal', str(time.time()))
+                except OSError:
+                    pass
+            return result
+
+        bridge = Bridge(
+            settings_snapshot=editable_snapshot,
+            apply_settings=_tg_apply,
+            scheduler_info=scheduler_info,
+            scheduler_action=_scheduler_action,
+            status=_tg_status,
+            logs=_tg_logs,
+            log=audit,
+        )
+        worker = tg_bot.start(bridge)
+        st = worker.status() if worker else {}
+        audit(f'TG 控制机器人: 线程已起（enabled={st.get("enabled")} '
+              f'llm={st.get("llm_enabled")} 白名单={st.get("allowed")}）')
+    except Exception as e:  # noqa: BLE001
+        audit(f'TG 控制机器人启动失败（仪表盘继续运行）: {type(e).__name__}: {e}')
 
 
 def _resolve_adb(configured: str) -> tuple[str, str]:
@@ -2056,6 +2221,12 @@ def main():
           f'ppid={os.getppid()} argv={" ".join(sys.argv[1:]) or "-"}')
     print(f'QQ宠物托管仪表盘已启动: http://0.0.0.0:{port} (Ctrl+C 停止)', flush=True)
     print(f'首次访问需验证；访问码文件: {key_file}', flush=True)
+
+    # TG 控制机器人（反向通道）：后台长轮询。**必须在 serve_forever 之前起**，
+    # 否则第一次 /api/data 里 tgbot_running 会是 false（设置页显示"线程没跑"）。
+    # 没开开关 / 没配 token 时线程只睡不联网，见 src/tg_bot.py 的 Worker._run。
+    start_tg_bot()
+
 
     # 客户端的半截连接（刷新/切页/手机休眠断连）不该打堆栈刷屏——静音，交给下面统一记账
     def _quiet_conn_error(request, client_address):

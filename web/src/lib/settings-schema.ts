@@ -9,7 +9,11 @@
  * 切换分组；这边**只渲染当前组**，省掉一半 DOM。
  */
 
-export type FieldKind = 'bool' | 'int' | 'text' | 'select'
+/** `secret` = 凭据类输入（Token / API Key）：
+ *  **只写不回显** —— 后端 `editable_snapshot()` 只下发 `<key>_set`（bool），原值永不下发，
+ *  所以前端拿不到"当前值"，输入框始终是空的，留空 = 保持不变。渲染见 `SettingsPage`
+ *  的 `SecretControl`（占位提示 / 清除按钮 / 失焦保存）。 */
+export type FieldKind = 'bool' | 'int' | 'text' | 'select' | 'secret'
 
 export interface FieldDef {
   key: string
@@ -27,12 +31,19 @@ export interface FieldDef {
   /** 输入框宽度（u 单位，1u ≈ 视口宽/360）；不给则自适应 */
   w?: number
   unit?: string
+  /** 这一行**整行块级**（标签在上一行、输入框占满下一行）。
+   *  给长 URL / 长 Token 这类"一行塞不进 label 右边"的字段用：
+   *  `.form input[type=text]` 被 `max-width:58%` 和窄屏的 `52%` 两重夹着，
+   *  加上 .ctrl 与标签分掉的一半，实测 390 宽下只剩 81px，"https://…" 都显示不全。 */
+  wide?: boolean
 }
 
 export interface GroupDef {
   id: string
   title: string
   fields: FieldDef[]
+  /** 卡片下方的说明条目（渲染成 `.noterow` 的两列小字），用于"这一组到底是干什么的" */
+  notes?: { t: string; b: string }[]
 }
 
 /** 学习科目（后端 validate_field 的白名单） */
@@ -193,9 +204,30 @@ export const GROUPS: Record<string, GroupDef> = {
     title: '仪表盘访问码',
     fields: [],
   },
+  /** TG 机器人：Telegram 控制机器人（远程发指令改配置 / 看状态）。
+   *  字段名逐字对齐 `dashboard.py` 的 `apply_settings` 映射；两个凭据（Bot Token /
+   *  LLM API Key）用 `kind: 'secret'`，回填只拿得到 `*_set` 的布尔值。 */
+  tgbot: {
+    id: 'tgbot',
+    title: 'TG 机器人',
+    fields: [
+      { key: 'tgbot_enabled', label: '启用控制机器人', kind: 'bool', tip: '开 = 让 Telegram 机器人收指令；关 = 完全不响应消息（通知推送不受影响，那是「通知」页的事）' },
+      { key: 'tgbot_token', label: 'Bot Token', kind: 'secret', tip: '跟 @BotFather 发 /newbot 拿到的 Token（形如 123456789:AAE…）。只写入、不回显：留空保持不变，输入新值替换，点「清除已保存凭据」明确删除' },
+      { key: 'tgbot_allowed_chats', label: '允许操作的 chat id', kind: 'text', wide: true, placeholder: '逗号分隔，留空 = 只认通知里的 telegram_chat_id', tip: '只有这些 chat id 能发指令改配置，其它人发来一律忽略；留空则只认「通知」里配的 telegram_chat_id。多个用逗号分隔（群/频道是 -100 开头的负数）' },
+      { key: 'tgbot_llm_enabled', label: '自然语言解析', kind: 'bool', tip: '开 = 你说的话交给模型解析成要改的配置项（能听懂"把护理阈值调到 50"这种）；关 = 纯指令模式，只认固定命令' },
+      { key: 'tgbot_llm_base_url', label: 'LLM base_url', kind: 'text', wide: true, enabledWhen: 'tgbot_llm_enabled', placeholder: 'https://api.deepseek.com/v1', tip: 'OpenAI 兼容接口的 base_url，末尾要到 /v1 这一层（例：https://api.deepseek.com/v1）' },
+      { key: 'tgbot_llm_model', label: 'LLM 模型', kind: 'text', wide: true, enabledWhen: 'tgbot_llm_enabled', placeholder: 'deepseek-chat', tip: '模型名，要和上面的 base_url 属于同一家（例：deepseek-chat、gpt-4o-mini）' },
+      { key: 'tgbot_llm_api_key', label: 'LLM API Key', kind: 'secret', enabledWhen: 'tgbot_llm_enabled', tip: '上面那家服务的 API Key。只写入、不回显：留空保持不变，输入新值替换，点「清除已保存凭据」明确删除' },
+    ],
+    notes: [
+      { t: '谁能用', b: '只有「允许操作的 chat id」里的会话能改配置；留空时只认「通知 → Telegram Bot」里配的 Chat ID，等于"只有我自己那个会话"。' },
+      { t: '凭据', b: 'Bot Token 与 API Key 仅写入、不回传原值。留空保持不变，要删除就点「清除已保存凭据」。' },
+      { t: '模型', b: '关掉「自然语言解析」就是纯指令模式，不需要填 base_url / 模型 / 密钥。' },
+    ],
+  },
 }
 
-/** 一级菜单：4 个分区，共 17 个二级页（与 旧版 的 MENU 一致） */
+/** 一级菜单：4 个分区，共 16 个二级页（与 GROUPS 一一对应） */
 export const MENU: { section: string; items: { id: string; title: string }[] }[] = [
   {
     section: '核心任务',
@@ -229,6 +261,7 @@ export const MENU: { section: string; items: { id: string; title: string }[] }[]
     items: [
       { id: 'schedule', title: '调度' },
       { id: 'adb', title: '连接手机（ADB）' },
+      { id: 'tgbot', title: 'TG 机器人' },
       { id: 'access', title: '仪表盘访问码' },
     ],
   },

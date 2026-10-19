@@ -36,6 +36,10 @@ _PATCH_MODULES = (
     'src.notification_outbox',
     'src.daily_summary',
     'src.career_watch',
+    # TG 控制机器人的轮询游标 runs/tgbot_state.json —— 不重定向的话，
+    # 测试里的 Worker 会读到真实 bot 的 offset（看起来"没收到消息"），
+    # 更糟的是可能把它写坏。
+    'src.tg_bot',
 )
 
 

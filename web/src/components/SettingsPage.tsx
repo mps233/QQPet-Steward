@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { changeAccessKey, type AccessInfo } from '../api'
 import { GROUPS, MENU, resolveOpts, type FieldDef } from '../lib/settings-schema'
 import { FGroup, FRow, NoteRow, Switch } from './form'
@@ -10,35 +10,131 @@ const strOf = (ed: Record<string, unknown>, k: string): string => {
 }
 const boolOf = (ed: Record<string, unknown>, k: string): boolean => !!ed[k]
 
+/** 凭据输入（`kind: 'secret'`）：**只写不回显**。
+ *
+ *  后端 `editable_snapshot()` 对凭据只下发 `<key>_set`（bool），原值永不出后端，
+ *  所以这里没有"当前值"可回填 —— 输入框始终是空的，`draft` 只来自用户输入：
+ *  **留空 = 保持不变**（失焦不保存）、输入非空 = 失焦保存替换、
+ *  「清除已保存凭据」= 保存空串（唯一明确的删除入口）。
+ *  与 NotifyPage 的 CredentialInput 同一套语义（这里不跨文件 import 那个未导出的
+ *  组件，改成设置页自带一份，免得通知页的布局改动波及这边）。 */
+function SecretControl({
+  field,
+  configured,
+  disabled,
+  onSave,
+}: {
+  field: string
+  /** 后端 `editable[<field>_set]` */
+  configured: boolean
+  /** 依赖的开关没开（`enabledWhen`）时置灰 */
+  disabled: boolean
+  onSave: (u: Record<string, unknown>) => Promise<void>
+}) {
+  const [draft, setDraft] = useState('')
+  const [saving, setSaving] = useState(false)
+  /** 保存串行化：点「清除」时输入框会先 blur、blur 里若已有一份草稿也会触发保存，
+   *  两次保存并发的话，清空可能被"保存草稿"抢先写回去（点了清除却没清掉）。
+   *  排队执行 → 后点的「清除」一定是最后一次写。 */
+  const queue = useRef<Promise<void>>(Promise.resolve())
+  const save = (value: string) => {
+    const v = value.trim()   // Token 末尾的空格会让鉴权 401，且界面上完全看不出来
+    queue.current = queue.current.then(async () => {
+      setSaving(true)
+      try {
+        await onSave({ [field]: v })
+        // 原文本来就不会回显，留着只会让人以为"里面存的是这个"
+        setDraft((cur) => (cur.trim() === v ? '' : cur))
+      } catch {
+        // 失败原因由 App.saveOne 统一走 #torderToast；草稿保留，用户可以直接重试
+      } finally {
+        setSaving(false)
+      }
+    })
+    return queue.current
+  }
+  return (
+    <span style={{
+      flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column',
+      alignItems: 'flex-end', gap: 6,
+    }}>
+      <input
+        type="password"
+        value={draft}
+        disabled={disabled}
+        aria-label={field}
+        autoComplete="new-password"
+        placeholder={configured ? '已配置 · 留空保持不变，输入新值替换' : '未配置 · 输入后失焦即保存'}
+        // 自带样式、不并进 `.form input[type=text]` 那条公共规则：那边是右对齐灰字，
+        // 密码框右对齐会让"输入了什么"完全看不出来（通知页的凭据框是同一套值）
+        style={{
+          width: '100%', minWidth: 0, boxSizing: 'border-box',
+          border: '1px solid var(--line)', borderRadius: 'var(--r-sm)',
+          background: '#FFFDF8', color: '#1C1C1E', textAlign: 'left',
+          padding: '6px 8px', fontSize: 'calc(var(--u) * 12)',
+        }}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => { if (draft.trim()) void save(draft) }}
+        onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+      />
+      {configured && (
+        <button className="minibtn" type="button" disabled={disabled || saving}
+          onClick={() => void save('')}>清除已保存凭据</button>
+      )}
+    </span>
+  )
+}
+
 /** 单个字段的控件（按 kind 分派）。**改动即保存**，与 旧版 一致。 */
-function Field({ f, editable, onSave }: {
+function Field({ f, editable, onSave, on, onToggle, pending }: {
   f: FieldDef
   editable: Record<string, unknown>
   onSave: (u: Record<string, unknown>) => Promise<void>
+  /** 开关的**乐观值**（保存是异步的，拿服务端值会让开关"点一下弹回去"） */
+  on: (k: string) => boolean
+  onToggle: (k: string) => void
+  /** 正在保存的开关键：保存期间禁用，避免连点两下把值写反 */
+  pending: string[]
 }) {
   const [local, setLocal] = useState<string>(() => strOf(editable, f.key))
-  const [localBool, setLocalBool] = useState<boolean>(() => boolOf(editable, f.key))
+  const serverVal = strOf(editable, f.key)
   /** 依赖的开关没开 → 本项置灰不可改（如"等他空闲时"依赖"等TA空闲"：
-   *  没开"等TA空闲"，也就没有什么"等他空闲时干什么"可言） */
-  const locked = !!f.enabledWhen && !boolOf(editable, f.enabledWhen)
+   *  没开"等TA空闲"，也就没有什么"等他空闲时干什么"可言）。
+   *  **判断也走乐观值**：刚把开关点开的那一瞬间下面几项就该解禁，不用等下一轮轮询。 */
+  const locked = !!f.enabledWhen && !on(f.enabledWhen)
 
-  // 后端数据回来时同步（例如别处改了同一项）
+  // 后端数据回来时同步（例如别处改了同一项）。
+  // **不能每次轮询都无脑覆盖**：`/api/data` 每 6 秒给一个全新的 editable 对象，
+  // 按其身份做依赖会把正在输入框里打的字用服务端旧值冲掉。
+  // 只有"服务端值真的变了"才覆盖本地草稿。
+  const lastServer = useRef(serverVal)
   useEffect(() => {
-    setLocal(strOf(editable, f.key))
-    setLocalBool(boolOf(editable, f.key))
-  }, [editable, f.key])
+    if (lastServer.current === serverVal) return
+    lastServer.current = serverVal
+    setLocal(serverVal)
+  }, [serverVal])
 
   if (f.kind === 'bool') {
     return (
       <FRow k={f.label} tip={f.tip}>
         <Switch
-          on={localBool}
+          on={on(f.key)}
           title={f.tip}
-          onToggle={() => {
-            const next = !localBool
-            setLocalBool(next)
-            void onSave({ [f.key]: next })
-          }}
+          disabled={pending.includes(f.key)}
+          onToggle={() => onToggle(f.key)}
+        />
+      </FRow>
+    )
+  }
+
+  if (f.kind === 'secret') {
+    return (
+      <FRow k={f.label} tip={f.tip}>
+        <SecretControl
+          field={f.key}
+          configured={boolOf(editable, `${f.key}_set`)}
+          disabled={locked}
+          onSave={onSave}
         />
       </FRow>
     )
@@ -69,17 +165,25 @@ function Field({ f, editable, onSave }: {
 
   // int / text
   return (
-    <FRow k={f.label} tip={f.tip}>
-      <span className="ctrl">
+    <FRow k={f.label} tip={f.tip} block={f.wide}>
+      <span className="ctrl" style={f.wide ? { width: '100%' } : undefined}>
         <input
           type={f.kind === 'int' ? 'number' : 'text'}
           value={local}
           disabled={locked}
           placeholder={f.placeholder}
-          style={f.w ? { width: `calc(var(--u) * ${f.w})` } : undefined}
+          style={
+            f.wide
+              // 整行模式：`max-width:58%` / 窄屏 `52%` 那两条规则会把它压回半行，
+              // 单行样式里必须一起覆盖掉，width:100% 才真的满宽。
+              ? { width: '100%', maxWidth: '100%', textAlign: 'left' }
+              : f.w
+                ? { width: `calc(var(--u) * ${f.w})` }
+                : undefined
+          }
           onChange={(e) => setLocal(e.target.value)}
           onBlur={() => {
-            if (local !== strOf(editable, f.key)) void onSave({ [f.key]: local })
+            if (local !== serverVal) void onSave({ [f.key]: local })
           }}
           onKeyDown={(e) => {
             if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
@@ -186,7 +290,38 @@ function AccessKeyPanel({ access }: { access?: AccessInfo }) {
   )
 }
 
-/** 设置页：一级菜单（4 个分区 / 17 个二级页）→ 二级表单。
+/** TG 机器人的**只读状态**（后端 `editable_snapshot()` 里那三个 `tgbot_*` 状态位）。
+ *
+ *  没有这块的话，开关打开后完全看不出后台线程到底起没起、白名单生效了几个人——
+ *  用户只能去翻日志。三个字段都只读、不参与保存。
+ *  注意 `editable` 是 `Record<string, unknown>`，取不到时按"未知"显示而不是伪造 false。 */
+function TgbotStatus({ editable }: { editable: Record<string, unknown> }) {
+  const has = (k: string) => k in editable
+  const running = has('tgbot_running') ? boolOf(editable, 'tgbot_running') : null
+  const err = strOf(editable, 'tgbot_last_error')
+  const allowed = typeof editable.tgbot_allowed_count === 'number'
+    ? (editable.tgbot_allowed_count as number) : null
+  const sub = { color: 'var(--sub)', fontSize: 'calc(var(--u) * 12)' }
+  return (
+    <>
+      <FRow k="运行状态" tip="后台长轮询线程是否真的起来了（没配 Token、或开关没开时都不会起）">
+        <span style={sub}>
+          {running === null ? '—' : running ? '轮询中' : '未运行'}
+        </span>
+      </FRow>
+      <FRow k="可操作会话" tip="按 current 生效的白名单算出来的会话数（allowed_chats 为空时来自通知里的 telegram_chat_id）">
+        <span style={sub}>{allowed === null ? '—' : `${allowed} 个`}</span>
+      </FRow>
+      {err ? (
+        <FRow k="最近错误" block>
+          <span style={{ ...sub, overflowWrap: 'anywhere' }}>{err}</span>
+        </FRow>
+      ) : null}
+    </>
+  )
+}
+
+/** 设置页：一级菜单（4 个分区 / 16 个二级页）→ 二级表单。
  *  旧版 是把所有字段渲染进 `#setForm` 再用 `.hide` 切组，这边**只渲染当前组**。
  *
  *  **grp 由 App 从 URL 派生后传进来**（不再在这里自持 state + replaceState）：
@@ -213,6 +348,39 @@ export function SettingsPage({
   onBackSub: () => void
 }) {
   const g = grp ? GROUPS[grp] : null
+
+  /** 开关的乐观值 + 保存锁（与 NotifyPage 同一套写法）：保存是异步的，
+   *  等下一轮 `/api/data` 回来才算数的话，开关会"点一下弹回去"。
+   *  `locks` 在保存期间挡住连点，保存结束就放行；`optimistic` 只保留
+   *  「仍在保存」或「与服务端值不一致」的项，服务端追上来自动消解。 */
+  const [optimistic, setOptimistic] = useState<Record<string, boolean>>({})
+  const [pending, setPending] = useState<string[]>([])
+  const locks = useRef(new Set<string>())
+  useEffect(() => {
+    setOptimistic((current) => Object.fromEntries(Object.entries(current)
+      .filter(([key, value]) => locks.current.has(key) || boolOf(editable, key) !== value)))
+  }, [editable, pending])
+
+  const on = (k: string) => optimistic[k] ?? boolOf(editable, k)
+  const onToggle = (k: string) => {
+    if (locks.current.has(k)) return
+    locks.current.add(k)
+    setPending([...locks.current])
+    const next = !on(k)
+    setOptimistic((s) => ({ ...s, [k]: next }))
+    // saveOne 失败时会 rethrow（并已在 toast 上显示原因）：这里把它撤掉，
+    // 让开关回落到服务端值，而不是停在"看起来改了其实没写进去"的假状态。
+    void onSave({ [k]: next }).catch(() => {
+      setOptimistic((s) => {
+        const copy = { ...s }
+        delete copy[k]
+        return copy
+      })
+    }).finally(() => {
+      locks.current.delete(k)
+      setPending([...locks.current])
+    })
+  }
 
   if (!g) {
     return (
@@ -255,8 +423,11 @@ export function SettingsPage({
         ) : (
           <FGroup title={g.title} id={g.id}>
             {g.fields.map((f) => (
-              <Field key={f.key} f={f} editable={editable} onSave={onSave} />
+              <Field key={f.key} f={f} editable={editable} onSave={onSave}
+                on={on} onToggle={onToggle} pending={pending} />
             ))}
+            {g.id === 'tgbot' && <TgbotStatus editable={editable} />}
+            {g.notes?.map((n) => <NoteRow key={n.t} t={n.t}>{n.b}</NoteRow>)}
           </FGroup>
         )}
       </div>

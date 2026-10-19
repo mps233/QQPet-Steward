@@ -103,6 +103,16 @@ DEFAULTS = {
     'notify.telegram_enabled': False,
     'notify.telegram_token': '',
     'notify.telegram_chat_id': '',
+    # ---- TG 控制机器人（反向通道：在 TG 里改设置 / 查状态 / 启停调度器）----
+    'tgbot.enabled': False,
+    'tgbot.token': '',
+    'tgbot.allowed_chats': '',
+    'tgbot.llm_enabled': False,
+    # OpenAI 兼容接口：不带 /chat/completions（src/tg_bot.py 自己拼）
+    'tgbot.llm_base_url': '',
+    'tgbot.llm_model': '',
+    'tgbot.llm_api_key': '',
+    'tgbot.llm_max_steps': 6,
     'notify.career_notify': True,
     # 完成类事件通知
     'notify.quota_done': True,
@@ -254,7 +264,8 @@ def validate_field(key: str, value):
             or key in ('career.watch', 'career.stop_study_on_unlock',
                        'notify.feishu_enabled', 'notify.telegram_enabled',
                        'notify.career_notify', 'notify.quota_done',
-                       'notify.event_notify', 'notify.error_notify'):
+                       'notify.event_notify', 'notify.error_notify',
+                       'tgbot.enabled', 'tgbot.llm_enabled'):
         return (True, value) if isinstance(value, bool) else (False, default)
     if key == 'notify.feishu_webhook':
         # 飞书群机器人 webhook：留空，或必须是 open.feishu.cn / open.larksuite.com 的 https 地址
@@ -272,6 +283,38 @@ def validate_field(key: str, value):
                'notify.telegram_token', 'notify.telegram_chat_id'):
         # 凭据类：去掉首尾空白即可（token 里可能含冒号，chat_id 可能是负数）
         return True, str(value).strip()
+    if key == 'tgbot.llm_base_url':
+        # 留空 = 不配自然语言；填了必须是 http(s) 地址。**容忍误带 /chat/completions 结尾**
+        # （用户从各家的示例里复制最容易带上它）——统一砍掉，代码里只拼一次。
+        text = str(value).strip().rstrip('/')
+        if not text:
+            return True, ''
+        from urllib.parse import urlparse
+        url = urlparse(text)
+        if not (url.scheme in ('http', 'https') and url.hostname):
+            return False, default
+        if text.endswith('/chat/completions'):
+            text = text[:-len('/chat/completions')].rstrip('/')
+        return True, text
+    if key in ('tgbot.token', 'tgbot.llm_api_key'):
+        # 凭据类：去掉首尾空白即可（token 里含冒号，不要做额外校验）
+        return True, str(value).strip()
+    if key == 'tgbot.llm_model':
+        return True, str(value).strip()
+    if key == 'tgbot.allowed_chats':
+        # 逗号/空白分隔的 chat id（私聊是正数、群是 -100 开头的负数），只做格式归一
+        import re as _re
+        parts = [p for p in _re.split(r'[,，;；\s]+', str(value)) if p]
+        for p in parts:
+            if not _re.fullmatch(r'-?\d{3,}', p):
+                return False, default
+        return True, ','.join(parts)
+    if key == 'tgbot.llm_max_steps':
+        # 单轮工具调用上限：1..20（0 会让模型一步都走不了）
+        try:
+            return (True, value) if 1 <= int(value) <= 20 else (False, default)
+        except (TypeError, ValueError):
+            return False, default
     if key == 'notify.onepush_config':
         # OnePush 推送配置（YAML，支持多行）：留空，或能解析出含 provider 的字典
         text = str(value).strip()

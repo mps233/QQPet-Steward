@@ -319,3 +319,29 @@ notify:
   career_notify: true
   # 异常降级提醒（如同类错误 30 分钟一条）
   error_notify: true
+# ---- TG 控制机器人（反向通道）----
+# 与上面的 notify 段不同：notify 是"程序 → 你"的单向推送，这里是双向 ——
+# 你在 Telegram 里发指令，改设置 / 查状态 / 启停调度器。
+# 后台线程由仪表盘启动（dashboard.py），随仪表盘进程存活；改完配置下一轮生效，不用重启仪表盘。
+# 指令：/help  /set 字段 值  /get [字段]  /status  /log [N]  /run  /halt  /pause  /resume
+tgbot:
+  # 总开关：关掉不轮询（后台线程只睡不联网），已有的 Telegram 推送不受影响
+  enabled: false
+  # 机器人 token。留空 = 复用上面 notify.telegram_token（同一个 bot 既能通知又能控制）
+  token: ""
+  # 允许操作的 chat id，逗号分隔（私聊是正数，群是 -100 开头的负数）。
+  # **留空则只认上面的 notify.telegram_chat_id**。非白名单 chat 发来一律静默忽略 ——
+  # token 一旦泄露，这里是唯一闸门，建议显式填上。
+  allowed_chats: ""
+  # ---- 自然语言层（OpenAI 兼容接口：DeepSeek / 智谱 / 通义 / OpenRouter / 本地 ollama 都通用）----
+  # 关掉 = 纯指令模式，零模型请求、零成本；打开后自由文本交给模型解析成同一批指令
+  llm_enabled: false
+  # 形如 https://api.deepseek.com/v1 —— **不要**带 /chat/completions（程序自己拼；
+  # 顺手带上也行，会被自动去掉）
+  llm_base_url: ""
+  # 模型名，如 deepseek-chat / gpt-4o-mini / qwen-plus
+  llm_model: ""
+  llm_api_key: ""
+  # 单轮最多调几次工具（防模型绕圈烧钱），1~20
+  llm_max_steps: 6
+

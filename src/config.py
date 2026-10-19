@@ -411,6 +411,37 @@ class NotifyConfig:
 
 
 @dataclass
+class TgBotConfig:
+    """Telegram 控制机器人（反向通道：不在电脑前也能改设置、查状态、启停调度器）。
+
+    **与 notify 段的区别**：notify 是单向推送（程序往外发）；这里是双向 ——
+    仪表盘起一个后台线程长轮询 `getUpdates`，把收到的指令解析成对 config.yaml
+    的改动、状态查询与调度器操作。指令确定性执行；自由文本可交给 OpenAI 兼容
+    接口的模型做 tool calling（`llm_enabled` 开关，关掉则纯指令模式、零模型请求）。
+
+    没配 token 且 notify.telegram_token 也为空时，整个模块不启动、不发任何请求。
+    """
+
+    # 总开关：关掉后不轮询（后台线程不启动），已有的 TG 推送不受影响
+    enabled: bool = False
+    # 机器人 token。留空则复用 notify.telegram_token（同一个 bot 既能通知又能控制）
+    token: str = ""
+    # 允许操作的 chat id，逗号分隔。**留空则只认 notify.telegram_chat_id**。
+    # 非白名单 chat 发来的一律静默忽略：token 泄露时这是唯一闸门。
+    allowed_chats: str = ""
+    # ---- 自然语言层（OpenAI 兼容接口）----
+    # 关掉 = 纯指令模式（/set /get /status /start ...），不发任何模型请求
+    llm_enabled: bool = False
+    # 形如 https://api.deepseek.com/v1 —— **不带** /chat/completions，代码自己拼
+    llm_base_url: str = ""
+    # 模型名，如 deepseek-chat / gpt-4o-mini / qwen-plus
+    llm_model: str = ""
+    llm_api_key: str = ""
+    # 单轮工具调用上限：模型可能连续调多个工具，超了强制收尾（防死循环烧钱）
+    llm_max_steps: int = 6
+
+
+@dataclass
 class GuiConfig:
     # 界面主题：跟随系统 / 深色 / 浅色（仅 GUI 用，调度器不读）
     theme: str = "跟随系统"
@@ -440,6 +471,7 @@ class Config:
     tasks: TasksConfig = field(default_factory=TasksConfig)
     recover: RecoverConfig = field(default_factory=RecoverConfig)
     notify: NotifyConfig = field(default_factory=NotifyConfig)
+    tgbot: TgBotConfig = field(default_factory=TgBotConfig)
 
 
 def find_adb(configured_path: str = "") -> str:
@@ -545,6 +577,8 @@ def load_config(config_path: str | Path | None = None) -> Config:
         tasks=tasks,
         recover=RecoverConfig(**raw.get("recover", {})),
         notify=NotifyConfig(**raw.get("notify", {})),
+        tgbot=TgBotConfig(**{k: v for k, v in (raw.get("tgbot", {}) or {}).items()
+                             if k in TgBotConfig.__dataclass_fields__}),
     )
 
 
