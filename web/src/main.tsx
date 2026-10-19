@@ -7,6 +7,8 @@ import { installStageUnit } from './lib/stage'
 import './styles/app.css'
 // 总览页 V2（正常流布局，独立命名空间 v2-*，不覆盖也不依赖 app.css 的规则）
 import './styles/overview-v2.css'
+// 职业树（官方逐像素复刻，独立命名空间 .ct-*）
+import './styles/career-tree.css'
 
 installStageUnit()
 

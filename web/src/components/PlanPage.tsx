@@ -1,264 +1,48 @@
-import { useEffect, useRef, useState } from 'react'
-import { fetchPlan, savePlan, syncPlan } from '../api'
+import { fetchPlan } from '../api'
 import { usePoll } from '../lib/usePoll'
-
-/** 一条进度条（`.pb > .t + .bar > i`），与 旧版 的 planBar 一致 */
-function PlanBar({ t, c, tg, col }: { t: string; c: number; tg: number; col: string }) {
-  const w = tg ? Math.max(0, Math.min(100, (c / tg) * 100)) : 0
-  return (
-    <div className="pb">
-      <div className="t">
-        <span>{t}</span>
-        <span>
-          {c} / {tg}
-        </span>
-      </div>
-      <div className="bar">
-        <i style={{ width: `${w.toFixed(1)}%`, background: col }} />
-      </div>
-    </div>
-  )
-}
+import { CareerTree } from './CareerTree'
+import type { Trio } from '../lib/career-tree'
 
 const numOf = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
 const boolOf = (v: unknown): boolean => !!v
 
-/** 职业解锁计划页：进度条 / 阶梯路线 / 8 线状态 / 哨兵 / 进度录入 */
+/**
+ * 职业树页（原「职业解锁计划」）。
+ *
+ * **页面只有职业树本体** —— 照官方 360dp 画布逐像素复刻，规格见
+ * `docs/CAREER-TREE-OFFICIAL.md`。
+ *
+ * 原先这里还挂着「职业数据」折叠区（进度条 / 隐蔽哨兵 / 进度录入 / 阶梯路线 / 8 线状态），
+ * 2026-10-19 用户要求整块删掉、准备重做。备份在
+ * `backup/career-data-section-<日期>/`（含 PlanPage.tsx / CareerTree.tsx / career-tree.* /
+ * dashboard.py / src/career_watch.py，以及 runs 数据快照）。
+ *
+ * **数据链没动**：后端 `/api/plan` 照旧返回 `lines` / `steps` / `watch`，
+ * 职业树的三态（彩色 / 带锁彩色 / 纯灰）靠哨兵逐格实测的 `tree_tiers`。
+ * 只是前端不再渲染那五块。
+ */
 export function PlanPage() {
-  const [msg, setMsg] = useState('')
-  /** 手工录入框里的值（用户正在改时不让轮询覆盖） */
-  const [edit, setEdit] = useState<Record<string, string | boolean>>({})
-  const [dirty, setDirty] = useState(false)
-  const [busy, setBusy] = useState('')
+  // 20 秒轮询：哨兵每次检查完会更新 tiers，前端跟着刷新
+  const { data: d, error: err } = usePoll(fetchPlan, 20000)
 
-  // 20 秒轮询；保存 / 识别完成后手动 reload（不等下一轮）
-  const { data: d, error: err, reload } = usePoll(fetchPlan, 20000)
-
-  // `dirty` 用 ref 读：**只有服务端数据变了才回填**，否则保存后 setDirty(false)
-  // 会立刻用旧数据把用户刚填的值盖回去（一闪）
-  const dirtyRef = useRef(dirty)
-  dirtyRef.current = dirty
-  useEffect(() => {
-    if (!d || dirtyRef.current) return
-    setEdit({
-      '力': String(numOf(d.values['力'])),
-      '智': String(numOf(d.values['智'])),
-      '魅': String(numOf(d.values['魅'])),
-      '工分': String(numOf(d.values['工分'])),
-      '金币': String(numOf(d.values['金币'])),
-      '初级毕业': boolOf(d.values['初级毕业']),
-      '中级毕业': boolOf(d.values['中级毕业']),
-    })
-  }, [d])
-
-  if (err) return <div className="empty">读取职业计划失败：{err}</div>
+  if (err) return <div className="empty">读取职业树失败：{err}</div>
   if (!d) return <div className="empty">加载中…</div>
 
-  const w = d.watch
-  const evs = [...(w.events || [])].reverse()
-  let firstOpen = false
-
-  const doSave = async () => {
-    setBusy('save')
-    try {
-      const r = await savePlan({
-        ...edit,
-        '力': numOf(Number(edit['力'])),
-        '智': numOf(Number(edit['智'])),
-        '魅': numOf(Number(edit['魅'])),
-        '工分': numOf(Number(edit['工分'])),
-        '金币': numOf(Number(edit['金币'])),
-      })
-      setMsg(r.ok ? '已保存' : `保存失败：${r.msg || ''}`)
-      setDirty(false)
-      reload() // 拉回服务端认过的值（保存后回填的唯一路径）
-    } catch (e) {
-      setMsg(`保存失败：${String(e)}`)
-    } finally {
-      setBusy('')
-    }
-  }
-
-  const doSync = async () => {
-    setBusy('sync')
-    setMsg('识别中…（会操控手机出门，稍等）')
-    try {
-      const r = await syncPlan()
-      setMsg(r.ok ? `识别完成：${r.msg || ''}` : `识别失败：${r.msg || ''}`)
-      if (r.ok) reload() // 识别到的数值立刻回填，不等下一个 20 秒轮询
-    } catch (e) {
-      setMsg(`识别失败：${String(e)}`)
-    } finally {
-      setBusy('')
-    }
-  }
-
-  const setOne = (k: string, v: string | boolean) => {
-    setEdit((s) => ({ ...s, [k]: v }))
-    setDirty(true)
+  const attrs: Trio = [numOf(d.values['力']), numOf(d.values['智']), numOf(d.values['魅'])]
+  const gates = {
+    points: numOf(d.values['工分']),
+    coins: numOf(d.values['金币']),
+    jrGrad: boolOf(d.values['初级毕业']),
+    midGrad: boolOf(d.values['中级毕业']),
   }
 
   return (
-    <>
-      {/* 节 1 · 属性总进度：总属性读数当卡外小标题，进度条进白卡 */}
-      <div className="pgsec">
-        <div className="pgsec-t" id="planMeta">
-          总属性 {d.total}/{d.total_target} · 更新 {d.updated || ''}
-        </div>
-        <div className="pgsec-c">
-          <div className="planbars" id="planBars">
-            <PlanBar t="属性总进度" c={d.total} tg={d.total_target} col="var(--accent)" />
-            <PlanBar t="见习解锁" c={d.jr_n} tg={8} col="#16a34a" />
-            <PlanBar t="初级解锁" c={d.ch_n} tg={8} col="#ea580c" />
-          </div>
-        </div>
-      </div>
-
-      {/* 节 2 · 隐藏职业哨兵 */}
-      <div className="pgsec">
-        <div className="pgsec-t">
-          隐藏职业哨兵{' '}
-          <span id="watchMeta" style={{ fontWeight: 400, fontSize: 10.5 }}>
-            {w.last_check ? `上次检查 ${String(w.last_check).slice(11, 16)}` : ''}
-          </span>
-        </div>
-        <div className="pgsec-c">
-          <div className="watchbox" id="watchBox">
-            <div className="wstate">
-              {!w.enabled
-                ? '监控已关闭（设置页「职业」区可开）'
-                : !w.alive
-                  ? '调度器未运行 — 启动后自动监控'
-                  : `监控中 · ${w.interval ? `每节课后 + 每 ${w.interval} 分钟兜底` : '每节课后'}${w.stop_study ? ' · 解锁后自动停学' : ' · 仅通知'}`}
-            </div>
-            {evs.length ? (
-              evs.map((e, i) => (
-                <div className="wrow" key={`${e.ts}-${i}`}>
-                  <span className="wbadge">
-                    🎉 {e.career || ''}（见习·{e.name || '?'}）
-                  </span>
-                  <span style={{ color: 'var(--sub)', fontSize: 11.5 }}>{String(e.ts || '').slice(5, 16)}</span>
-                </div>
-              ))
-            ) : (
-              <div className="wrow" style={{ color: 'var(--sub)' }}>
-                <span>尚未解锁（武术家 / 梦境旅人 / 大明星）</span>
-                <span />
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* 节 3 · 进度录入（保存/识别按钮与提示留在 `.pgsec` 外 —— 内页对
-          `> .btnrow2` / `> .saveMsg` 有直系子对齐规则，包进卡里会双重内缩） */}
-      <div className="pgsec">
-        <div className="pgsec-t">进度录入（新号的当前数值，改完点保存）</div>
-        <div className="pgsec-c">
-          <div className="plinedit" id="planEdit">
-            {(
-              [
-                ['力', '力量'],
-                ['智', '智力'],
-                ['魅', '魅力'],
-                ['工分', '工分'],
-                ['金币', '金币'],
-              ] as const
-            ).map(([k, label]) => (
-              <label key={k}>
-                {label}
-                <input
-                  type="number"
-                  min={0}
-                  value={String(edit[k] ?? 0)}
-                  onChange={(e) => setOne(k, e.target.value)}
-                />
-              </label>
-            ))}
-            <div className="planeditrow">
-              <span>学园：</span>
-              <button
-                type="button"
-                className={'sw' + (edit['初级毕业'] ? ' on' : '')}
-                onClick={() => setOne('初级毕业', !edit['初级毕业'])}
-              />
-              <span>初级毕业</span>
-              <button
-                type="button"
-                className={'sw' + (edit['中级毕业'] ? ' on' : '')}
-                onClick={() => setOne('中级毕业', !edit['中级毕业'])}
-              />
-              <span>中级毕业</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="btnrow2">
-        <button className="savebtn" disabled={!!busy} onClick={() => void doSave()}>
-          {busy === 'save' ? '保存中…' : '保存进度'}
-        </button>
-        <button className="savebtn ghost" disabled={!!busy} onClick={() => void doSync()}>
-          {busy === 'sync' ? '识别中…' : '🔄 自动识别'}
-        </button>
-      </div>
-      <div className="saveMsg" id="planMsg">
-        {msg}
-      </div>
-
-      {/* 节 4 · 阶梯路线（步骤表 + 概率说明同一张卡） */}
-      <div className="pgsec">
-        <div className="pgsec-t">阶梯路线</div>
-        <div className="pgsec-c">
-          <div className="plansteps" id="planSteps">
-            {(d.steps || []).map((s, i) => {
-              let cls = 'st'
-              let dot = '○'
-              if (s[2]) {
-                cls += ' done'
-                dot = '✅'
-              } else if (!firstOpen) {
-                cls += ' cur'
-                dot = '▶'
-                firstOpen = true
-              }
-              return (
-                <div className={cls} key={`${s[0]}-${i}`}>
-                  <span className="dot2">{dot}</span>
-                  <span className="tx">{`${s[0]} · ${s[1]}`}</span>
-                  <span className="pr">{s[3]}</span>
-                </div>
-              )
-            })}
-          </div>
-          <div className="plannote">
-            隐藏线解锁有概率性：数值达标只进入候选，实际以职业树实测为准（哨兵每节课后检测）。
-          </div>
-        </div>
-      </div>
-
-      {/* 节 5 · 8 线解锁状态 */}
-      <div className="pgsec">
-        <div className="pgsec-t">
-          8 线解锁状态（见习 / 初级）{' '}
-          <span id="planLinesMeta" style={{ fontWeight: 400, fontSize: 10.5 }}>
-            {d.lines_meta || ''}
-          </span>
-        </div>
-        <div className="pgsec-c">
-          <div className="planlines" id="planLines">
-            {(d.lines || []).map((l) => (
-              <div className="ln" key={l.name}>
-                <span>{l.name}</span>
-                <span>
-                  <span className={'chipx' + (l.jr ? ' ok' : '')}>见习</span>
-                  <span className={'chipx' + (l.ch ? ' ok' : '')}>初级</span>
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </>
+    <CareerTree
+      attrs={attrs}
+      treeLines={d.tree_lines ?? {}}
+      treeTiers={d.tree_tiers ?? {}}
+      equipped={d.equipped ?? null}
+      gates={gates}
+    />
   )
 }

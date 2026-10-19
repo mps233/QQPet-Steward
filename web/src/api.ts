@@ -353,6 +353,12 @@ export interface PlanData {
   gates: Record<string, boolean>
   updated: string
   watch: WatchInfo
+  /** 职业树页：8 线实测解锁记录（键名可能是「法师」）。见习一级的权威来源。 */
+  tree_lines?: Record<string, { unlocked?: boolean; name?: string; at?: string }>
+  /** 职业树页：逐级解锁记录 `{线: {层级序号: {...}}}`。哨兵目前只记见习，所以常为空。 */
+  tree_tiers?: Record<string, Record<string, { unlocked?: boolean; name?: string }>>
+  /** 职业树页：已展示（佩挂）的线与职业名 */
+  equipped?: { line: string; name: string } | null
 }
 
 export const fetchPlan = (): Promise<PlanData> => getJSON<PlanData>('/api/plan')

@@ -1635,6 +1635,13 @@ html[data-scene="store"]{--qp-room:var(--qp-room-store);--qp-statusbar:var(--qp-
    总览页露出房间暖色图是对的，但内页顶栏是白的，露出暖色就很突兀
    （真机 PWA 全屏实测：通知页顶部一条暖黄）。内页统一白底与顶栏衔接。 */
 html[data-page]:not([data-page="main"]){background-image:none;background-color:#fff}
+/* 职业树是整屏深棕页面：html 底色也跟着换。
+   否则 PWA 全屏时 body 的 padding-top 露出的是 html 底色（白），
+   职业树顶部就会白一条（用户实报）。
+   ⚠️ 特异性必须 ≥ 上面那条 `html[data-page]:not([data-page="main"])` 的 (0,2,1)
+   —— 裸的 `html[data-page="plan"]` 只有 (0,1,1)，会被压住（实测 htmlBg 仍为白）。
+   这里同样带一个 `:not()` 凑到 (0,2,1)，再靠后写胜出。 */
+html[data-page="plan"]:not([data-page="main"]){background-color:#5D4443}
 
 /* React 版的挂载点。旧版没有这一层（`.app` 直接挂在 `body` 下）。
    注意两种改法的区别：
@@ -1720,6 +1727,9 @@ section[data-page="set"] > h2{
    `section[data-page="set"]`）。这里一律用后代选择器。 */
 main section[data-page]:not([data-page="main"]){
   background:#F2F2F7;
+  /* 职业树页的 `.ct-page` 用 height:100% 继承这里的高度（内页不能按 100dvh 算，
+     否则会多出状态栏安全区那么多、整页可上下滑）。 */
+  height:100%;
   /* 高度用 100% 而不是 calc(100dvh - env(safe-area-inset-top))：body 已经有
      padding-top: safe-area-inset-top 了，再减一次会让内页比可用区矮、底部露出背景
      （.home 上踩过同样的坑）。父级 .page-slot 是 absolute + inset:0，高度确定，

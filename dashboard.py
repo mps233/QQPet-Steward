@@ -990,11 +990,26 @@ def plan_data() -> dict:
     total = sum(V)
     last_at = max((str((st or {}).get('at') or '') for st in tree_lines.values()), default='')
     lines_meta = f'职业树实测 · {last_at[5:16]}' if last_at else ''
+    # 逐级解锁记录（career_unlock.json 的 tiers 段）：
+    # 哨兵原先只记见习级（`lines`），而职业树页的初级/中级/高级需求游戏里没公开，
+    # 只能靠实测。哨兵改为逐级记录后从 `tiers[线][层级序号]` 读，没有就回空让前端
+    # 退回"需求未知=未解锁"。层级序号 0=见习 … 4=大师，与前端 TIERS 下标一致。
+    tiers_db = ud.get('tiers') if isinstance(ud, dict) else {}
+    if not isinstance(tiers_db, dict):
+        tiers_db = {}
+    # 已展示的路线（职业树上显示为黄牌 + 金连线）：哨兵没记就按主页面职业胶囊推——
+    # 主页面右上角那个职业图标是当前佩挂，但 OCR 拿不准，所以只认显式记录。
+    equipped = ud.get('equipped') if isinstance(ud, dict) else None
+    if not isinstance(equipped, dict):
+        equipped = None
     return {
         'ok': True, 'values': v, 'total': total, 'total_target': 2250,
         'jr_n': sum(1 for l in lines if l['jr']),
         'ch_n': sum(1 for l in lines if l['ch']),
         'lines': lines,
+        'tree_lines': tree_lines,          # 职业树页：8 线的实测解锁记录（含见习名）
+        'tree_tiers': tiers_db,            # 职业树页：逐级解锁记录（可能为空）
+        'equipped': equipped,              # 职业树页：已展示的线 + 职业名
         'steps': [[s[0], s[1], s[2], s[3]] for s in steps],
         'lines_meta': lines_meta,
         'gates': gates,

@@ -286,6 +286,13 @@ export default function App() {
     if (page === 'main') {
       const v = getComputedStyle(root).getPropertyValue('--qp-statusbar').trim()
       want = v || (dark ? '#A9722D' : '#D5A758') // CSS 变量读不到时的兜底
+    } else if (page === 'plan') {
+      // **职业树是整屏深棕页面**，状态栏那条带不能跟着内页白底 ——
+      // PWA 全屏时 body 的 padding-top 露出的是 html 底色，
+      // 而 html[data-page] 规则把所有内页设成 #fff，职业树顶部就会白一条
+      // （用户实报「手机上 PWA 顶部是白色的」）。
+      // 取职业树背景渐变的**顶部色** #5D4443（见 career-tree.css 的 --ct-bg-top）。
+      want = '#5D4443'
     }
     document.querySelectorAll('meta[name="theme-color"]').forEach((m) => {
       // 两组 meta 各带一个 media 查询，只改属于当前主题的那条 ——
@@ -449,9 +456,10 @@ export default function App() {
       )
     }
     if (p === 'plan') {
+      // 职业树自带官方样式的整屏头（返回圆钮 + 标题 + 属性胶囊 + 副标题），
+      // **不能再套 NavHead** —— 那会变成两条标题栏叠在一起。
       return (
         <section className="card" data-page="plan">
-          <NavHead title="职业解锁计划" onBack={() => go('main')} />
           <PlanPage />
         </section>
       )

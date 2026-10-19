@@ -1,0 +1,767 @@
+/* ==========================================================================
+   职业树（照官方 480dp 画布逐像素复刻）
+   --------------------------------------------------------------------------
+   规格来源：docs/CAREER-TREE-OFFICIAL.md —— 全部数值是真机截图**像素实测**
+   换算成 dp（设备 1080×2412 / density 2.25 → 480×1072 dp），不是目测。
+   本文件独立命名空间 `.ct-*`，**不覆盖也不依赖 app.css 的任何规则**，
+   只在 `.ct-page` 自己的作用域里生效（同 overview-v2.css 的做法）。
+
+   三个必须知道的结构事实：
+     1. 页面是**整屏深棕渐变**，不是内页的浅灰底 —— 所以这里要给
+        `section[data-page="plan"]` 单独铺底色（见文件末尾那条覆盖）。
+     2. 矩阵要**横向滑动**，但左侧「见习/初级/…」层级标签列**固定不动**，
+        顶部头（返回/标题/属性胶囊）也不动。
+     3. 单元格有**五种**状态（empty / placeholder / locked / unlocked / equipped），
+        `empty` 连六边形都不画、只有一条竖线穿过。别合并成一种灰格。
+   ========================================================================== */
+
+.ct-page {
+  /* 官方实测配色（截图像素采样，见规格文档第 1 节） */
+  --ct-bg-top: #5d4443;
+  --ct-bg-bot: #8a6860;
+  --ct-cap-bg: rgba(46, 32, 31, 0.62); /* 属性胶囊：压暗的深棕 */
+  --ct-plate: #553f3b; /* 名字牌深棕 */
+  --ct-plate-on: #fff04e; /* 已展示黄牌 */
+  --ct-line: #454545; /* 普通连线 */
+  --ct-line-on: #fff04e; /* 已展示金连线 */
+  --ct-dim: rgba(255, 255, 255, 0.45); /* 副标题 */
+  /* ---------- 尺寸基准（唯一数据源） ----------
+     三个**实测**变量由 JS 写进来（CareerTree 的 useCareerMetrics）：
+       --ct-col   列步进        原机 83.0 / 用户机 92.0
+       --ct-node  六边形盒边长   原机 57.0 / 用户机 60.7
+       --ct-row   行步进        原机 120.0 / 用户机 134.0
+     剩下的全部由这三个按**实测比例**推出来，不再各写一个 magic number。
+
+     比例出处（原机 360dp 一屏像素实测，见 docs/CAREER-TREE-OFFICIAL.md）：
+       名字牌宽 52 / col 83 = 0.6265   高 25.3 / col 83 = 0.3048
+       名字牌字 13 / col 83 = 0.1566   层级字 11 / col 83 = 0.1325
+       列头字 13 / col 83 = 0.1566     副标题 12 / col 83 = 0.1446
+       层级列宽 26 / col 83 = 0.3133   列头行高 26 / col 83 = 0.3133
+     兜底值取原机（JS 没跑起来时至少是原机样子）。 */
+  --ct-col: 83px;
+  --ct-node: 57px;
+  --ct-row: 120px;
+
+  --ct-plate-w: calc(var(--ct-col) * 0.6265);
+  /* 牌高：原机 25.3 / 83 = 0.3048；官方 420 屏实测 27.3 / 92 = 0.2967，取均值 */
+  --ct-plate-h: calc(var(--ct-col) * 0.3008);
+  --ct-gutter: calc(var(--ct-col) * 0.3133);   /* 左侧层级标签列宽 = 列头行高 */
+  /* 名字牌字号：原机每字 10.7 / 83 = 0.129；官方 420 屏每字 12 / 92 = 0.1304，取 0.1304 */
+  --ct-font-plate: calc(var(--ct-col) * 0.1304);
+  --ct-font-tier: calc(var(--ct-col) * 0.1325);
+  --ct-font-sub: calc(var(--ct-col) * 0.1446);
+
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(180deg, var(--ct-bg-top) 0%, var(--ct-bg-bot) 100%);
+  color: #fff;
+  /* 页面内容超出时由外层 .page-slot 滚；这里不需要自己撑更高 */
+}
+
+/* ---------- 顶部固定头 ---------- */
+.ct-head {
+  flex: none;
+  /* **顶部内边距（2026-10-19 重标定，原 0.297 太大）**
+   *
+   * 官方 420 真机截图（1260px / 3）实测，屏幕顶=0：
+   *   状态栏时间轴中心 38.3 ／ 返回圆盘顶 55.3、中心 86.0 ／ 标题字中心 142.2
+   * 我们的旧实现（0.297col = 27.3）跑出：返回钮中心 113.0、标题 179.0、首行图标 307.0
+   * → 头部整块低了 27~37pt，矩阵随之落到 307（官方 261.8），5 行 × 134 直接顶到屏底
+   *   （用户实报「我们的底部都触底了」，实测最后一行牌子底 911.7 / 屏高 912）。
+   *
+   * 官方是**贴着状态栏下沿**起算的：圆盘顶 55.3 ≈ 状态栏下沿(≈45) + 10。
+   * 职业树是整屏页（body 的 safe-area 已被下面的 `padding-top:0` 抵消），
+   * 所以这里只需要留「圆盘顶 − 行高起点」这一点点：0.06col（92×0.06 = 5.5），
+   * 加上 .ct-back 自身的 top:0 就能落到 55 附近。
+   * ⚠️ 别再写回 0.297：那会让整页白白少掉 ~20pt，底部必然触底。 */
+  padding: calc(var(--ct-col) * 0.06) 0 0;
+  text-align: center;
+}
+.ct-head-row {
+  position: relative;
+  /* 返回钮中心 41.8 → 行高要容下 38 直径的圆 */
+  height: calc(var(--ct-col) * 0.413);
+}
+/* 返回圆钮：82.7dp 直径，灰白底，橙色箭头 */
+.ct-back {
+  position: absolute;
+  left: calc(var(--ct-col) * 0.196);
+  top: 0;
+  width: calc(var(--ct-col) * 0.413);
+  height: calc(var(--ct-col) * 0.413);
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.92);
+  display: grid;
+  place-items: center;
+  padding: 0;
+  cursor: pointer;
+}
+.ct-back img {
+  width: calc(var(--ct-col) * 0.196);
+  height: calc(var(--ct-col) * 0.196);
+  display: block;
+}
+.ct-title {
+  position: absolute;
+  left: 0;
+  right: 0;
+  /* 标题与返回钮同一中线（官方两者中心都 ≈41.8） */
+  top: 50%;
+  transform: translateY(-50%);
+  margin: 0;
+  font-size: calc(var(--ct-col) * 0.185);   /* 17 / 92 */
+  font-weight: 600;
+  letter-spacing: 1px;
+  color: #fff;
+  pointer-events: none;
+}
+
+/* ---------- 属性条 ----------
+   ⚠️ **单位必须用「画布宽度百分比」，不能用 --ct-col**。
+   原因：官方原机 360 宽、一屏 4.34 列 → col=83；本页 420 宽、一屏 4.57 列 → col=92。
+   col 的比值只有 1.108，而画布比值是 1.167 —— **两者不等**，
+   用 col 归一会让属性条整体被压小 5%（实测胶囊/文字/图标都比官方小一圈）。
+
+   官方逐像素实测（1080 截图 / 3 = 360 画布 CSS），全部转成 360 的百分比：
+     三颗胶囊：19.17%~37.78%（宽 18.61%）/ 43.33%~61.47% / 67.31%~85.28%
+     胶囊高 4.167%   图标高 3.583%   文字高 2.861%
+     间隔 5.56% / 5.83%
+   —— 这也是**三个独立胶囊**（早先误做成了一整条连通长条）。 */
+.ct-attrs {
+  display: flex;
+  justify-content: flex-start;
+  gap: 2.2%;                                    /* 图标入内后收窄，保证三颗不出屏 */
+  align-items: center;
+  margin: 0.42em 0 0 15.5%;
+  padding: 0;
+}
+.ct-attr {
+  /* 胶囊本体：flex 容器，图标 + 文字按**正常文档流**排（图标不再绝对定位）。
+     图标用相对定位微调，父级是胶囊，所以 `relative` 的参照就是胶囊本身。 */
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  height: calc(100vw * 0.04167);                /* 胶囊高 15 / 360 */
+  padding: 0 calc(100vw * 0.0180) 0 calc(100vw * 0.0010);
+  gap: calc(100vw * 0.0130);                    /* 图标右缘 → 文字左缘 */
+  border-radius: calc(100vw * 0.02083);         /* 全圆角 = 高/2 */
+  background: var(--ct-cap-bg);
+  white-space: nowrap;
+}
+/* 图标：**相对定位**在胶囊内左侧（用户要求），比胶囊略高、上下各探出一点，
+   视觉上更像「嵌在胶囊左端」。 */
+.ct-attr-ico {
+  position: relative;
+  left: 0;
+  top: 0;
+  flex: none;
+  height: calc(100vw * 0.0524);                 /* 约胶囊高的 1.26 倍，上下各探出一点 */
+  width: calc(100vw * 0.0524);
+  object-fit: contain;
+}
+.ct-attr b {
+  font-weight: 600;
+  color: #fff;
+  /* 字号比上一版小一档：0.0376 → 0.0330（用户要求「字体小一点点」） */
+  font-size: calc(100vw * 0.0300);
+  line-height: 1;
+  letter-spacing: 0;
+  margin-right: calc(100vw * 0.0040);           /* 标签→数字收紧（官方 3.6/360，实测偏松） */
+}
+.ct-attr i {
+  font-style: normal;
+  font-weight: 700;
+  color: #fff;
+  font-size: calc(100vw * 0.0300);
+  line-height: 1;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.ct-sub {
+  /* 官方 420：副标题中心 158.2，属性条中心 114 → 间隔 44 */
+  margin: calc(var(--ct-col) * 0.26) 12px calc(var(--ct-col) * 0.24);
+  font-size: var(--ct-font-sub);
+  color: var(--ct-dim);
+  text-align: center;
+}
+
+/* ---------- 矩阵滚动区 ----------
+   **.ct-scroll 必须留在正常流里**（不能 absolute inset:0）：
+   .ct-body 是 flex 子项、高度由内容决定，一旦子元素全绝对定位，父级内容高度就是 0，
+   整块矩阵会塌成 0 高、只剩顶部头和下方数据区（第一次跑就踩到了）。
+   纵向滚动交给外层 .page-slot，这里只管横向。 */
+.ct-body {
+  position: relative;
+  flex: 1 0 auto;
+  /* **左右并排**：左侧层级标签列是独立的 flex 子项，不在滚动容器里 ——
+     这样横滑时标签不动、图标滑到它右侧边界就被**裁切**（官方就是这个效果）。
+     早先把标签列 absolute 覆盖在滚动区上 + 加渐变遮罩，结果左边缘出现阴影带。 */
+  display: flex;
+  align-items: stretch;
+  /* 高度被 ct-page 锁住后，ct-body 必须**可压缩**（flex:1 + min-height:0），
+     否则内容高度 731 会把父级撑破、又出现纵向滚动条。 */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+/* 横滑容器。**左侧层级列不在这个滚动容器里** —— 它单独绝对定位覆盖在左边，
+   这样横滑时「见习/初级/…」不动（官方就是这样）。 */
+.ct-scroll {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;              /* flex 子项里必须，否则内容会把容器撑开不滚 */
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.ct-scroll::-webkit-scrollbar {
+  display: none;
+}
+.ct-grid {
+  display: flex;
+  align-items: flex-start;
+  padding: 0 0 16px 0;
+  width: max-content;
+}
+
+/* 每条线一列 */
+.ct-line {
+  width: var(--ct-col);
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.ct-linehead {
+  /* 实测列头文字 cy=174dp、字高 11.7dp */
+  /* 官方 420：列头中心 210，见习图标中心 262 → 列头行高 = 262 - 210 - 半图标(30) ≈ 22 */
+  /* **官方实测 0.254（原 0.34）**：层级标签中心 279.2 − 首行图标中心 261.8 = 17.4，
+     行步进 134 → 等效列头行高 34.0 / 134 = 0.254。
+     原来写 0.34（45.5）把整块矩阵多推低 11.5pt，与「底部触底」是同一个根源。
+     改这里必须同步 CareerTree.tsx 的 LINEHEAD_RATIO（JS 算可用高度要用）。 */
+  height: calc(var(--ct-row) * 0.254);
+  display: grid;
+  place-items: center;
+  font-size: var(--ct-font-plate);
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+}
+
+/* 单元格：行高固定 160dp，内容从「图标顶」开始，连线由 ::before 贯穿 */
+.ct-cell {
+  position: relative;
+  height: var(--ct-row);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  /* **顶对齐 + 精确 padding**：官方（420 屏）图标中心比列头中心低 52px，
+     即 cell 顶 → 图标中心 = 52 - 列头行高/2。用居中会把牌的高度也算进去，
+     图标整体下移 29.5px（实测踩到）。 */
+  /* 图标盒 73.6 + 牌 27.7 = 101.3，行高 134 → 富余 32.7，官方是
+     「图标中心 262、牌中心 321」，即中心距 59 → 盒心到牌心 59，
+     盒半高 36.8 + 牌半高 13.85 = 50.65，需要 gap ≈ 8.4（负重叠，靠盒内留白吃） */
+  padding-top: calc(var(--ct-col) * 0.02);
+  gap: 0;
+}
+/* 连线：每个 .ct-cell 画一段，**从本格的名字牌中心一直画到格子底部**，
+   下一格再从它的图标中心开始 —— 两段在格子边界处首尾相接，视觉上不断。
+   颜色按**本格是否已解锁**：已解锁→金色（官方实测武术家 4 级全解锁→整列金），
+   未解锁→暗灰（官方 7 条只解锁见习的线全是灰，包括画家）。 */
+/* 连线规则（**官方逐像素实测**，2026-10-19）：
+   ┌──────────────────────────────────────────────────────────────┐
+   │ 列型                     线型   范围(CSS)          说明        │
+   │ 武术家（全解锁）          金    286~307 / 406~427   每段 21    │
+   │ 流浪散人（初中级是空格）   灰    **279~548 连续 269**  跨过空格  │
+   │ 画家/侦探等（只解锁见习）  灰    261~270（短）       不接到下一格│
+   └──────────────────────────────────────────────────────────────┘
+   三条结论：
+   1. **金线**接到下一格图标顶前 5（官方 286~307，下格图标顶 312）
+   2. **灰线**只画牌底往下的一小截（261~270 长 9），**不接到下一个图标**
+   3. **中间是空格时，线要贯通**（流浪散人 279~548 一路穿过初级/中级），
+      直到下一个有图标的格子上方 5 才断
+*/
+.ct-cell::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  margin-left: -1px;
+  width: 2px;
+  top: calc(var(--ct-col) * 0.02 + var(--ct-node) + var(--ct-col) * 0.055 + var(--ct-plate-h));
+  /* **必须画到格底**，否则和下一格的线接不上（用户反复指出「线断了」）。
+     之前只画 0.16col（14.7px）就停，而下一格的线从它的格顶 0 开始 ——
+     两者之间空出 11px。
+     官方虽然视觉上灰线很短，但那是**被下一格的图标盖住**造成的，
+     线本身铺满整个间距。 */
+  height: calc(var(--ct-row) - (var(--ct-col) * 0.02 + var(--ct-node)
+            + var(--ct-col) * 0.055 + var(--ct-plate-h)));
+  background: var(--ct-line);
+  opacity: 0.55;
+  z-index: 0;
+  pointer-events: none;
+}
+/* 金线（本格已解锁）：接到下一格图标顶 */
+.ct-cell[data-lit='1']::before {
+  background: var(--ct-line-on);
+  opacity: 1;
+  height: calc(var(--ct-row) - (var(--ct-col) * 0.02 + var(--ct-node)
+            + var(--ct-col) * 0.055 + var(--ct-plate-h)) - var(--ct-col) * 0.06);
+}
+/* **空格**：线要贯通穿过它（流浪散人初级/中级就是这种），
+   从格顶一直画到格底，和下格首尾相接。 */
+.ct-cell[data-empty='1']::before {
+  top: 0;
+  height: 100%;
+  opacity: 0.55;
+}
+/* 最后一格不画 */
+.ct-cell[data-last='1']::before {
+  display: none;
+}
+
+/* 六边形图标（官方图已抠成透明 PNG，六边形是图的一部分） *//* 六边形图标（官方图已抠成透明 PNG，六边形是图的一部分） *//* 六边形图标（官方图已抠成透明 PNG，六边形是图的一部分） */
+.ct-node {
+  position: relative;
+  z-index: 1;
+  isolation: isolate;
+  width: var(--ct-node);
+  height: var(--ct-node);
+  border: 0;
+  background: none;
+  padding: 0;
+  flex: none;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.ct-node img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+}
+/* 「已现世但未解锁」的锁遮罩：
+   官方实测（非好友截图）是**半透明暗圆 + 白色锁**，圆直径约为六边形的 58%。
+   叠在彩色图标上，表示「这个职业存在，但你还没解锁」。 */
+.ct-lock {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 58%;
+  height: 58%;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  /* 官方实测：遮罩很淡，能清楚看到底下的彩色职业物（不是黑罩）；
+     取 0.42 后色相仍然透出来，与官方观感一致 */
+  background: rgba(40, 34, 30, 0.42);
+  z-index: 2;
+  pointer-events: none;
+}
+/* 白色挂锁：锁体 + 锁梁，用纯 CSS 画 */
+.ct-lock::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 42%;
+  width: 30%;
+  height: 34%;
+  transform: translateX(-50%);
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.92);
+}
+.ct-lock::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 22%;
+  width: 22%;
+  height: 24%;
+  transform: translateX(-50%);
+  border: 2px solid rgba(255, 255, 255, 0.92);
+  border-bottom: 0;
+  border-radius: 50% 50% 0 0;
+}
+
+/* 已展示：金色外发光（用户指定用这一版，别改成黄环） */
+.ct-node[data-on='1'] {
+  filter: drop-shadow(0 0 6px rgba(255, 240, 78, 0.95));
+}
+
+/* 占位格：只有描边的空六边形 + 大问号 */
+.ct-node[data-ph='1'] {
+  cursor: default;
+}
+/* 占位格（大师级未投放）：**用官方截图抠的图片**，不再 CSS 画。
+   之前那版用 clip-path 画六边形 + 自己写问号字，形状/描边/字重三项都对不上官方
+   （用户贴图指出"问号跟官方的完全不一样"）。图片见 `career/placeholder.png`。 */
+.ct-node[data-ph='1'] {
+  cursor: default;
+}
+
+/* 名字牌：深棕胶囊 69×34dp，圆角=高/2 */
+.ct-plate {
+  position: relative;
+  z-index: 1;
+  /* 官方 420：图标盒心 y=262、牌心 y=321 → 中心距 59。
+     盒半高 36.8，所以牌顶 = 262 + 59 - 13.85 = 307.15，
+     盒底 = 262 + 36.8 = 298.8 → 牌顶比盒底低 8.4，即 gap ≈ 8.4。
+     但牌还要往上吃进盒的内留白，实际用 0.02col 的轻微负值对齐。 */
+  margin-top: calc(var(--ct-col) * 0.055);
+  min-width: var(--ct-plate-w);
+  /* 名字牌可以比列宽出一截（官方「素描写手」实测就压到相邻列空隙里） */
+  max-width: calc(var(--ct-col) + 12px);
+  height: var(--ct-plate-h);
+  /* 左右留白：官方 420 屏三字牌 58.7 - 3×12 = 22.7 → 每边 11.35 / 92 = 0.1234 */
+  padding: 0 calc(var(--ct-col) * 0.1234);
+  border-radius: calc(var(--ct-plate-h) / 2);
+  background: var(--ct-plate);
+  display: grid;
+  place-items: center;
+  /* 实测名字牌文字高 10dp、每字宽 10.7dp */
+  font-size: var(--ct-font-plate);
+  color: #fff;
+  white-space: nowrap;
+}
+.ct-plate[data-on='1'] {
+  background: var(--ct-plate-on);
+  color: #4a3a20;
+  font-weight: 600;
+}
+.ct-plate[data-lock='1'] {
+  color: rgba(255, 255, 255, 0.92);
+}
+
+/* 左侧层级标签列：**滚动容器的兄弟节点**，不是覆盖层。
+   横滑时它原地不动，图标滑过去就被滚动区的左边界裁掉（官方同款）。
+   ⚠️ 不要给它加背景/渐变遮罩 —— 官方左边缘是干净的纯背景色。 */
+.ct-tiers {
+  position: relative;
+  flex: none;
+  width: calc(100vw * 0.1111);              /* 官方 40/360：容纳 18~35 的标签 */
+  /* 与列头行高一致，否则「见习/初级/…」整列相对图标下错位（原来 0.34 → 偏 11.5pt）。
+     改这里必须同步 `.ct-linehead` 的高度与 CareerTree.tsx 的 LINEHEAD_RATIO。 */
+  padding-top: calc(var(--ct-row) * 0.254);
+  z-index: 1;
+  pointer-events: none;
+}
+.ct-tier {
+  height: var(--ct-row);
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  /* 官方实测：层级标签左缘 18~19 CSS（360 画布）→ 5% 屏宽。
+     ⚠️ 必须用 vw：`padding-left: 5%` 的百分比基于**父元素宽**（46.7px），
+     算出来只有 2.3px，标签贴着屏幕左边（用户两次指出）。 */
+  padding-left: 5vw;
+  font-size: var(--ct-font-tier);
+  color: rgba(255, 255, 255, 0.92);
+}
+
+/* ---------- 弹窗 ---------- */
+.ct-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(0, 0, 0, 0.62);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: ct-fade 0.16s ease-out;
+}
+@keyframes ct-fade {
+  from {
+    opacity: 0;
+  }
+}
+/* 卡片：384dp 宽，圆角 24dp，纯白；高度按内容 */
+.ct-card {
+  position: relative;
+  /* 实测：卡宽 288dp = 屏宽 80%，左右各留 36dp */
+  width: min(288px, calc(100vw - 40px));
+  border-radius: 18px;
+  background: #fff;
+  color: #1a1a1a;
+  padding: 0 18px 18px;
+  /* **必须 visible**：六边形图标是负 margin 压在卡顶边上的，
+     overflow:auto 会把它上半截直接裁掉（第一条就把图标裁成了半个）。
+     内容过高时由 .ct-card-body 自己滚。 */
+  overflow: visible;
+  animation: ct-pop 0.2s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+/* 卡片内容区（可滚动）：顶部留出图标压下来的那段空间 */
+.ct-card-body {
+  max-height: calc(100vh - 150px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+@keyframes ct-pop {
+  from {
+    transform: scale(0.9);
+    opacity: 0;
+  }
+}
+/* 图标压在卡片顶边上（官方：图标顶比卡顶高 28dp） */
+.ct-card-node {
+  width: var(--ct-node);
+  height: var(--ct-node);
+  /* 图标整体上移：官方是六边形压在卡顶边（约 1/3 露在卡外） */
+  margin: -26px auto 0;
+  position: relative;
+  z-index: 1;
+}
+.ct-card-node img {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* 职业名 + 月桂叶装饰 */
+.ct-card-name {
+  position: relative;
+  margin: 8px 0 0;
+  text-align: center;
+  font-size: 20px;
+  font-weight: 600;
+  color: #2b2b2b;
+}
+.ct-card-name::before,
+.ct-card-name::after {
+  content: '🌿';
+  position: absolute;
+  top: 50%;
+  font-size: 15px;
+  opacity: 0.55;
+  transform: translateY(-50%);
+}
+.ct-card-name::before {
+  right: calc(50% + 3.2em);
+  transform: translateY(-50%) scaleX(-1);
+}
+.ct-card-name::after {
+  left: calc(50% + 3.2em);
+}
+
+/* 星级 */
+.ct-stars {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  margin: 8px 0 4px;
+  font-size: 17px;
+  line-height: 1;
+  color: #f0d9a8;
+}
+.ct-stars .on {
+  color: #f7c948;
+}
+
+/* 简介 / 条件 / 升星 三行：左标签 + 右值 */
+.ct-rows {
+  margin-top: 10px;
+}
+.ct-row {
+  display: flex;
+  gap: 10px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  padding: 3px 0;
+}
+.ct-row > .k {
+  flex: none;
+  width: 34px;
+  color: #9a9a9e;
+}
+.ct-row > .v {
+  flex: 1 1 auto;
+  min-width: 0;
+  word-break: break-word;
+}
+.ct-row > .v.dim {
+  color: #9999cc;
+}
+.ct-asc {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.ct-asc .ln {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.ct-asc .ln.dim {
+  color: #9999cc;
+}
+.ct-coin {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #ffe08a, #e8a92b 70%);
+  display: inline-block;
+}
+
+/* 奖励区 */
+.ct-reward {
+  margin-top: 10px;
+}
+.ct-reward-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12.5px;
+  color: #9a9a9e;
+  margin: 10px 0 8px;
+}
+.ct-reward-title::before,
+.ct-reward-title::after {
+  content: '';
+  flex: 1 1 auto;
+  height: 1px;
+  background: #ececf0;
+}
+.ct-items {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+}
+.ct-item {
+  width: 108px;
+  border-radius: 14px;
+  background: #f7f7fa;
+  padding: 12px 6px 8px;
+  text-align: center;
+}
+.ct-item-ico {
+  width: 54px;
+  height: 54px;
+  margin: 0 auto;
+  display: grid;
+  place-items: center;
+  font-size: 30px;
+  line-height: 1;
+}
+.ct-item-name {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #6a6a6e;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 主按钮：官方蓝 #0099FF，高 57.8dp，全圆角 */
+.ct-btn {
+  display: block;
+  /* 实测：按钮 259.3×43.3dp，通栏（卡内左右各 18dp 内边距之外全宽） */
+  width: 100%;
+  height: 43px;
+  margin-top: 14px;
+  border: 0;
+  border-radius: 22px;
+  background: #0099ff;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.ct-btn[data-ghost='1'] {
+  background: #e8e8ed;
+  color: #6a6a6e;
+}
+.ct-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* 关闭 ×：卡片下方 53dp 处的半透明白圆 */
+.ct-close {
+  position: absolute;
+  left: 50%;
+  /* 实测：圆心在卡底下方 21dp（卡底 628.3 → 圆心 654.5） */
+  bottom: -34px;
+  transform: translateX(-50%);
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.45);
+  color: #fff;
+  font-size: 14px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+/* ---------- toast ---------- */
+.ct-toast {
+  position: fixed;
+  left: 50%;
+  top: 51.1%;
+  transform: translate(-50%, -50%);
+  z-index: 70;
+  /* 实测 214.7×36.7dp；宽度别卡太死否则「该职业还未现世，再观望一下」会换行 */
+  max-width: calc(100vw - 40px);
+  padding: 9px 18px;
+  white-space: nowrap;
+  border-radius: 18px;
+  background: rgb(46, 35, 32);
+  color: #fff;
+  font-size: 13px;
+  text-align: center;
+  animation: ct-fade 0.15s ease-out;
+  pointer-events: none;
+}
+
+/* 「职业数据」折叠区已按要求删除（2026-10-19，准备重做）。
+   原样式（.ct-data / .ct-data-head）与备份一起留在
+   `backup/career-data-section-<日期>/career-tree.css`，重做时可参考。 */
+
+/* 内页容器覆盖：职业树是深色整屏，不能用内页那条浅灰底规则
+   （app.css 的 `main section[data-page]:not([data-page="main"])` 特异性 (0,2,2)，
+   这里必须凑到同级别才能压住 —— 多带一个类即可）。 */
+/* **职业树是全屏页面**：官方那版整屏铺满，内容压在状态栏下面。
+   `body` 的 padding-top（真机 47）是给普通内页留的，这里整条抵掉 ——
+   不抵的话可用高只有 865，而内容要 899，底部「大师」行被 overflow 裁掉（用户实报）。
+   `env()` 在桌面/headless 恒为 0、测不出来，所以另加一条 max-height 兜底见下。 */
+/* **职业树是全屏页面**：官方那版整屏铺满，内容压在状态栏下面。
+   body 的 `padding-top: env(safe-area-inset-top)`（真机 47）是给普通内页留的，
+   这里整条抵掉 —— 不抵的话整块内容被顶低 47，顶部空一大截（用户实报）。
+   ⚠️ 用两条选择器：`html[data-page=plan]` 依赖 React 在 useLayoutEffect 里设属性，
+   首屏可能还没设上；`:has()` 直接看 DOM 里有没有职业树，时序无关。
+   （Safari 15.4+ / Chrome 105+ 都支持 :has） */
+html[data-page="plan"] body,
+body:has(.ct-page) {
+  padding-top: 0 !important;
+}
+main section[data-page='plan'] .ct-page {
+  margin: 0;
+  /* **高度必须继承父级，不能用 100dvh**。
+     真机 body 有 padding-top ≈47（状态栏安全区），`100dvh` = 整个视口高，
+     两者相加就比可用区高 47px → 整页能上下滑、右侧出滚动条（用户实报）。
+     父级 `.page-slot` 是 `position:absolute;inset:0`，高度确定，
+     所以 `height:100%` 正好等于「视口 − 安全区」，不多不少。
+     （headless 里 env() 恒为 0，靠 100dvh 根本验不出这个 bug。） */
+  height: 100%;
+  overflow: hidden;
+}
+main section[data-page='plan']:not([data-page='main']) {
+  background: #5d4443;
+  padding-bottom: 0;
+}
+
+/* 窄屏（≤360）收紧列宽，一屏仍放得下 ~3.2 列 */
+/* 极窄屏（<300px）：JS 的 clamp 下界已经兜住（col≥62 / node≥48 / row≥92），
+   这里不需要再覆盖。留这行注释是为了说明"别再写死断点"。 */
+
+
+/* 下方数据区永远走浅灰卡（与其它内页一致）：
+   它不属于"官方职业树"，套官方深棕反而会让两段割裂。
+   **不要加深色模式覆盖** —— headless 默认就是 dark，会把整块压成黑。 */

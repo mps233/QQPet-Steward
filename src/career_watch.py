@@ -43,6 +43,14 @@ ALL_LINES = ('流浪散人', '画家', '侦探', '法师', '大厨', '武术家'
 TIER_LABELS = ('见习', '初级', '中级', '高级', '大师')
 # 三条隐藏线「见习」级的已知名字（调研口径；解锁时列格出现该名字）
 FIRST_TIER_NAMES = {'武术家': '习武小童', '梦境旅人': '浅梦行者', '大明星': '偶像练习生'}
+# 「已展示（佩挂中）」的判据：名字牌变**亮黄**（官方实测 rgb(255,240,78)，其余线是深棕
+# rgb(85,63,59)）。这是页面上唯一可靠的佩挂信号——主页面那个「职业胶囊」的
+# content-desc 只有四个字「职业胶囊」，拿不到当前职业名（实测 2026-10-19）。
+EQUIPPED_RGB = (255, 240, 78)
+EQUIPPED_TOL = 16
+# 名字牌所在的纵向窗口（相对屏高）：见习行图标中心 y≈0.275h、名字牌 y≈0.30h，
+# 五级等距，每级名字牌在 (tier*0.1495 + 0.30)h 附近。这里只用来排除属性条那块黄。
+PLATE_Y_MIN = 0.30
 # 截图文件名用 ASCII slug（仪表盘 /files/ 只放行 ASCII 文件名）
 SHOT_SLUG = {'武术家': 'wushujia', '梦境旅人': 'mengjinglvren', '大明星': 'damingxing'}
 
@@ -122,6 +130,177 @@ def merge_views(views, targets, win: int, h: int) -> dict:
                 if tgt in targets and known in tt:
                     merged[tgt] = {'state': 'unlocked', 'name': known}
     return merged
+
+
+def detect_equipped(img, headers=None) -> dict | None:
+    """从一张职业树整屏截图里找「已展示」的名字牌（亮黄色胶囊）。
+
+    返回 `{'line': 线名, 'name': 职业名}` 或 None。
+
+    判据（官方实测 rgb(255,240,78)）：
+      - 整页只有两处是这颜色：**已展示的名字牌**（实心 52dp 宽的块）
+        和**那条线的金色连线**（2dp 细线）。
+      - 所以用「同一横向连续段的宽度」区分：连线段只有几像素、名字牌上百像素。
+      - 线名靠列头反查：`headers` 传 OCR 出来的 `{线名: (x, y)}`（调用方本来就有），
+        取 x 最近的；没有 headers 时退回按左端固定步进推算（只在第一屏准）。
+
+    `name` 靠对黄牌那一小块单独 OCR（黄牌上是深棕字，对比度足够）。
+    """
+    try:
+        import numpy as np
+    except Exception:
+        return None
+    a = np.asarray(img)
+    if a.ndim != 3 or a.shape[2] < 3:
+        return None
+    h, w, _ = a.shape
+    r, g, b = (a[:, :, i].astype(int) for i in range(3))
+    mask = ((abs(r - EQUIPPED_RGB[0]) < EQUIPPED_TOL)
+            & (abs(g - EQUIPPED_RGB[1]) < EQUIPPED_TOL)
+            & (abs(b - EQUIPPED_RGB[2]) < EQUIPPED_TOL))
+    # 只看名字牌区（排除顶部属性条里的黄色图标）
+    mask[: int(h * PLATE_Y_MIN), :] = False
+    if not mask.any():
+        return None
+    # 逐行找**足够宽的**黄色连续段（连线只有 1~2dp，名字牌 52dp）
+    min_w = int(w * 0.05)          # 1080 → 54px（52dp 牌子有 117px，留足余量）
+    best = None                    # (宽, y0, y1, cx)
+    for y in range(int(h * PLATE_Y_MIN), h):
+        row = mask[y]
+        if not row.any():
+            continue
+        xs = np.where(row)[0]
+        # 找最长连续段
+        run_start = xs[0]
+        run_prev = xs[0]
+        run_best = (xs[0], xs[0])
+        for x in xs[1:]:
+            if x - run_prev > 3:
+                if run_prev - run_start > run_best[1] - run_best[0]:
+                    run_best = (run_start, run_prev)
+                run_start = x
+            run_prev = x
+        if run_prev - run_start > run_best[1] - run_best[0]:
+            run_best = (run_start, run_prev)
+        width = run_best[1] - run_best[0]
+        if width < min_w:
+            continue
+        cx = (run_best[0] + run_best[1]) / 2
+        if best is None or width > best[0]:
+            best = (width, y, y, cx)
+        elif best is not None and abs(cx - best[3]) < w * 0.05:
+            best = (best[0], best[1], y, best[3])   # 同一块牌的下沿继续吞
+    if best is None:
+        return None
+    _, y0, y1, cx = best
+    cols = mask[y0:y1 + 1].sum(axis=0)
+    xs = np.where(cols > 0)[0]
+    if not xs.size:
+        return None
+    cx = (xs.min() + xs.max()) / 2
+    # 线名：优先用调用方给的列头 x
+    line = None
+    if headers:
+        line = min(headers, key=lambda k: abs(headers[k][0] - cx))
+        if abs(headers[line][0] - cx) > w * 0.16:   # 差超过 57dp 认为没对准
+            line = None
+    if line is None:
+        col_dp = cx / (w / 360.0)
+        idx = round((col_dp - 86.0) / 83.0)
+        if 0 <= idx < len(ALL_LINES) and abs(col_dp - (86.0 + idx * 83.0)) <= 45:
+            line = ALL_LINES[idx]
+    if line is None:
+        return None
+    name = None
+    try:
+        pad = int(w * 0.13)
+        crop = a[max(0, y0 - 2):y1 + 2, max(0, int(cx) - pad):int(cx) + pad]
+        for t, *_ in ocr_fullscreen(crop):
+            tt = t.replace(' ', '').strip()
+            if has_cjk(tt, 2) and tt not in TIER_LABELS:
+                name = tt
+                break
+    except Exception:
+        pass
+    return {'line': line, 'name': name}
+
+
+# ---------------------------------------------------------------- 逐格实测
+
+# 树页 8 列 × 5 级的格子中心（**比例坐标**，随分辨率缩放）。
+# 实测基准：1080×2412 / dpr3 的原机截图 —— 列中心 258/506/755/1000（第一屏 4 列），
+# 行中心 664/1025/1387/1749/2111。换算成比例后换设备也不偏。
+TREE_COL_CENTERS = (0.2389, 0.4685, 0.6991, 0.9259)   # 一屏 4 列
+TREE_ROW_CENTERS = (0.2753, 0.4249, 0.5750, 0.7251, 0.8752)
+
+
+def classify_cell(img, cx: float, cy: float, radius: float = 0.038) -> str:
+    """判定一格的状态：`unlocked` | `lockedKnown` | `locked` | `blank`。
+
+    **三态是 2026-10-19 扫非好友时发现的**，官方那三种长相：
+      · 已解锁        → 纯彩（橙/蓝/紫底 + 职业物）
+      · 已现世未解锁   → **彩色 + 半透明暗圆 + 白锁**
+      · 未现世        → 纯灰（浅灰底 + 灰职业物）
+
+    实测特征（1080×2412 原机截图，取格子中心 ±0.038 屏高）：
+
+    | 类型       | 饱和度 | 亮度    | **高饱和像素占比** |
+    | 彩色       | 85~146 | 162~181 | **0.60~0.97** |
+    | 纯灰       | **0**  | 150~184 | **0.00** |
+    | 空/占位格  | 32~36  | 89~117  | **0.00** |
+
+    ⚠️ **别用「亮度阈值」区分占位和彩色**：大厨见习是彩色但亮度只有 125，
+    占位格亮度 117 —— 两者重叠（踩过，会把它判成 empty）。
+    真正干净的分界是「高饱和像素占比」：彩色格有 60%+ 的像素饱和度 > 60，
+    灰格和占位格一个都没有。
+
+    判据顺序：
+      1. 高饱和占比 < 0.15 → 没有彩色职业物：再看饱和度
+         · 饱和度 ≥ 22 → `blank`（空/占位格，饱和度 32 来自底色渐变）
+         · 否则         → `locked`（纯灰格）
+      2. 中心亮度 / 外围亮度 < 0.92 → 有锁遮罩 → `lockedKnown`
+      3. 否则 → `unlocked`
+    """
+    try:
+        import numpy as np
+    except Exception:
+        return 'locked'
+    a = np.asarray(img)
+    if a.ndim != 3 or a.shape[2] < 3:
+        return 'locked'
+    h, w, _ = a.shape
+    r = max(6, int(min(h, w) * radius))
+    x0, x1 = int(max(0, cx - r)), int(min(w, cx + r))
+    y0, y1 = int(max(0, cy - r)), int(min(h, cy + r))
+    patch = a[y0:y1, x0:x1].astype(int)
+    if patch.size == 0:
+        return 'locked'
+    sat = patch.max(axis=2) - patch.min(axis=2)
+    sat_mean = float(sat.mean())
+    frac = float((sat > 60).mean())
+    if frac < 0.15:
+        # 没有彩色职业物：要么纯灰格，要么空/占位格
+        return 'blank' if sat_mean >= 22 else 'locked'
+    ph, pw, _ = patch.shape
+    ch, cw = int(ph * 0.28), int(pw * 0.28)
+    lum = float(patch.mean(axis=2).mean())
+    lum_c = float(patch[ph // 2 - ch:ph // 2 + ch, pw // 2 - cw:pw // 2 + cw].mean(axis=2).mean())
+    if lum_c < lum * 0.92:
+        return 'lockedKnown'    # 中间压了暗色锁遮罩
+    return 'unlocked'
+
+
+def read_tree_grid(img, col_centers=TREE_COL_CENTERS,
+                   row_centers=TREE_ROW_CENTERS) -> list[list[str]]:
+    """读一屏的格子状态矩阵：`[[line0_tier0..tier4], ...]`（每列一条线，4 列）。"""
+    h, w = (img.shape[0], img.shape[1]) if hasattr(img, 'shape') else (img.size[1], img.size[0])
+    out = []
+    for cf in col_centers:
+        col = []
+        for rf in row_centers:
+            col.append(classify_cell(img, cf * w, rf * h))
+        out.append(col)
+    return out
 
 
 # ---------------------------------------------------------------- 写盘
@@ -313,14 +492,58 @@ def check_career_tree(scen, targets=None, log=None) -> dict:
             prev_lines = {}
 
         y = int(0.62 * h)
-        view_imgs, views = [], []
-        views.append(items)  # 初始左屏（进树页时已 OCR）
+        # **同一张图既做 OCR 又做逐格实测**：view_imgs[i] 与 views[i] 必须同源，
+        # 否则列头（OCR）和格子颜色（像素）来自不同时刻，配出来的列会错位。
+        img0 = scen.screen()
+        items0 = items if img0 is None else ocr_fullscreen(img0)
+        view_imgs, views = [img0] if img0 is not None else [], [items0]
+        if img0 is None:
+            views = [items]          # 兜底：拿不到图就沿用进树页那次 OCR
         for _ in range(2):
             vimg, vitems = _swipe_and_ocr(scen, int(0.83 * w), int(0.24 * w), y, log)
             view_imgs.append(vimg)
             views.append(vitems)
 
         states = merge_views(views, watch, win, h)
+
+        # ---- 逐格实测（8 线 × 5 级）----
+        # 之前只记「见习一级 + 每线是否解锁」，其余级别靠**手填的属性**推算，
+        # 结果跟游戏里对不上（用户实报：明明解锁了显示灰色）。
+        # 这里直接对每屏截图做颜色分类，把 40 格的真实状态全记下来。
+        tier_states: dict[str, dict[str, str]] = {}
+        try:
+            # **逐屏各自配对**：view_imgs[i] 对应 views[i] 那次 OCR。
+            # 之前把所有屏的列头混在一个 dict 里再排序，三屏的列头叠在一起，
+            # 前 4 个可能全来自第一屏 → 列与线严重错配（实测把大厨记成 4/5 全彩）。
+            for si, vimg in enumerate(view_imgs):
+                if si >= len(views) or vimg is None:
+                    break
+                grid = read_tree_grid(vimg)
+                hdrs_now = {}
+                for t_, x_, yy_, _sc in views[si]:
+                    tt = t_.replace(' ', '')
+                    for ln in watch:
+                        if ln in tt and 450 <= yy_ <= 620 and ln not in hdrs_now:
+                            hdrs_now[ln] = x_
+                ordered = sorted(hdrs_now, key=lambda k: hdrs_now[k])[:4]
+                if len(ordered) < 3:
+                    log(f'职业哨兵: 第{si}屏列头只识别到 {len(ordered)} 个，跳过逐格实测')
+                    continue
+                for ci, ln in enumerate(ordered):
+                    if ci >= len(grid):
+                        break
+                    cells = grid[ci]
+                    rec = tier_states.setdefault(ln, {})
+                    for ti, cell in enumerate(cells):
+                        if cell == 'blank':
+                            continue      # 空/占位不写
+                        st = 'unlocked' if cell == 'unlocked' else 'locked'
+                        # unlocked 永久：一旦是 unlocked 不再降级
+                        if rec.get(str(ti)) == 'unlocked':
+                            continue
+                        rec[str(ti)] = st
+        except Exception as e:
+            log(f'职业哨兵: 逐格实测失败: {e}')
 
         # 是否有"新解锁"（本次实测 unlocked，而库里记的是未解锁）——只有这种才需要复读
         newly = [t for t in watch
@@ -363,6 +586,61 @@ def check_career_tree(scen, targets=None, log=None) -> dict:
             save_unlock_data(udata)
         except Exception as e:
             log(f'职业哨兵: 8线状态写回失败: {e}')
+
+        # 逐级状态写回（前端职业树的彩色/带锁/灰色三态都靠它，**不再依赖手填属性**）
+        if tier_states:
+            try:
+                udata = load_unlock_data()
+                old_tiers = udata.get('tiers') or {}
+                now_s = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                for ln, rec in tier_states.items():
+                    old = old_tiers.get(ln) or {}
+                    for ti, st in rec.items():
+                        prev_rec = old.get(ti)
+                        # 兼容两种历史形态：dict{'unlocked':bool} 或裸字符串
+                        if isinstance(prev_rec, dict):
+                            prev = bool(prev_rec.get('unlocked'))
+                        else:
+                            prev = prev_rec == 'unlocked'
+                        old[ti] = {
+                            # 解锁永久：历史 true 不会被一次误读覆盖
+                            'unlocked': prev or st == 'unlocked',
+                            'at': now_s,
+                        }
+                    old_tiers[ln] = old
+                udata['tiers'] = old_tiers
+                save_unlock_data(udata)
+                log('职业哨兵: 逐格状态已记录 '
+                    + '、'.join(f'{k}:{sum(1 for v in v.values() if v == "unlocked")}/5'
+                               for k, v in tier_states.items()))
+            except Exception as e:
+                log(f'职业哨兵: 逐级状态写回失败: {e}')
+
+        # 已展示（佩挂）的线：黄色名字牌。**这是页面上唯一可靠的佩挂信号** ——
+        # 主页面那个「职业胶囊」的 content-desc 只有四个字，拿不到当前职业名。
+        # 只在拍到的整屏里找；找不到就不动库里的旧值（避免一次没对准就把记录清空）。
+        try:
+            hdrs = {}
+            for items in views:
+                for t, x, yy, _sc in items:
+                    tt = t.replace(' ', '')
+                    for ln in watch:
+                        if ln in tt and 450 <= yy <= 620 and ln not in hdrs:
+                            hdrs[ln] = (x, yy)
+            found = None
+            for vimg in ([view_imgs[0]] if view_imgs else []) + view_imgs:
+                found = detect_equipped(vimg, hdrs)
+                if found:
+                    break
+            if found:
+                udata = load_unlock_data()
+                if udata.get('equipped') != found:
+                    log(f"职业哨兵: 已展示 = {found['line']}（{found['name']}）")
+                udata['equipped'] = found
+                save_unlock_data(udata)
+                result['equipped'] = found
+        except Exception as e:
+            log(f'职业哨兵: 已展示检测失败: {e}')
 
         # 保存最近树页截图
         if view_imgs and _save_img(view_imgs[-1], LAST_TREE_SHOT):
