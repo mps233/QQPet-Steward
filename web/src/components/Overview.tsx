@@ -91,8 +91,9 @@ export function Overview({
         <button className="rbtn r" data-tab="adv" title="冒险" onClick={() => onNav('adv')}>
           <img src="/qp-icons/official/cap_compass.png" alt="" />
         </button>
-        <button className="rbtn r" data-tab="plan" title="职业" onClick={() => onNav('plan')}>
-          <img src="/qp-icons/official/off_r2_briefcase.png" alt="" />
+        <button className="rbtn r" data-tab="plan" title="职业树" onClick={() => onNav('plan')}>
+          {/* `?v=` 见 OverviewV2 同名说明：文件名复用必须挂版本号才拿得到新图。 */}
+          <img src="/qp-icons/official/off_r2_career.png?v=4" alt="" />
         </button>
         {/* `/qp-icons/*` 走 max-age=3600，不换 URL 拿旧图 1 小时 —— 版本号统一由
             lib/icons.ts 的 ICON_VER 提供（原先这里是散落的 `?v=2`）。 */}

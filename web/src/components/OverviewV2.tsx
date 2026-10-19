@@ -122,8 +122,12 @@ export function OverviewV2({
           <button className="rbtn r" title="冒险" onClick={() => onNav('adv')}>
             <img src="/qp-icons/official/cap_compass.png" alt="" />
           </button>
-          <button className="rbtn r" title="职业" onClick={() => onNav('plan')}>
-            <img src="/qp-icons/official/off_r2_briefcase.png" alt="" />
+          <button className="rbtn r" title="职业树" onClick={() => onNav('plan')}>
+            {/* `?v=` 是必需的：`/qp-icons/*` 走 `Cache-Control: max-age=3600`，
+                这个文件名复用（换的只是内容，不是新文件名），不加版本号浏览器
+                一小时内仍显示旧图 —— 用户实报「好像没生效？」踩过。
+                以后换这张图就把 v 往上加。 */}
+            <img src="/qp-icons/official/off_r2_career.png?v=4" alt="" />
           </button>
           <button className="rbtn r" title="实时画面" onClick={() => onNav('shot')}>
             <img src={icon('/qp-icons/ctrl/phone.svg')} alt="" />
