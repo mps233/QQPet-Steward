@@ -355,6 +355,30 @@ def _post_json(url: str, payload: dict) -> tuple[bool, str]:
     return False, '响应缺少成功标记'
 
 
+# 网络类失败（TLS 握手超时、连接重置等）的重试次数与间隔。
+# **只重试网络错误**：HTTP 4xx/5xx 是对方明确拒绝（确定性失败），重试纯浪费。
+NET_RETRY = 2
+NET_RETRY_DELAY = 1.0
+
+
+def _post_json_retry(url: str, payload: dict, *,
+                     attempts: int = NET_RETRY) -> tuple[bool, str]:
+    """`_post_json` + 网络错误重试。
+
+    为什么需要它：远端偶尔抖动（实测 `_ssl.c:1015 handshake timed out`）会让**首次**
+    尝试就失败，而调用方的降级路径（富消息 → 纯文本）是**不可逆**的 —— 一次抖动就
+    永久降级，用户看到的表格突然变成一行一条（2026-10-15 23:59 冒险日报事故）。
+    宁可多等一两秒，也别白丢排版。
+    """
+    ok, why = _post_json(url, payload)
+    for _ in range(max(0, attempts)):
+        if ok or not why.startswith('网络错误'):
+            return ok, why
+        time.sleep(NET_RETRY_DELAY)
+        ok, why = _post_json(url, payload)
+    return ok, why
+
+
 def _feishu_upload_image(access_token: str, image_path: str,
                          webhook: str = '') -> str | None:
     """把图片传到飞书拿 image_key（发图必须先上传）。失败返回 None。
@@ -454,8 +478,10 @@ RICH_LIMIT = 32000
 
 
 def _telegram_send_rich(token: str, chat_id: str, html: str) -> tuple[bool, str]:
-    return _post_json(f'https://api.telegram.org/bot{token}/sendRichMessage',
-                      {'chat_id': chat_id, 'rich_message': {'html': html}})
+    """富消息（原生表格）。走重试版 —— 一次网络抖动不该让表格降级成纯文本。"""
+    return _post_json_retry(
+        f'https://api.telegram.org/bot{token}/sendRichMessage',
+        {'chat_id': chat_id, 'rich_message': {'html': html}})
 
 
 def _fit_rich(html: str, limit: int = RICH_LIMIT) -> str:
@@ -554,7 +580,7 @@ def _telegram_send_message(token: str, chat_id: str, text: str, *,
     payload = {'chat_id': chat_id, 'text': text, 'disable_web_page_preview': True}
     if html:
         payload['parse_mode'] = 'HTML'
-    return _post_json(f'https://api.telegram.org/bot{token}/sendMessage', payload)
+    return _post_json_retry(f'https://api.telegram.org/bot{token}/sendMessage', payload)
 
 
 def _telegram_send_photo(token: str, chat_id: str, caption: str,

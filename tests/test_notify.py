@@ -422,3 +422,66 @@ def test_desktop_preserves_event_title_and_escapes_applescript(monkeypatch):
     assert 'with title "event title"' in script
     assert '\\"quote\\"' in script
     assert '\\\\ slash' in script
+
+
+# ---------------------------------------------------------------- 网络抖动重试
+
+def test_network_error_is_retried_before_giving_up(monkeypatch):
+    """**网络抖动要重试**：富消息一次握手超时不该直接降级成纯文本。
+
+    实测事故（2026-10-15 23:59 冒险日报）：`_ssl.c:1015 handshake timed out`
+    让富消息首试失败 → 代码立刻回落普通消息 → 用户收到一行一条、没有表格。
+    """
+    monkeypatch.setattr(notify, 'NET_RETRY_DELAY', 0)
+    calls = []
+
+    def flaky(url, payload):
+        calls.append(url)
+        if len(calls) < 3:
+            return False, '网络错误 <urlopen error _ssl.c:1015: handshake timed out>'
+        return True, 'ok'
+
+    monkeypatch.setattr(notify, '_post_json', flaky)
+    ok, why = notify._post_json_retry('https://example.invalid/x', {})
+    assert ok and len(calls) == 3        # 首次 + 两次重试
+
+
+def test_http_error_is_not_retried(monkeypatch):
+    """HTTP 4xx 是对方明确拒绝（确定性失败），重试纯浪费 —— 只试一次。"""
+    monkeypatch.setattr(notify, 'NET_RETRY_DELAY', 0)
+    calls = []
+    monkeypatch.setattr(notify, '_post_json',
+                        lambda url, payload: (calls.append(url),
+                                              (False, 'HTTP 400 bad entity'))[1])
+    ok, why = notify._post_json_retry('https://example.invalid/x', {})
+    assert not ok and len(calls) == 1
+
+
+def test_business_failure_is_not_retried(monkeypatch):
+    """业务失败（ok=false，如 HTML 解析错误）不重试 —— 重发同样会失败。"""
+    monkeypatch.setattr(notify, 'NET_RETRY_DELAY', 0)
+    calls = []
+    monkeypatch.setattr(notify, '_post_json',
+                        lambda url, payload: (calls.append(url),
+                                              (False, "can't parse entities"))[1])
+    ok, why = notify._post_json_retry('https://example.invalid/x', {})
+    assert not ok and len(calls) == 1
+
+
+def test_retry_exhaustion_still_reports_failure(monkeypatch):
+    """重试用尽仍失败要如实返回失败（让上层能走降级/补发）。"""
+    monkeypatch.setattr(notify, 'NET_RETRY_DELAY', 0)
+    calls = []
+    monkeypatch.setattr(notify, '_post_json',
+                        lambda url, payload: (calls.append(url),
+                                              (False, '网络错误 timeout'))[1])
+    ok, why = notify._post_json_retry('https://example.invalid/x', {}, attempts=2)
+    assert not ok and len(calls) == 3 and '网络错误' in why
+
+
+def test_rich_message_send_goes_through_retrying_post(monkeypatch):
+    """回归钉住：Telegram 富消息与普通消息都必须走重试版（别改回 _post_json）。"""
+    monkeypatch.setattr(notify, '_post_json_retry',
+                        lambda url, payload: (True, 'ok'))
+    assert notify._telegram_send_rich('tok', 'chat', '<table></table>')[0]
+    assert notify._telegram_send_message('tok', 'chat', 'x')[0]
