@@ -48,8 +48,19 @@ export interface GroupDef {
 
 /** 学习科目（后端 validate_field 的白名单） */
 const SCHOOL_ATTRS = ['力量', '智力', '魅力', '夏令营']
-/** 课时档位：短课/长课（具体分钟数按学园卡位定） */
-const SCHOOL_DURATIONS = ['10分钟', '30分钟']
+/** 课时档位：短课/长课（**按课程轮播卡位选，不绑定具体分钟数**）。
+ *
+ *  ⚠ 这里曾经写的是 `['10分钟', '30分钟']` —— 那是 2026-09-14（da8b97f）
+ *  改按卡位选课之前的旧语义。后端 `course_kind()` 对旧值的兼容规则是
+ *  「10分钟→短课，**其余任何分钟数→长课**」，于是界面上选「30分钟」实际选的是长课。
+ *  各学园实际时长不同（初级 10/20、中级 20、高级 30、进修 45/135），
+ *  所以选项必须是档位名本身，不能是分钟数。 */
+const SCHOOL_DURATIONS = ['短课', '长课']
+/** 档位 → 界面文案：说明各自对应轮播里的哪几张卡 */
+const SCHOOL_DURATION_LABELS: Record<string, string> = {
+  短课: '短课（卡 1-3）',
+  长课: '长课（卡 4-6）',
+}
 const WORK_DURATIONS = ['10分钟', '45分钟', '2小时']
 const CARE_METHODS = ['ocr检测', '一键护理']
 const EMPLOYED_ACTIONS = ['等到25/75（小于45min）', '等到25/75', '立刻召回', '让利雇主（不召回）']
@@ -66,7 +77,7 @@ export const GROUPS: Record<string, GroupDef> = {
       { key: 'school_enabled', label: '启用学习', kind: 'bool' },
       { key: 'school_attribute', label: '学习科目', kind: 'select', opts: SCHOOL_ATTRS },
       { key: 'school_times', label: '每天学习次数', kind: 'int', tip: '0 = 不限', w: 60 },
-      { key: 'school_duration', label: '课时档位', kind: 'select', opts: SCHOOL_DURATIONS, tip: '短课单位收益更高' },
+      { key: 'school_duration', label: '课时档位', kind: 'select', opts: SCHOOL_DURATIONS, optLabels: SCHOOL_DURATION_LABELS, tip: '短课单位收益更高。各学园的分钟数不同（进修学院实测短课 45 分钟 / 长课 135 分钟），实际时长选课后从详情面板读取并据此结算' },
     ],
   },
   work: {

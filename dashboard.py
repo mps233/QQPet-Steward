@@ -1150,6 +1150,19 @@ def stop_total_hours(sched: dict) -> int:
     return max(study, work)
 
 
+def _course_kind(value) -> str | None:
+    """school.duration → '短课'/'长课'（与 src/settings.validate_field 同一份归一化）。
+
+    设置页下拉只有"短课/长课"两项，而 config.yaml 里可能是旧版的分钟数写法，
+    回填前必须先归一——否则 select 找不到匹配项，浏览器退化成显示第一项。
+    """
+    try:
+        from src.progress import course_kind
+    except Exception:
+        return None
+    return course_kind(value)
+
+
 def editable_snapshot() -> dict:
     """设置卡可编辑字段的当前值（供表单回填）。"""
     try:
@@ -1192,7 +1205,10 @@ def editable_snapshot() -> dict:
         'pk_enabled': bool((tasks.get('pk') or {}).get('enabled', True)),
         'adventure_enabled': bool((tasks.get('adventure') or {}).get('enabled', True)),
         'school_attribute': str(school.get('attribute') or '力量'),
-        'school_duration': str(school.get('duration') or '10分钟'),
+        # 归一化成"短课/长课"再回填：config.yaml 里可能还是旧的分钟数写法
+        # （10分钟=短课，其余分钟数=长课），前端下拉只有短课/长课两项，
+        # 原样回填会让 select 落空、显示成第一项，与真正生效的档位对不上。
+        'school_duration': (_course_kind(school.get('duration')) or '短课'),
         'school_times': school.get('times_per_day', 0),
         'work_location': work.get('location'),
         'work_locations': locations,

@@ -32,7 +32,7 @@ class FakeBridge:
     def __init__(self, settings: dict | None = None):
         self.settings = dict(settings or {
             'school_enabled': True,
-            'school_duration': '10分钟',
+            'school_duration': '短课',
             'school_attribute': '力量',
             'coin_threshold': 2000,
             'hire_name': '',
@@ -187,10 +187,10 @@ def test_parse_value_rejects_bad_bool_and_int():
 
 def test_set_writes_through_bridge():
     bot, bridge = make_bot()
-    reply = bot.handle_text('/set school_duration 30分钟')
-    assert bridge.applied == [{'school_duration': '30分钟'}]
+    reply = bot.handle_text('/set school_duration 长课')
+    assert bridge.applied == [{'school_duration': '长课'}]
     assert '已生效' in reply
-    assert bridge.settings['school_duration'] == '30分钟'
+    assert bridge.settings['school_duration'] == '长课'
 
 
 def test_set_value_with_spaces():
@@ -277,8 +277,8 @@ def test_unknown_command_returns_help():
 def test_command_with_bot_suffix_is_handled():
     """群里必须发 `/set@my_bot`，@ 后缀要能剥掉。"""
     bot, bridge = make_bot()
-    bot.handle_text('/set@qqpet_bot school_duration 30分钟')
-    assert bridge.applied == [{'school_duration': '30分钟'}]
+    bot.handle_text('/set@qqpet_bot school_duration 长课')
+    assert bridge.applied == [{'school_duration': '长课'}]
 
 
 # ---------------------------------------------------------------- 自然语言开关

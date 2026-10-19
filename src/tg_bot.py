@@ -77,7 +77,10 @@ def blocked_reason(key: str) -> str:
 #: `src/settings.py` 的 `validate_field`（两边不重复实现规则，避免漂移）。
 OPTIONS: dict[str, list[str]] = {
     'school_attribute': ['力量', '智力', '魅力', '夏令营'],
-    'school_duration': ['10分钟', '30分钟'],
+    # 档位是"短课/长课"（按课程轮播卡位选），不是分钟数：各学园时长不同
+    # （进修学院实测短课 45 分钟 / 长课 135 分钟）。旧值 10/30 分钟仍能写，
+    # 但会被 course_kind() 归成长课（除 10分钟），提示里不再给这两个假选项。
+    'school_duration': ['短课', '长课'],
     'work_duration': ['10分钟', '45分钟', '2小时'],
     'care_method': ['ocr检测', '一键护理'],
     'friend_care_method': ['ocr检测', '一键护理'],
@@ -153,7 +156,7 @@ _FALSE = {'0', 'false', 'no', 'off', 'n', 'f', '关', '关闭', '禁用', '停',
 HELP_TEXT = """QQ宠物托管 · 控制机器人
 
 【改设置】
-/set 字段 值        例：/set school_duration 30分钟
+/set 字段 值        例：/set school_duration 短课
 /get                列出全部可改字段与当前值
 /get 字段           只看一个，例：/get coin_threshold
 
