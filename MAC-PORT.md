@@ -1,7 +1,22 @@
 # macOS 移植说明（本地适配副本）
 
 本目录是 [490720818/qq-pet-copilot](https://github.com/490720818/qq-pet-copilot)（GPL-3.0）的 macOS 本地适配版。
-目标运行方式：**控制台调度器 + Android 真机**（不使用 Windows 模拟器链路与 GUI）。
+目标运行方式：**浏览器仪表盘 + Android 真机**（也支持控制台调度器；不使用 Windows 模拟器链路与 GUI）。
+
+## 平台差异（当前实现）
+
+核心逻辑两端完全一样，只有这几处按平台分开实现：
+
+| 功能 | Windows | macOS |
+| --- | --- | --- |
+| adb 路径探测 | 6 个常见安装位 | Homebrew / Android Studio 3 个 |
+| 模拟器实例探测 | 读注册表（卸载项/MuiCache） | 进程与端口反查 |
+| 桌面通知 | Windows Toast | `osascript` 通知 |
+| 实时画面取源 | 项目自带 `resources/scrcpy-win64/scrcpy-server` | Homebrew 的 `scrcpy-server` |
+
+本仓库**不含 Windows 桌面 GUI**：上游那套 PyQt6 界面用 Win32 的 `SetParent` 把 scrcpy
+窗口嵌进自己窗口，macOS 上做不了；本版统一走浏览器界面。上游的 GUI、打包脚本与
+Windows CI 工作流已移除。调度器与仪表盘主要在 macOS 验证，Windows / Linux 未实测。
 
 ## 相对上游的改动（分支 `mac-port`）
 

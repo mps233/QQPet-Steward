@@ -153,6 +153,8 @@ pk:
   helper_fallback: false
 
 friend_care:
+  # 好友护理已并入「护理」任务（不是独立任务）：护理每轮检查完自己之后，
+  # 到点就顺路去好友家护理一次；这一段控制好友护理本身（开关/对象/间隔/方式）。
   # 启用好友护理开关
   enabled: false
   # 好友护理时间段（HH:MM-HH:MM）：到达开始时间后访问指定好友家护理，
@@ -167,7 +169,17 @@ friend_care:
   # 调度间隔（秒）：每次调度只做一次护理巡检，距上次巡检至少间隔这么久才再次调度
   interval_seconds: 60
 
+gift_bag:
+  # 福袋开关：遍历好友家，领取系着绳结的福袋（敞口/无袋跳过；非好友不领）
+  enabled: true
+  # 扫描时间段（HH:MM-HH:MM，支持跨零点）：00:00-00:00 = 全天
+  time_range: "00:00-00:00"
+  # 扫描间隔（秒）：距上次扫描完成至少间隔这么久才再次扫描
+  interval_seconds: 1800
+
 hire_friend:
+  # 好友雇佣已并入「打工」：优先雇谁请配 work.hire_name。
+  # 本段保留好友名/时间段/次数等兼容配置，不是独立任务，不参与任务队列调度。
   # 雇佣好友开关
   enabled: false
   # 雇佣好友时间段（HH:MM-HH:MM，支持跨零点）：时间段内才调度雇佣
@@ -184,17 +196,17 @@ runner:
   engine: task_queue
 
 # 任务调度：顺序（> 分隔，越靠前越优先，不在 order 里的任务不调度）+ 每任务调度设置
-# 可选任务名：care(护理) adventure(冒险) visit(踩踩) pk(PK)
-#   hire_friend(好友雇佣) friend_care(好友护理) school(学习) work(打工)
+# 可选任务名：care(护理) gift_bag(福袋) adventure(冒险) visit(踩踩) pk(PK)
+#   school(学习) work(打工)
 tasks:
-  order: care>school>friend_care>hire_friend>adventure>visit>pk>work
-  # 主任务组（冒险/学习/打工/雇佣好友互斥，不能同时做）组内优先级：
+  order: care>gift_bag>visit>pk>school>work>adventure
+  # 主任务组（冒险/学习/打工互斥，不能同时做）组内优先级：
   # > 分隔，越靠前越优先；没列出的主任务按默认顺序兜底排最后。
   # 注意：这里只是"逐个检查的顺序"，任务还要自身条件满足才会执行
-  # （学习要金币达标 + 未超时长上限 + 未疲劳；打工要 enabled 且未达 work_stop_hours 等），
+  # （学习要金币达标 + 未超学习配额/停止点；打工要 enabled 且未达打工配额/停止点），
   # 排第一不等于一定跑——条件不满足会自动落到后面的任务。
-  # 本行含义：学习 > 雇佣好友 > 冒险 > 打工（有冒险次数就先冒险）
-  main_order: school>hire_friend>adventure>work
+  # 本行含义：学习 > 打工 > 冒险（想先冒险就改成 adventure>school>work）
+  main_order: school>work>adventure
   # 所有任务统一的失败重试间隔（秒）：设置页"任务失败重试间隔"可改，
   # 覆盖原来各任务单独的 failure_interval
   failure_interval: 1800
@@ -203,7 +215,7 @@ tasks:
   #   下一个时间点重新打开窗口）
   # enabled_time_range: 允许执行的时间窗（HH:MM:SS-HH:MM:SS）
   # success_interval: 成功/失败后距下次执行的最小间隔（秒）；
-  # failure_interval 已统一为下面的 failure_interval（设置页"任务失败重试间隔"）
+  # failure_interval 已统一为上面的 failure_interval（设置页"任务失败重试间隔"）
   care:
     enabled: true
     trigger: interval
@@ -228,15 +240,8 @@ tasks:
     daily_times: ["00:01"]
     enabled_time_range: 00:00:00-23:59:59
     success_interval: 60
-  # 好友雇佣/好友护理的时间条件由各自配置段决定（hire_friend.time_range /
-  # friend_care.time_range），这里用 interval 触发即可
-  hire_friend:
-    enabled: true
-    trigger: interval
-    interval_seconds: 60
-    enabled_time_range: 00:00:00-23:59:59
-    success_interval: 60
-  friend_care:
+  # 福袋的时间条件由 gift_bag.time_range 决定，这里用 interval 触发即可
+  gift_bag:
     enabled: true
     trigger: interval
     interval_seconds: 60
