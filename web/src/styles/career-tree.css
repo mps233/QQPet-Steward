@@ -770,10 +770,27 @@ main section[data-page='plan'] .ct-page {
   height: 100%;
   overflow: hidden;
 }
+/* 职业树背景：只有这一层铺深棕渐变，`.ct-page` 里面只负责内容列。
+   **宽屏下不要解除限宽** —— app.css 那条内页规则给所有内页的
+   max-width(--page-max) + 居中 + 阴影，正是总览页那圈可识别的「手机列」边框，
+   职业树跟着走才对（用户 2026-10-20 实报：宽屏下职业树没有这圈框）。
+   窄屏恢复官方整屏沉浸式铺满：限宽和阴影在下面的媒体查询里显式撤掉
+   （app.css 那条 `@media(max-width:639px)` 写在内页基础规则之前，被后写的
+   同名规则压住了，不能指望它）。
+   特异性 (0,2,2) 与 app.css 那条相同，靠"后写的胜出"
+   （career-tree.css 在 main.tsx 里最后 import）。 */
 main section[data-page='plan']:not([data-page='main']) {
-  background: #5d4443;
+  background: linear-gradient(180deg, #5d4443 0%, #8a6860 100%);
   padding-bottom: 0;
 }
+@media (max-width: 639px) {
+  main section[data-page='plan']:not([data-page='main']) {
+    max-width: none;
+    margin: 0;
+    box-shadow: none;
+  }
+}
+
 
 /* 窄屏（≤360）收紧列宽，一屏仍放得下 ~3.2 列 */
 /* 极窄屏（<300px）：JS 的 clamp 下界已经兜住（col≥62 / node≥48 / row≥92），
