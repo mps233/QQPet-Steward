@@ -13,7 +13,10 @@
 > 换界面不只是审美：上游嵌 scrcpy 窗口靠在的是 Win32 的 `SetParent`，macOS 上做不了。
 > 差异清单与上游同步方式见 [MAC-PORT.md](MAC-PORT.md)。
 
-![仪表盘总览页](docs/overview-annotated.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/overview-annotated-dark.png">
+  <img alt="仪表盘总览页" src="docs/overview-annotated.png">
+</picture>
 
 ## 它能做什么
 
