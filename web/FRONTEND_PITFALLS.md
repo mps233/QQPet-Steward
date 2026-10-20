@@ -151,6 +151,47 @@ V2 把所有 `.flt` 组件改成 `position:static` 参与文档流。这**不只
 `.advlist .ai` 有两份：基规则 126px + `@media(max-width:360px)` 里 96px。
 只改基规则 → 真机（≤360 宽）没变化。**用户手机命中的是窄屏分支。**
 
+### ⚠ 文字居中别用 `transform: translate(-50%,-50%)`（2026-10-19，iOS PWA 糊字）
+
+**症状**：iPhone 主屏 PWA 里，页面**上半部**的文字糊成一团，同一屏下半部的字却锐利。
+第一反应都会怀疑安全区/背景图，都不是。
+
+**真凶**：那些位置的元素用 `left:50% + translateX(-50%)`（或 `top:50% + translateY(-50%)`）
+做居中 —— transform 会把元素提升成独立合成层，iOS 上这层文字按**低分辨率**栅格化，
+再用 GPU 放大贴回去，于是笔画边缘全是半透明过渡。
+
+**逐像素判据**（截图里量「最强水平梯度 ÷ 该处明暗跨度」，1.0 = 完全锐利）：
+
+| 元素 | 相对锐度 | 居中方式 |
+| --- | --- | --- |
+| 设置页 `.navtitle`「设置」 | **0.31** | `left:50%+translateX(-50%)` |
+| 职业树 `.ct-title`「职业树」 | **0.38** | `top:50%+translateY(-50%)` |
+| 同屏「力量 8971」/ 列头 / 层级标签 / 名牌 | **0.79 ~ 0.91** | 正常流 |
+| 系统状态栏时间（对照组） | 0.93 | 系统绘制 |
+
+同一屏里差 2~3 倍，且**恰好全是带 transform 的那几个** —— 这就是判据。
+（模糊的版本里文字最亮点只有 234，锐利的能到 255：高频细节被削掉了。）
+
+**改法**（位置一模一样，只是不再建合成层）：
+
+```css
+/* 水平居中 */
+{ left:0; right:0; text-align:center }            /* 文字 */
+{ left:0; right:0; margin-left:auto; margin-right:auto; width:max-content }  /* 盒子 */
+/* 垂直居中 */
+{ top:0; bottom:0; display:flex; align-items:center }   /* 或 line-height */
+```
+
+已改：`.navhead .navtitle`、`.ct-title`、`.ct-toast`、`#sceneToast`、
+`.shotpage .livetoast`、`.drawer`（V1/V2 两份）。**新增居中元素时别再用 translate 那套。**
+
+**为什么 headless 验不出来**：Chromium 在桌面上默认就按 DPR 栅格化，不会出现这条
+（写了个四行对照页量过一个字节都不差）。**这条只能在真机上认。**
+
+**残留的合法 transform**：`.ct-lock`（锁遮罩）、`.ct-close`（圆形按钮）、
+`.cap::before`（纯色胶囊体）、`.dtitle .dot`（小圆点）—— 它们**不含文字**，
+或形状本身对称到看不出来，别顺手改掉。
+
 ---
 
 ## 五、重构/搬页面时最容易漏的：JS 副作用

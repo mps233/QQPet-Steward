@@ -107,9 +107,20 @@
   position: absolute;
   left: 0;
   right: 0;
-  /* 标题与返回钮同一中线（官方两者中心都 ≈41.8） */
-  top: 50%;
-  transform: translateY(-50%);
+  /* 标题与返回钮同一中线（官方两者中心都 ≈41.8）。
+     **不要用 `top:50% + translateY(-50%)` 做垂直居中**（2026-10-19 真机实测）：
+     iOS PWA 里带 transform 的元素会被提升成合成层，文字按低分辨率栅格化，
+     结果就是标题糊成一团 —— 同一屏里所有正常流文字都锐利。
+     逐像素量（梯度中位数 ÷ 该处明暗跨度，1.0 = 完全锐利）：
+       本标题 0.38 ／ 设置页 .navtitle 0.31（同样 transform 居中）
+       同屏「力量 8971」0.88 ／ 列头 0.90 ／ 层级标签 0.91 ／ 名牌 0.79
+     （用户实报「最顶部上半部的字会被模糊掉」；跟安全区、跟深棕背景都无关。）
+     改用 top/bottom 撑满 + flex 居中：位置一模一样，但不创建合成层。 */
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   margin: 0;
   font-size: calc(var(--ct-col) * 0.185);   /* 17 / 92 */
   font-weight: 600;
@@ -703,9 +714,16 @@
 /* ---------- toast ---------- */
 .ct-toast {
   position: fixed;
-  left: 50%;
-  top: 51.1%;
-  transform: translate(-50%, -50%);
+  /* **不用 transform 做居中**（同 .ct-title / .navtitle）：iOS PWA 上带 transform
+     的元素会被提升成合成层，文字按低分辨率栅格化，看起来糊。这里用
+     left:0/right:0 + margin:auto 水平居中，垂直保留 top + 自身半高的近似值
+     （toast 高度 = 13px 字 + 上下 9px padding ≈ 35，取 17.5）。 */
+  left: 0;
+  right: 0;
+  top: calc(51.1% - 17.5px);
+  margin-left: auto;
+  margin-right: auto;
+  width: max-content;
   z-index: 70;
   /* 实测 214.7×36.7dp；宽度别卡太死否则「该职业还未现世，再观望一下」会换行 */
   max-width: calc(100vw - 40px);

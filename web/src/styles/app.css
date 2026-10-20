@@ -416,9 +416,16 @@ main section[data-page]{min-height:100%}  /* .home 与内页共用（内页另�
    4 张房间图肉眼可辨，但"回到自动"这一步在任务场景恰好是主房间时看不出变化，
    故给一句状态文字；位置取绝对定位居中偏下 —— 避开顶部资料卡/胶囊区，
    也不会盖住底部抽屉（.deck）。1.6 秒自动淡出，pointer-events:none 不挡点击。
-   z-index 高于 .flt 各层（总览页里最高的是 .deck 的 5），保证压在最上面。 */
+   z-index 高于 .flt 各层（总览页里最高的是 .deck 的 5），保证压在最上面。
+   **居中不用 transform**（与 .navtitle 同一条理由）：left:0/right:0 + margin:auto
+   就能水平居中（宽度由内容决定），文字不会被推进合成层而糊掉。 */
 #sceneToast{
-  position:absolute;left:50%;top:62%;transform:translate(-50%,-50%);
+  /* 原来靠 `top:62% + translate(-50%,-50%)` 同时做两个方向的居中。
+     去掉 transform 后水平改由 margin:auto 完成，垂直改由"减去自身半高"完成
+     （高度 = font 12.5 × line-height 1.5 + 上下 padding 6×2 ≈ 31px，
+      取 15px；这是个一闪而过的提示，差 1px 看不出来）。 */
+  position:absolute;left:0;right:0;top:calc(62% - 15px);
+  margin-left:auto;margin-right:auto;width:max-content;
   z-index:9;max-width:86%;padding:6px 14px;border-radius:999px;
   font-size:12.5px;color:#fff;background:rgba(0,0,0,.72);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
@@ -870,9 +877,13 @@ main section[data-page]{min-height:100%}  /* .home 与内页共用（内页另�
      原记录：
      于是 .home 多出一点点可滚高度（用户实报"底栏最下面有一块很细很细的区域，
      导致可以滚动一点点"）。收 3u 后留出余量；图标离弧顶近了不到 4px，看不出来。
-     注意别去改 .deck 的 135u —— 那是官方底栏的形。 */
-  left:50%;
-  transform:translateX(-50%);
+     注意别去改 .deck 的 135u —— 那是官方底栏的形。
+
+  **水平居中不用 transform**（同 .navtitle 那条坑）：父级 .deck 宽 100%，
+  左右同时给 0 + margin:auto 就能居中，文字也不会被推进合成层。
+  （.drawer 本身只装 img/div/span，没有文字直接子节点，但保持全站一致更省心。） */
+  left:0;right:0;
+  margin-left:auto;margin-right:auto;
   top:calc(var(--u) * 12);
   width:calc(var(--u) * 62);
   display:flex;flex-direction:column;align-items:center;
@@ -1165,7 +1176,10 @@ main section[data-page]{min-height:100%}  /* .home 与内页共用（内页另�
 /* 点击接收层（盖在 video 上）与操作反馈气泡：注入结果一律给反馈，
    否则"点了没反应"分不清是没接管、没开播、还是被服务端拒绝 */
 .shotpage .livetap{position:absolute;inset:0;z-index:1;cursor:crosshair}
-.shotpage .livetoast{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);z-index:3;max-width:92%;padding:5px 14px;border-radius:999px;font-size:12px;color:#fff;background:rgba(0,0,0,.72);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:0;transition:opacity .18s;pointer-events:none}
+/* 居中走 left:0/right:0 + margin:auto（不用 translateX(-50%)，理由同 .navtitle：
+   带 transform 的文字在 iOS PWA 上会按低分辨率栅格化、糊成一团）。
+   宽度上限交给 max-width + width:max-content，与原来的视觉一致。 */
+.shotpage .livetoast{position:absolute;left:0;right:0;bottom:14px;margin-left:auto;margin-right:auto;width:max-content;z-index:3;max-width:92%;padding:5px 14px;border-radius:999px;font-size:12px;color:#fff;background:rgba(0,0,0,.72);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:0;transition:opacity .18s;pointer-events:none}
 .shotpage .livetoast.on{opacity:1}
 .shotpage #btnTakeover.on{background:#16a34a;color:#fff;border-color:#16a34a}
 .shotpage #liveMeta{font-size:12px;color:#64748b;align-self:center}
@@ -1696,9 +1710,18 @@ section[data-page="set"] > h2{
 .navhead .backbtn img{width:62%;height:62%;object-fit:contain}
 .navhead .backbtn:active{opacity:.55}
 .navhead .navtitle{
-  position:absolute;left:50%;transform:translateX(-50%);
+  /* **居中别用 transform**（2026-10-19 真机实测）。
+     iOS PWA 上 `left:50% + translateX(-50%)` 会把文字推进"半像素 + 独立合成层"，
+     栅格化时按 1x 而不是 3x 出字，表现出来就是**标题比同一页的列表文字糊一圈**
+     （用户实报「最顶部上半部的字会被模糊掉」；逐像素量：同页列表行的笔画边缘
+     梯度中位数 220，标题只有 61，而系统状态栏时间本来就是 343 的锐利值 ——
+     即"糊"跟安全区、跟背景色都无关，只跟这条 transform 有关）。
+     改成 absolute + 左右同时给 0 + text-align:center：位置完全一样，
+     但不再创建合成层。同理见 career-tree.css 的 .ct-title。 */
+  position:absolute;left:0;right:0;text-align:center;
   font-size:calc(var(--u) * 17);font-weight:600;color:#1C1C1E;
   white-space:nowrap;
+  pointer-events:none;
 }
 /* 一级列表：小节（标题在卡外 + 白卡内多行） */
 .msec{margin-top:calc(var(--u) * 16)}

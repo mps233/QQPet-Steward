@@ -238,10 +238,10 @@
    top 12u）。V2 的 grid 布局下它仍应居中，所以对 .drawer 单独恢复绝对定位。 */
 .v2-bottom .deck .drawer{
   position:absolute;
-  left:50%;transform:translateX(-50%);
+  left:0;right:0;
+  margin-left:auto;margin-right:auto;
   top:calc(var(--u) * 12);
   width:calc(var(--u) * 62);      /* V1 实测 67px ≈ 62u */
-  margin:0;
 }
 
 /* 功能栏：V1 在右列圆钮下方竖排（x319..373 y259..508，与右列圆钮同一 x）。
