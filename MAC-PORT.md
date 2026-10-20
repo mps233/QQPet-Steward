@@ -422,7 +422,7 @@
 
 ## 远端与上游同步
 
-- `origin` = 自己的 fork：<https://github.com/mps233/qq-pet-copilot>
+- `origin` = 自己的 fork：<https://github.com/mps233/QQPet-Steward>
   （`git push origin mac-port`）
 - `upstream` = 上游：<https://github.com/490720818/qq-pet-copilot>
 

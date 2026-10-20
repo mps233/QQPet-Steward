@@ -1,4 +1,4 @@
-# QQ 宠物自动化助手配置（示例）
+# QQ宠物托管（QQPet-Steward）配置（示例）
 # 复制为 config.yaml 后按需修改；config.yaml 不入库。
 
 adb:
