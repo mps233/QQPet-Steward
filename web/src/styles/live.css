@@ -94,6 +94,10 @@ main section[data-page='shot']:not([data-page='main']) {
   -webkit-tap-highlight-color: transparent;
 }
 #phoneShot {
+  /* 必须显式定位压到环境光之上：.shotambient 是 z-index:0 的定位元素，
+     未定位的图片按绘制顺序会被它盖住（表现为整张截图糊一层）。 */
+  position: relative;
+  z-index: 2;
   display: block;
   width: auto;
   height: auto;
