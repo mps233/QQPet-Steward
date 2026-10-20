@@ -54,6 +54,10 @@ export function hms(sec: number): string {
 export const hrs = (sec: number | undefined): string =>
   ((sec || 0) / 3600).toFixed(1).replace(/\.0$/, '')
 
+/** 大数缩写：113000 → "11.3w"，10000 → "1w"，不足一万保持原样 */
+export const wan = (n: number): string =>
+  n >= 10000 ? (n / 10000).toFixed(1).replace(/\.0$/, '') + 'w' : String(n)
+
 /** 把值夹进 0~100 的百分比（进度条 / 状态环用） */
 export const pct = (v: number, max: number): number =>
   max > 0 ? Math.min(100, Math.max(0, (v / max) * 100)) : 0

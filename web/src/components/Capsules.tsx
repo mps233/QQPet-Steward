@@ -1,5 +1,5 @@
 import type { Data } from '../api'
-import { hrs, pct } from '../lib/format'
+import { hrs, pct, wan } from '../lib/format'
 
 /** 顶部两颗数据胶囊（官方结构：图标在胶囊外面且比胶囊大，文字在胶囊内居中）。
  *  第一排：金币 / 今日踩踩 / 今日PK；第二排：今日冒险 / 学习+打工合计 / 经验日常。
@@ -45,11 +45,11 @@ export function Capsules({ data }: { data: Data }) {
   return (
     <div className="flt caps">
       <div className="caps-row">
-        <div className="cap" title="金币">
+        <div className="cap" title={st.coins != null ? `金币 ${st.coins.toLocaleString('zh-CN')}` : '金币'}>
           <img className="cico" src="/qp-icons/official/cap_coin.png" alt="" />
           <div className="capbody">
             <span className="cval" id="coins">
-              {st.coins != null ? st.coins : '--'}
+              {st.coins != null ? wan(st.coins) : '--'}
             </span>
             <span className="cunit" id="coinsAt">
               {st.coins != null && st.updated ? `· ${st.updated.slice(11, 16)}` : ''}

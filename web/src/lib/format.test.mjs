@@ -15,7 +15,7 @@ try {
     '--module', 'esnext', '--target', 'es2020',
     '--moduleResolution', 'bundler', '--outDir', out,
   ], { stdio: 'pipe' })
-  const { formatUptime, parseUptimeSeconds, advanceUptime, countdownSeconds, hms } =
+  const { formatUptime, parseUptimeSeconds, advanceUptime, countdownSeconds, hms, wan } =
     await import(pathToFileURL(join(out, 'format.js')).href)
 
   const cases = [
@@ -103,7 +103,19 @@ try {
   assert.equal(hms(59), '00:59')
   assert.equal(hms(3600), '1:00:00')
   assert.equal(hms(86400), '24:00:00')
-  console.log(`Time formatting/clocks: ${cases.length + parseCases.length + tickCases.length + countdownCases.length + 3} checks passed`)
+  const wanCases = [
+    [0, '0'],
+    [9999, '9999'],
+    [10000, '1w'],
+    [113000, '11.3w'],
+    [105000, '10.5w'],
+    [113999, '11.4w'],
+    [1234567, '123.5w'],
+  ]
+  for (const [input, expected] of wanCases) {
+    assert.equal(wan(input), expected, `wan: ${input}`)
+  }
+  console.log(`Time formatting/clocks: ${cases.length + parseCases.length + tickCases.length + countdownCases.length + wanCases.length + 3} checks passed`)
 } finally {
   rmSync(out, { recursive: true, force: true })
 }
