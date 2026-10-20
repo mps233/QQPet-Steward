@@ -30,41 +30,46 @@
 
 ## 快速开始
 
-需要 **Python 3.13** 和一台 **Android 真机**（USB 调试打开、QQ 已登录宠物、充电时不熄屏）。
+需要 **Python 3.13**、**adb（Android platform-tools）** 和一台 **Android 真机**
+（USB 调试打开、QQ 已登录宠物、充电时不熄屏）。
 
 ```bash
-# 0) 一次性的设备设置：插着电不熄屏
-adb shell settings put global stay_on_while_plugged_in 7
+# 0) 准备 adb 和手机
+brew install android-platform-tools        # 已有 adb 可跳过
+adb devices                                # 确认手机已授权、只显示一台 device
+adb shell settings put global stay_on_while_plugged_in 7   # 插着电不熄屏
 
 # 1) 装依赖
-python3 -m venv .venv
+python3.13 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 
 # 2) 配置
 cp config.example.yaml config.yaml
-#   至少要改这两个：
-#   adb.path          = adb 的绝对路径（留空会自动探测）
-#   adb.device_serial = 你的设备序列号（adb devices 查看）
-#   真机设了锁屏密码的话，recover.method 用「重启游戏」，别用「重启设备」
+#   单台设备 + adb 在 PATH 时，adb.path / adb.device_serial 都可以留空（自动探测）。
+#   config.example.yaml 里的 adb.path 默认是 Windows 的随包路径，macOS 上建议改成空字符串。
+#   多台在线设备时再填 adb.device_serial（adb devices 查看）。
+#   真机设了锁屏密码的话，recover.method 用「重启游戏」，别用「重启设备」。
 
-# 3) 起服务
-./run.sh          # 调度器（Ctrl+C 停止；后台常驻见下）
-./tools/launchd/install.sh   # 手机仪表盘：交 launchd 托管（8787，崩溃自愈）
-#   macOS 长跑必须用这条：把仪表盘交给 launchd 才不会随“退出某个 App”被连带杀掉
-#   （application coalition，2026-10-09 实测事故）；卸载加 --uninstall
-#   临时/调试仍可用 ./dashboard.sh，但它起的实例依旧脆
-
-# Windows：上面两个脚本用 Git Bash 跑；或者直接执行等价命令
-#   .venv\Scripts\python scenarios\runner.py
-#   .venv\Scripts\python dashboard.py --port 8787
-#   （launchd 托管是 macOS 专用的；Windows 用上面的 nohup/计划任务方式常驻）
+# 3) 起仪表盘（macOS 推荐：launchd 托管，崩溃自愈、长跑安全）
+./tools/launchd/install.sh
+#   之前用 ./dashboard.sh 起过临时实例的话，先停掉再装，否则 8787 被占：
+#   kill $(lsof -nP -iTCP:8787 -sTCP:LISTEN -t)
 ```
 
-然后在同一个 Wi-Fi 下，手机浏览器打开 **`http://<Mac 的局域网 IP>:8787`**，
-可以「添加到主屏幕」当 App 用。
+手机和电脑连同一个 Wi-Fi，浏览器打开 **`http://<电脑的局域网 IP>:8787`**，
+可以「添加到主屏幕」当 App 用。首次访问需要输入本机 `runs/dashboard_access.token`
+里的访问码（嫌难记可在「设置 → 仪表盘访问码」里改）；登录后点右栏的「启动」
+拉起调度器。
 
-想后台常驻（关掉终端也不停）：`nohup ./run.sh > /dev/null 2>&1 &`，
-或直接在仪表盘上点「启动」。
+只在终端里调试调度器时才用 `./run.sh`（Ctrl+C 停止）。它和仪表盘的「启动」
+**二选一**，不要同时开。**别用 `nohup ./run.sh &` 长跑**：`nohup`/`setsid`
+不改变 macOS 的 application coalition，强制退出终端 App 仍可能把它一起杀掉；
+长跑用上面的仪表盘「启动」。
+
+Windows（未实测）：`run.sh` 写死了 `.venv/bin/python`，Windows 下请直接用
+`.venv\Scripts\python scenarios\runner.py`；仪表盘用
+`.venv\Scripts\python dashboard.py --port 8787`，再从界面点「启动」。
+Windows 没有 launchd，开机自启用「任务计划程序」。
 
 ### 两个平台的差异
 
