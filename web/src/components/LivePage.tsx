@@ -36,36 +36,65 @@ export function LivePage() {
 
   const loading = !data && !error
   const failed = !data && !!error
+  const stamp = data?.at ? `拍摄 ${data.at}` : '等待画面'
 
   return (
-    <>
-      <div className="scenecard duoshot" id="shotCardWrap">
-        {data ? <span className="shotmeta">拍摄 {data.at}</span> : null}
+    <div className="shotbody">
+      <div className="shotstage" id="shotCardWrap">
         <a
           id="shotLink"
+          className="shotscreen"
           href="/api/screenshot"
           target="_blank"
           rel="noopener"
           title="点开原图"
+          onClick={(e) => {
+            if (!url) e.preventDefault()
+          }}
         >
-          {url ? <img id="phoneShot" src={url} alt="手机当前画面" /> : null}
+          {url ? (
+            <>
+              <span
+                className="shotambient"
+                style={{ backgroundImage: `url(${url})` }}
+                aria-hidden="true"
+              />
+              <img id="phoneShot" src={url} alt="手机当前画面" />
+            </>
+          ) : null}
           {loading || failed ? (
-            <span className={'shotloading' + (failed ? ' failed' : '')}>
-              {failed ? '获取失败，稍后自动重试…' : '画面加载中…'}
+            <span className={'shotempty' + (failed ? ' failed' : '')}>
+              {failed ? null : <span className="shotspin" aria-hidden="true" />}
+              <span className="shotempty-t">{failed ? '暂时连不上手机' : '正在获取画面'}</span>
+              <span className="shotempty-s">
+                {failed ? '15 秒后自动重试' : '通常 1 秒内完成'}
+              </span>
             </span>
           ) : null}
+          {url ? <span className="shotprogress" key={url} aria-hidden="true" /> : null}
         </a>
-        <div className="shoterr">{error ? `获取失败：${error}` : ''}</div>
       </div>
-      <div className="shotpage-ctl">
-        <button className="savebtn" onClick={reload}>
+
+      <div className="shotmeta">
+        <span className="shotstamp">
+          <i className={'shotdot' + (error ? ' stale' : '')} aria-hidden="true" />
+          {stamp}
+        </span>
+        <span className={'shotcycle' + (error ? ' stale' : '')}>
+          {error ? '暂时连不上，正在重试' : '每 15 秒自动刷新'}
+        </span>
+      </div>
+
+      <div className="shotactions">
+        <button className="shotbtn primary" onClick={reload}>
           刷新画面
         </button>
-        <a className="savebtn" href="/api/screenshot" target="_blank" rel="noopener">
-          在新标签打开原图
+        <a className="shotbtn" href="/api/screenshot" target="_blank" rel="noopener">
+          查看原图
         </a>
       </div>
-      <p className="shotnote">每 15 秒自动刷新；切到后台会暂停，回来时立即补一张。</p>
-    </>
+
+      {error ? <div className="shoterr">获取失败：{error}</div> : null}
+    </div>
   )
 }
