@@ -9,6 +9,8 @@ import './styles/app.css'
 import './styles/overview-v2.css'
 // 职业树（官方逐像素复刻，独立命名空间 .ct-*）
 import './styles/career-tree.css'
+// 实时画面（定时截图）页
+import './styles/live.css'
 
 installStageUnit()
 

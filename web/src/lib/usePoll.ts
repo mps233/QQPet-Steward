@@ -20,8 +20,6 @@ export interface PollResult<T> {
  *  - **后台暂停 / 回前台补拉**：手机 PWA 切后台不再每 6 秒白打一次接口
  *
  * 失败怎么显示由调用方决定（日志子页静默、其余页渲染 error），本 hook 只如实上报。
- * **流媒体心跳不走这里**（LivePage）：它每轮还要 POST 保活、量延迟追帧、检测接管失效，
- * 是状态机而不是取数。
  */
 export function usePoll<T>(
   fetcher: () => Promise<T>,

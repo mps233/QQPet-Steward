@@ -37,13 +37,6 @@ from src.dashboard_auth import (COOKIE_NAME, LOGIN_HTML, MIN_KEY_LENGTH, authori
 
 BASE = Path(__file__).resolve().parent
 
-# 实时流模块（设备端 scrcpy-server + 本机 ffmpeg 转 HLS）：不可用时 dashboard 仍要能跑
-try:
-    from src.screen_stream import STREAM_DIR, get_stream
-except Exception as _stream_err:                            # noqa: BLE001
-    STREAM_DIR, get_stream = None, None
-    print(f'[dashboard] 实时流模块不可用（/stream 与 /api/stream 将 503）：{_stream_err}',
-          flush=True)
 RUNS = BASE / 'runs'
 RUNNER_PID = RUNS / 'runner.pid'      # 调度器自己写的单实例登记（见 src/instance.py）
 
@@ -295,14 +288,17 @@ PAUSE_SIGNAL = RUNS / 'pause.signal'
 
 
 def scheduler_pause() -> dict:
-    """网页接管：写暂停信号，让调度器在安全点让路（不退出进程、pending 与进度全保留）。"""
+    """写暂停信号，让调度器在安全点让路（不退出进程、pending 与进度全保留）。
+
+    入口是 Telegram 机器人的 `/pause`（原网页「接管操作」已移除，但让路机制保留）。
+    """
     try:
         # 原子写：调度器靠 mtime 判"信号是否新鲜"，写到一半被读会拿到半截时间戳。
         # os.replace 用的是 tmp 的 mtime（即刚写入的时刻），语义不变。
         write_text_atomic(PAUSE_SIGNAL, str(time.time()))
     except OSError as e:
         return {'ok': False, 'msg': f'写暂停信号失败：{e}'}
-    audit('调度器让路（网页接管，来自仪表盘）')
+    audit('调度器让路（来自仪表盘）')
     return {'ok': True, 'msg': '已请求让路（调度器在下一个安全点暂停）',
             'scheduler': scheduler_info()}
 
@@ -314,14 +310,6 @@ def scheduler_resume() -> dict:
         return {'ok': False, 'msg': f'清除暂停信号失败：{e}'}
     audit('调度器恢复（交还控制，来自仪表盘）')
     return {'ok': True, 'msg': '已交还控制权，调度器继续'}
-
-
-def scheduler_paused() -> bool:
-    """让路是否已生效：信号存在且已过一个响应周期（调度器睡眠切片 1 秒）。"""
-    try:
-        return time.time() - PAUSE_SIGNAL.stat().st_mtime > 2.0
-    except OSError:
-        return False
 
 
 def scheduler_stop() -> dict:
@@ -1728,41 +1716,6 @@ def build_data() -> dict:
 
 
 
-def stream_status() -> dict:
-    """实时流状态 + 调度器状态（前端据此提示"先接管再操作"）。"""
-    if not get_stream:
-        return {'running': False, 'error': '流模块不可用'}
-    st = get_stream().status()
-    st['scheduler_alive'] = bool(scheduler_info().get('alive'))
-    st['scheduler_paused'] = scheduler_paused()
-    return st
-
-
-def stream_inject(kind: str, payload: dict) -> dict:
-    """网页端注入：接管模式要求调度器已停 —— 否则手动点击会打乱挂机状态机。
-
-    坐标一律用**设备坐标**，换算到视频坐标系由 src/screen_stream.py 负责
-    （scrcpy-server 的 PositionMapper 校验 screen_size，不匹配会静默丢弃事件）。
-    """
-    if not get_stream:
-        return {'ok': False, 'msg': '流模块不可用'}
-    if scheduler_info().get('alive') and not scheduler_paused():
-        result = {'ok': False, 'msg': '调度器正在运行，请点「接管操作」让它让路（不会中断任务）'}
-    else:
-        try:
-            if kind == 'tap':
-                get_stream().inject_tap(int(payload.get('x', 0)), int(payload.get('y', 0)))
-            else:
-                get_stream().inject_swipe(int(payload.get('x1', 0)), int(payload.get('y1', 0)),
-                                          int(payload.get('x2', 0)), int(payload.get('y2', 0)))
-            result = {'ok': True}
-        except Exception as e:                             # noqa: BLE001
-            result = {'ok': False, 'msg': f'{type(e).__name__}: {e}'}
-    # 记一行日志：网页端"点了没反应"时，据此判断请求到底有没有到服务端
-    print(f'[stream {datetime.now():%H:%M:%S}] 网页注入 {kind} {payload} → {result}', flush=True)
-    return result
-
-
 class Handler(BaseHTTPRequestHandler):
     def _send(self, code: int, ctype: str, body: bytes, cache: str = 'no-store'):
         self.send_response(code)
@@ -1785,55 +1738,13 @@ class Handler(BaseHTTPRequestHandler):
         except BrokenPipeError:
             pass
 
-    def _send_stream(self, name: str) -> None:
-        """实时流分片：首次请求触发设备端采集启动；无人观看由后台看门狗回收。"""
-        if not get_stream:
-            self._send(503, 'text/plain; charset=utf-8', b'stream module unavailable')
-            return
-        if not re.fullmatch(r'(index\.m3u8|init\.mp4|seg\d{4}\.m4s)', name):
-            self._send(404, 'text/plain', b'not found')      # 白名单，防目录穿越
-            return
-        if name == 'index.m3u8':
-            get_stream().ensure_running()
-            deadline = time.time() + 15                      # 等 ffmpeg 产出首个 m3u8
-            while time.time() < deadline:
-                if (STREAM_DIR / 'index.m3u8').is_file():
-                    break
-                st = get_stream().status()
-                if not st.get('running') and st.get('error'):
-                    self._send(503, 'text/plain; charset=utf-8',
-                               f"启动失败: {st['error']}".encode('utf-8'))
-                    return
-                time.sleep(0.3)
-        get_stream().touch_access()
-        fp = STREAM_DIR / name
-        if not fp.is_file():
-            self._send(404, 'text/plain', b'not ready')
-            return
-        data = fp.read_bytes()
-        if name == 'index.m3u8':
-            # ffmpeg 在分片 <0.5s 时会写出非法的 #EXT-X-TARGETDURATION:0（规范要求正整数），
-            # iOS 原生 HLS 播放器会因此拒绝播放（表现为黑屏）—— 这里兜底改成合法值
-            text = re.sub(r'#EXT-X-TARGETDURATION:[\d.]+',
-                          lambda m: '#EXT-X-TARGETDURATION:%d' % max(
-                              1, int(float(m.group(0).split(':')[1]) + 0.999)),
-                          data.decode('utf-8', 'replace'))
-            data = text.encode('utf-8')
-        ctype = 'application/vnd.apple.mpegurl' if name.endswith('.m3u8') else 'video/mp4'
-        self.send_response(200)
-        self.send_header('Content-Type', ctype)
-        self.send_header('Cache-Control', 'no-store')
-        self.send_header('Content-Length', str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
-
     def do_GET(self):
         u = urlparse(self.path)
         path = u.path
-        needs_auth = (path.startswith(('/api/', '/stream/', '/files/'))
+        needs_auth = (path.startswith(('/api/', '/files/'))
                       or path in ('/', '/index.html', '/next', '/next/'))
         if needs_auth and not authorized(self.headers, getattr(self.server, 'access_key', None)):
-            if path.startswith(('/api/', '/stream/', '/files/')):
+            if path.startswith(('/api/', '/files/')):
                 self._send(401, 'application/json; charset=utf-8',
                            json.dumps({'ok': False, 'msg': '请刷新页面并完成访问验证'},
                                       ensure_ascii=False).encode())
@@ -1963,11 +1874,6 @@ class Handler(BaseHTTPRequestHandler):
                                    'total': len(lines), 'lines': lines},
                                   ensure_ascii=False).encode('utf-8')
                 self._send(200, 'application/json; charset=utf-8', body)
-            elif path == '/api/stream/status':
-                body = json.dumps(stream_status(), ensure_ascii=False).encode('utf-8')
-                self._send(200, 'application/json; charset=utf-8', body)
-            elif path.startswith('/stream/'):
-                self._send_stream(path[len('/stream/'):])
             elif path == '/api/screenshot':
                 try:
                     data, at, _cached = capture_phone()
@@ -2173,31 +2079,6 @@ class Handler(BaseHTTPRequestHandler):
                 result = scheduler_stop()
                 body = json.dumps(result, ensure_ascii=False).encode('utf-8')
                 self._send(200 if result.get('ok') else 400,
-                           'application/json; charset=utf-8', body)
-            elif u.path == '/api/stream/ping':
-                # 前端心跳：原生 HLS 播放器缓冲够了会暂停拉分片，只靠 /stream/* 请求判断
-                # "有没有人在看"会把正在操作的会话误回收（踩过：操作 1 分钟后流被回收）
-                if get_stream:
-                    get_stream().touch_access()
-                if PAUSE_SIGNAL.exists():
-                    try:
-                        PAUSE_SIGNAL.touch()      # 网页接管期间续期，防止超时自动恢复
-                    except OSError:
-                        pass
-                _dbg = parse_qs(u.query).get('dbg')
-                if _dbg:
-                    print(f'[stream diag] {_dbg[0]}', flush=True)   # 页面内 MSE 状态回传（远程排查用）
-                self._send(200, 'application/json; charset=utf-8', b'{"ok": true}')
-            elif u.path == '/api/stream/stop':
-                if get_stream:
-                    get_stream().stop()
-                self._send(200, 'application/json; charset=utf-8', b'{"ok": true}')
-            elif u.path in ('/api/stream/tap', '/api/stream/swipe'):
-                length = int(self.headers.get('Content-Length') or 0)
-                payload = json.loads(self.rfile.read(length).decode('utf-8') or '{}')
-                result = stream_inject(u.path.rsplit('/', 1)[-1], payload)
-                body = json.dumps(result, ensure_ascii=False).encode('utf-8')
-                self._send(200 if result.get('ok') else 409,
                            'application/json; charset=utf-8', body)
             else:
                 self._send(404, 'text/plain', b'not found')

@@ -1,0 +1,38 @@
+/* ---------- 实时画面页：定时截图 ----------
+   app.css 里只留了直播卡（.livecard / .livetap / .livetoast）的旧样式，
+   截图页自己的规则集中在这里，避免和用户正在改的 app.css 纠缠。 */
+.shotpage .scenecard.duoshot{
+  flex:1;min-height:0;padding:0;border:0;
+  display:flex;flex-direction:column;
+  background:#0e0f12;box-shadow:var(--sh-2);
+}
+.shotpage #shotLink{
+  position:relative;flex:1;min-height:0;width:100%;
+  display:flex;align-items:center;justify-content:center;
+  overflow:hidden;background:transparent;line-height:0;
+}
+.shotpage #phoneShot{
+  display:block;width:auto;height:auto;
+  max-width:100%;max-height:100%;
+  object-fit:contain;object-position:center center;background:transparent;
+}
+.shotmeta{
+  position:absolute;top:8px;right:10px;z-index:2;
+  font-size:10.5px;color:#fff;background:rgba(0,0,0,.34);
+  border-radius:999px;padding:2px 9px;backdrop-filter:blur(4px);
+}
+.shotpage .shoterr{padding:6px 12px 0;font-size:11px;color:#b45309;flex:none}
+.shotpage .shoterr:empty{display:none}
+
+/* 加载/失败提示：居中交给 #shotLink 的 flex，这里只做小胶囊（不用 translate 居中） */
+.shotloading{
+  font-size:11.5px;color:var(--sub);line-height:1.4;
+  background:rgba(255,255,255,.9);border-radius:999px;
+  padding:4px 12px;white-space:nowrap;
+}
+.shotloading.failed{color:#b45309}
+
+.shotnote{
+  margin:0;text-align:center;font-size:11px;color:var(--sub);
+  padding:0 calc(var(--u) * 8);
+}

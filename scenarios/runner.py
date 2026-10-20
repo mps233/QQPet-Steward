@@ -1334,10 +1334,10 @@ RELOAD_SIGNAL = PROJECT_ROOT / 'runs' / 'reload.signal'
 _RELOAD_SEEN = None   # 上次已处理到的信号 mtime
 
 
-# 网页接管暂停信号：dashboard「接管操作」写入，调度器在安全点原地等待，恢复后从原处继续
-# —— 比停掉进程好：不丢 pending、不中断进度累计。带超时兜底：信号 mtime 超过
-# PAUSE_MAX_SECONDS 未续期（网页端接管期间每 3 秒 ping 续期）就自动忽略并删除，
-# 避免 dashboard 崩了把调度器永久挂住。
+# 远程让路暂停信号：dashboard（Telegram `/pause`）写入，调度器在安全点原地等待，
+# 恢复（`/resume`）后从原处继续 —— 比停掉进程好：不丢 pending、不中断进度累计。
+# 带超时兜底：信号 mtime 超过 PAUSE_MAX_SECONDS 未更新就自动忽略并删除，
+# 避免写入方异常退出后把调度器永久挂住。
 PAUSE_SIGNAL = PROJECT_ROOT / 'runs' / 'pause.signal'
 PAUSE_MAX_SECONDS = 300
 
@@ -1360,7 +1360,7 @@ def wait_if_paused() -> None:
                 pass
             break
         if waited == 0:
-            log('已暂停：网页端接管中（点「交还控制」恢复，或超时自动恢复）')
+            log(f'已暂停：收到远程让路信号（/resume 恢复，或 {PAUSE_MAX_SECONDS}s 超时自动恢复）')
         waited += 1
         time.sleep(1)
     if waited:
@@ -1394,7 +1394,7 @@ def sleep_interruptible(seconds: float, chunk: float = 1.0) -> None:
         if remain <= 0:
             return
         time.sleep(min(chunk, remain))
-        wait_if_paused()          # 网页接管：睡眠期间也能秒级让路
+        wait_if_paused()          # 远程让路：睡眠期间也能秒级响应
         try:
             if RELOAD_SIGNAL.exists():
                 cur = RELOAD_SIGNAL.stat().st_mtime
@@ -1533,7 +1533,7 @@ class TaskQueueRunner(Runner):
             self._career_check(tasks, order, '启动检查')
         while True:
             try:
-                wait_if_paused()          # 网页接管：每轮调度开头让路，不打断进行中的场景
+                wait_if_paused()          # 远程让路：每轮调度开头响应，不打断进行中的场景
                 # 热修改：每轮调度前重读配置（含 tasks.order 与各任务调度设置）
                 self.reload_config()
                 self._apply_tasks_config(tasks, order)

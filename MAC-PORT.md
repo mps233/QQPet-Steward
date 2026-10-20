@@ -12,7 +12,6 @@
 | adb 路径探测 | 6 个常见安装位 | Homebrew / Android Studio 3 个 |
 | 模拟器实例探测 | 读注册表（卸载项/MuiCache） | 进程与端口反查 |
 | 桌面通知 | Windows Toast | `osascript` 通知 |
-| 实时画面取源 | 项目自带 `resources/scrcpy-win64/scrcpy-server` | Homebrew 的 `scrcpy-server` |
 
 本仓库**不含 Windows 桌面 GUI**：上游那套 PyQt6 界面用 Win32 的 `SetParent` 把 scrcpy
 窗口嵌进自己窗口，macOS 上做不了；本版统一走浏览器界面。上游的 GUI、打包脚本与

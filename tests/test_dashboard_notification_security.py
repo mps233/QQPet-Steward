@@ -131,7 +131,7 @@ def test_sensitive_routes_require_authentication(monkeypatch):
         assert request(base + '/api/data')[0] == 401
         assert request(base + '/api/settings', data=b'{}')[0] == 401
         assert request(base + '/api/notify/test', data=b'{}')[0] == 401
-        assert request(base + '/stream/index.m3u8')[0] == 401
+        assert request(base + '/api/screenshot')[0] == 401
         assert request(base + '/files/test.png')[0] == 401
         status, _, body = request(base + '/')
         assert status == 200 and b'/api/auth' in body

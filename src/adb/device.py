@@ -1,8 +1,7 @@
 """adb 设备封装：设备检测与连接管理、adb 命令管道。
 
 画面截图与点击/滑动等操控已改由 uiautomator2 负责（见 src/u2dev.py），
-这里只保留 u2 连接前的 adb server/设备在线管理。屏幕分辨率由
-`src/screen_stream.py` 自行执行 `wm size` 读取（实时画面用）。
+这里只保留 u2 连接前的 adb server/设备在线管理。
 """
 from __future__ import annotations
 

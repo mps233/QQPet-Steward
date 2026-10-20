@@ -68,12 +68,12 @@ Windows（未实测）：`run.sh` 写死了 `.venv/bin/python`，Windows 下请�
 `.venv\Scripts\python dashboard.py --port 8787`，再从界面点「启动」。
 Windows 没有 launchd，开机自启用「任务计划程序」。
 
-macOS 与 Windows 在 adb 探测、模拟器探测、桌面通知、实时画面取源上的差异见
+macOS 与 Windows 在 adb 探测、模拟器探测、桌面通知上的差异见
 [MAC-PORT.md](MAC-PORT.md)。
 
 ## 手机仪表盘
 
-纯标准库零依赖，端口 8787、绑定 `0.0.0.0`。日志 3 秒、数据 6 秒自动刷新。
+纯标准库零依赖，端口 8787、绑定 `0.0.0.0`。日志 3 秒、数据 6 秒、实时画面 15 秒自动刷新。
 
 **界面不限于手机**：同一局域网里任何设备打开 `http://<跑仪表盘那台机器的 IP>:8787`
 都是同一个界面（平板、另一台电脑都行）。注意这是「一台跑、多台看」——调度器与手机
@@ -110,19 +110,13 @@ Telegram：在「设置 → TG 机器人」里配好后，除了收通知还能�
 `/set 字段 值`、`/log`、`/run`、`/halt`、`/pause`、`/resume`，只认 `tgbot.allowed_chats`
 白名单里的会话。
 
-## 实时画面与接管
+## 实时画面
 
-「实时画面」页把手机屏幕**直播**到浏览器（走设备端 scrcpy-server + 本机 ffmpeg 转 HLS，
-免 root），延迟约 1~3 秒，桌面端和 iPhone 都能播。
+「实时画面」页每 15 秒自动截一张手机屏幕（切到后台会暂停，回来时立即补一张），
+点「刷新画面」可以马上重拍；点画面或「在新标签打开原图」能看全尺寸截图。
 
-想自己动手时点 **「接管操作」**：
-
-- 调度器会在下一个安全点**原地让路**（不退出进程、不丢进度），交还后从原处继续，
-  实测 3 秒内让路；
-- 之后你在网页上点/滑屏幕就是操作手机本体，可以手动收个尾、看看某个界面；
-- 点「交还控制」恢复自动，或者 5 分钟不续期自动恢复（防止网页崩了把调度器永久挂住）。
-
-直播是**按需启动**的：没人看就自动回收，挂机期间零开销。
+截图走与调度器相同的 adb 连接，不需要额外组件；手机不在线或截图失败时会保留上一张，
+并在页面下方显示原因。
 
 ## 推荐配置
 
@@ -185,7 +179,7 @@ Telegram 用原生表格，飞书/桌面/OnePush 自动转纯文本；完整示�
 
 调度器、各场景实现、UI 定位注册表、OCR 封装等核心能力来自
 [上游项目](https://github.com/490720818/qq-pet-copilot)（Windows 桌面版）。
-本版做了 macOS 运行链路适配、浏览器仪表盘、实时画面与接管，以及一批新版 QQ 界面适配；
+本版做了 macOS 运行链路适配、浏览器仪表盘、实时画面截图，以及一批新版 QQ 界面适配；
 差异清单见 [MAC-PORT.md](MAC-PORT.md)。
 
 上游的 PyQt6 桌面 GUI（`main.py`）、PyInstaller 打包链路与 Windows 打包 CI
@@ -196,7 +190,6 @@ Telegram 用原生表格，飞书/桌面/OnePush 自动转纯文本；完整示�
 ## 致谢
 
 [qq-pet-copilot](https://github.com/490720818/qq-pet-copilot)（上游）、
-[scrcpy](https://github.com/Genymobile/scrcpy)（画面采集）、
 [uiautomator2](https://github.com/openatx/uiautomator2)（控件与点击）、
 [RapidOCR](https://github.com/RapidAI/RapidOCR) / [PP-OCRv6](https://github.com/PaddlePaddle/PaddleOCR)（文字识别）、
 [minitouch](https://github.com/DeviceFarmer/minitouch)（触摸注入）、
