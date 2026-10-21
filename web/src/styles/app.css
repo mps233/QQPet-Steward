@@ -1659,6 +1659,8 @@ html[data-page="plan"]:not([data-page="main"]){background-color:#5D4443}
 /* 冒险手账是米色页头（见 adv.css），同样不能让 PWA 顶部露出白底。
    取冒险页渐变顶部的实测色，与 App.tsx 的 syncThemeColor 保持一致。 */
 html[data-page="adv"]:not([data-page="main"]){background-color:#FAF0DA}
+/* 实时画面页头是暖白半透明（见 live.css），PWA 顶部同样不能露白。 */
+html[data-page="shot"]:not([data-page="main"]){background-color:#FFFAF1}
 
 /* React 版的挂载点。旧版没有这一层（`.app` 直接挂在 `body` 下）。
    注意两种改法的区别：

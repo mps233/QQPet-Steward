@@ -301,6 +301,9 @@ export default function App() {
       // 冒险手账是米色页面（透明 navhead 叠在奶油渐变上），跟着内页白底会在
       // PWA 顶部露出白带。取页头渐变顶部实测色。
       want = '#FAF0DA'
+    } else if (page === 'shot') {
+      // 实时画面页头是暖白半透明（见 live.css），同样跟着内页白底会露白带。
+      want = '#FFFAF1'
     }
     document.querySelectorAll('meta[name="theme-color"]').forEach((m) => {
       // 两组 meta 各带一个 media 查询，只改属于当前主题的那条 ——
