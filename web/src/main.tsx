@@ -15,6 +15,8 @@ import './styles/live.css'
 import './styles/notify.css'
 // 设置页（与通知页同一套白卡分节；合并成 7 个二级页）
 import './styles/settings.css'
+// 日志页（实时日志 / 收益记录，同套白卡）
+import './styles/logs.css'
 
 installStageUnit()
 

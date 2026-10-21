@@ -1,0 +1,285 @@
+/* 日志页：视觉与通知页 / 设置页同一套（白卡分节、灰底、行内说明）。
+   只作用于 .log-page，避免碰 app.css 里给旧日志界面写的
+   `pre#logbox` / `.rwscope` / `.thumbs` 等规则（那些已无消费者，但别让它们漏进来）。
+   输入框 / 下拉必须用 `.log-page` 前缀选中：`.form input[type=text]`（(0,2,1)）
+   会把只写 `.lg-input` 的规则压回去（与 notify.css / settings.css 同一个坑）。 */
+
+.log-page { padding: 0 0 calc(var(--u) * 8); }
+
+/* 子页切换：iOS 分段控件。两个子页常驻在页头下方，白卡之间不再漂橙色药丸 */
+.lg-tabs {
+  display: flex; gap: 2px;
+  margin: 12px 12px 0;
+  padding: 2px;
+  border-radius: 10px;
+  background: #E9E9EE;
+}
+.lg-tabs button {
+  flex: 1; min-width: 0;
+  height: 32px;
+  border: 0; border-radius: 8px;
+  background: transparent; color: #6B6B70;
+  font: inherit; font-size: 13px; font-weight: 500;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color .18s, color .18s, box-shadow .18s;
+}
+.lg-tabs button.on {
+  background: #fff; color: #1C1C1E; font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .08), 0 0 0 .5px rgba(0, 0, 0, .04);
+}
+
+/* 分组：灰色小标题在卡外，白卡在卡内 */
+.lg-sec { margin: 16px 12px 0; }
+.lg-sec > h3,
+.lg-sec-head > h3 {
+  margin: 0 0 6px 4px;
+  font-size: 11.5px; font-weight: 500;
+  color: #8A8A8E; letter-spacing: .02em;
+}
+.lg-sec-head {
+  display: flex; align-items: center; gap: 8px;
+  margin: 0 0 6px 4px;
+}
+.lg-sec-head > h3 { margin: 0; }
+.lg-chip {
+  padding: 2px 7px; border-radius: 999px;
+  background: #F2F2F7; color: #6B6B70;
+  font-size: 10.5px; line-height: 1.35;
+  font-variant-numeric: tabular-nums;
+}
+.lg-card {
+  background: #fff; border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .04);
+}
+
+/* 字段块：标签在上、控件整行（与设置页相同） */
+.lg-field { padding: 12px 16px; border-top: 1px solid #F0F0F2; }
+.lg-card > .lg-field:first-child { border-top: 0; }
+.lg-field-head {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 7px;
+}
+.lg-label { font-size: 12.5px; font-weight: 500; color: #1C1C1E; }
+.lg-clear {
+  margin-left: auto;
+  border: 0; background: none; padding: 0;
+  color: #B45309; font-size: 11.5px; line-height: 1.5;
+}
+.lg-clear:active { opacity: .6; }
+
+.log-page input.lg-input,
+.log-page select.lg-select {
+  display: block;
+  width: 100%; max-width: none;
+  height: 42px; box-sizing: border-box;
+  padding: 0 12px;
+  border: 1px solid transparent; border-radius: 10px;
+  background-color: #F7F7F9; color: #1C1C1E;
+  /* 不能小于 16px：iOS 聚焦时会把整个视口放大（见 FRONTEND_PITFALLS） */
+  font-size: 16px; text-align: left;
+  -webkit-appearance: none;
+}
+.log-page select.lg-select {
+  padding-right: 36px;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23A6A6AB' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 13px center;
+}
+.log-page input.lg-input::placeholder { color: #A6A6AB; font-size: 13px; }
+.log-page input.lg-input:focus,
+.log-page select.lg-select:focus {
+  outline: none;
+  border-color: var(--accent);
+  background-color: #fff;
+  box-shadow: 0 0 0 3px rgba(255, 153, 15, .14);
+}
+
+/* 统计范围下的一行元信息：允许折行 —— 旧版单行省略把「更新 1…」直接截断 */
+.lg-meta {
+  display: flex; flex-wrap: wrap;
+  margin-top: 8px;
+  font-size: 11.5px; line-height: 1.5; color: #8A8A8E;
+  font-variant-numeric: tabular-nums;
+}
+.lg-meta span { white-space: nowrap; }
+.lg-meta span + span::before {
+  content: '·';
+  margin: 0 6px;
+  color: #C7C7CC;
+}
+.lg-hint { margin: 6px 0 0; font-size: 11.5px; line-height: 1.5; color: #8A8A8E; }
+
+/* 开关行：与设置页同一行高与说明排版 */
+.lg-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 16px;
+  border-top: 1px solid #F0F0F2;
+}
+.lg-row-main { flex: 1; min-width: 0; }
+.lg-row-label { display: block; font-size: 14px; color: #1C1C1E; }
+.lg-row-desc {
+  display: block; margin-top: 3px;
+  font-size: 11.5px; line-height: 1.5; color: #8A8A8E;
+}
+.lg-row .sw { flex: none; }
+
+/* 日志输出：卡内浅灰面板；固定高度内部滚动，不再把整页撑到几千像素 */
+.lg-console {
+  height: clamp(280px, 46dvh, 520px);
+  overflow: auto;
+  overscroll-behavior: none;
+  border-top: 1px solid #F0F0F2;
+  background: #FCFCFD;
+  padding: 10px 14px;
+  font: 12px/1.7 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  color: #3A3A3C;
+}
+.lg-line { display: flex; gap: 8px; }
+.lg-time { flex: none; color: #A6A6AB; }
+.lg-msg { flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.lg-line.err .lg-msg { color: #A63224; }
+.lg-line.warn .lg-msg { color: #8A5A00; }
+.lg-foot {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+  padding: 8px 16px 10px;
+  border-top: 1px solid #F0F0F2;
+  font-size: 11px; color: #8A8A8E;
+  font-variant-numeric: tabular-nums;
+}
+.lg-foot span:first-child {
+  min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.lg-foot span:last-child { flex: none; }
+
+.lg-empty {
+  margin: 0; padding: 16px;
+  color: #8A8A8E; font-size: 12.5px; line-height: 1.6;
+}
+/* 空态（没有日志 / 过滤无匹配）居中：高度不变，避免切筛选时整页跳动 */
+.lg-console.is-empty {
+  display: flex; align-items: center; justify-content: center;
+  text-align: center;
+}
+.lg-console.is-empty .lg-empty { padding: 0 12px; }
+
+/* 收益汇总：一行一项，数值右对齐便于逐项比较 */
+.lg-sum { font-variant-numeric: tabular-nums; }
+.lg-stat {
+  display: flex; align-items: flex-start; gap: 12px;
+  padding: 14px 16px;
+  border-top: 1px solid #F0F0F2;
+}
+.lg-sum > .lg-stat:first-child { border-top: 0; }
+.lg-stat-ico { width: 26px; height: 26px; flex: none; object-fit: contain; margin-top: 1px; }
+.lg-stat-main { flex: 1; min-width: 0; }
+.lg-stat-top { display: flex; align-items: baseline; gap: 8px; }
+.lg-stat-k { font-size: 13.5px; font-weight: 500; color: #1C1C1E; }
+.lg-stat-v { margin-left: auto; font-size: 20px; font-weight: 650; line-height: 1.2; color: #1C1C1E; }
+.lg-stat-v small { margin-left: 2px; font-size: 11.5px; font-weight: 400; color: #8A8A8E; }
+.lg-stat-d { margin: 4px 0 0; font-size: 11.5px; line-height: 1.55; color: #8A8A8E; }
+.lg-stat-d.muted { color: #C7C7CC; }
+.lg-tired {
+  display: flex; align-items: center; gap: 7px;
+  padding: 10px 16px;
+  border-top: 1px solid #F0F0F2;
+  background: #FFFBF2; color: #A45E00;
+  font-size: 12px; line-height: 1.5;
+}
+.lg-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex: none; }
+
+/* 按次记录：时间 | 标题+标签 | 收益 */
+.lg-rrow {
+  display: flex; align-items: center; gap: 10px;
+  padding: 11px 16px;
+  border-top: 1px solid #F5F5F7;
+}
+.lg-rrow:first-child { border-top: 0; }
+.lg-rtime {
+  flex: none; display: flex; align-items: center; gap: 5px;
+  /* 92px 才放得下「全部历史」下的 `10-21 11:02`（图标 + 5px 间距 + 文本约 70px）；
+     再窄就折成两行、行高参差 */
+  width: 92px;
+  font-size: 11.5px; color: #8A8A8E;
+  font-variant-numeric: tabular-nums;
+}
+.lg-rtime span { white-space: nowrap; }
+.lg-rtime img { width: 14px; height: 14px; flex: none; object-fit: contain; }
+.lg-rmain { flex: 1; min-width: 0; }
+.lg-rtitle {
+  display: block;
+  font-size: 13.5px; color: #1C1C1E;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.lg-rtags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.lg-tag {
+  padding: 2px 6px; border-radius: 5px;
+  background: #F2F2F7; color: #6B6B70;
+  font-size: 10.5px; font-style: normal; line-height: 1.35;
+  white-space: nowrap;
+}
+.lg-tag.warn { background: #FFF1DF; color: #A45E00; }
+.lg-rval {
+  flex: none;
+  font-size: 13.5px; font-weight: 650; color: #1C1C1E;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.lg-rval.pos { color: #A45E00; }
+.lg-rval.zero { color: #C7C7CC; font-weight: 500; }
+
+/* 异常截图：默认只露最近 3 张，避免 12 张缩略图铺成一堵墙 */
+.lg-shots {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding: 12px 16px;
+}
+.lg-shot {
+  position: relative; display: block;
+  border: 1px solid #F0F0F2; border-radius: 8px;
+  overflow: hidden; background: #F2F2F7;
+}
+.lg-shot img {
+  display: block; width: 100%;
+  aspect-ratio: 3 / 4;
+  object-fit: cover; object-position: top center;
+}
+.lg-shot-cap {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  padding: 10px 6px 3px;
+  background: linear-gradient(to top, rgba(0, 0, 0, .6), rgba(0, 0, 0, 0));
+  color: #fff; font-size: 10px; text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.lg-more {
+  display: block; width: 100%;
+  padding: 11px 16px;
+  border: 0; border-top: 1px solid #F0F0F2;
+  background: #fff; color: #B45309;
+  font: inherit; font-size: 12.5px; font-weight: 500;
+  cursor: pointer;
+}
+.lg-more:active { background: #FAFAFB; }
+.lg-footnote {
+  margin: 0; padding: 10px 16px 12px;
+  border-top: 1px solid #F0F0F2;
+  background: #FCFCFD;
+  font-size: 11.5px; line-height: 1.6; color: #8A8A8E;
+}
+
+/* 键盘可达性 */
+.lg-tabs button:focus-visible,
+.lg-clear:focus-visible,
+.lg-more:focus-visible,
+.lg-shot:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.lg-console:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .lg-tabs button { transition: none; }
+}
