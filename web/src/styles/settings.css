@@ -1,0 +1,225 @@
+/* 设置页：视觉与通知页同一套（白卡分节 / 顶部状态条 / 字段块 / 行内说明）。
+   只作用于 .set-page，避免和 app.css 里给旧设置表单写的 `.form .fgrp`、
+   `.form input[type=text]` 等规则打架 —— 那些规则还服务着通知页，不能动。
+
+   选择器都带 `.set-page` 前缀：`input.set-input` 单独写会被
+   `.form input[type=text]`（(0,2,1)）压回去；这里用 `.set-page input.set-input`
+   凑到同级，再靠本文件后加载胜出（与 notify.css 同一个坑）。 */
+
+.set-page { padding: 0 0 calc(var(--u) * 8); }
+
+/* 顶部状态条：自动保存 / 保存失败 */
+.set-status {
+  display: flex; align-items: center; gap: 8px;
+  margin: 12px 12px 0; padding: 10px 14px;
+  border-radius: 12px; background: #fff;
+  color: #8A8A8E; font-size: 12px; line-height: 1.45;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .04);
+}
+.set-status.err { color: #A63224; background: #FFF6F4; }
+.set-status-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: #3FA45A; flex: none;
+}
+.set-status-dot.err { background: #D64545; }
+
+/* 分组：灰色小标题在卡外，白卡在卡内 */
+.set-sec { margin: 16px 12px 0; }
+.set-sec > h3 {
+  margin: 0 0 6px 4px;
+  font-size: 11.5px; font-weight: 500;
+  color: #8A8A8E; letter-spacing: .02em;
+}
+.set-card {
+  background: #fff; border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .04);
+}
+
+/* 一级菜单行：标题 + 一行说明 + 右箭头 */
+.set-menu-row {
+  display: flex; align-items: center; gap: 12px;
+  width: 100%; padding: 12px 16px;
+  border: 0; border-top: 1px solid #F0F0F2;
+  background: #fff; color: inherit; font: inherit;
+  text-align: left; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.set-card > .set-menu-row:first-child { border-top: 0; }
+.set-menu-row:active { background: #FAFAFB; }
+.set-menu-main { flex: 1; min-width: 0; }
+.set-menu-label { display: block; font-size: 14px; color: #1C1C1E; }
+.set-menu-desc {
+  display: block; margin-top: 3px;
+  font-size: 11.5px; line-height: 1.45; color: #8A8A8E;
+}
+.set-menu-chev {
+  flex: none; width: 14px;
+  color: #C7C7CC; font-size: 18px; line-height: 1;
+  text-align: center;
+}
+
+/* 通用行：开关 / 数字输入 */
+.set-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 16px;
+  border-top: 1px solid #F0F0F2;
+}
+.set-card > .set-row:first-child { border-top: 0; }
+.set-row-main { flex: 1; min-width: 0; }
+.set-row-label { display: block; font-size: 14px; color: #1C1C1E; }
+.set-row-desc {
+  display: block; margin-top: 3px;
+  font-size: 11.5px; line-height: 1.5; color: #8A8A8E;
+}
+.set-row .sw { flex: none; }
+
+/* 数字输入：右侧紧凑胶囊，单位跟在后面 */
+.set-numwrap { flex: none; display: flex; align-items: center; gap: 6px; }
+.set-num {
+  width: 72px; height: 38px; box-sizing: border-box;
+  padding: 0 10px;
+  border: 1px solid transparent; border-radius: 9px;
+  background: #F7F7F9; color: #1C1C1E;
+  /* 不能小于 16px：iOS 聚焦时会把整个视口放大（见 FRONTEND_PITFALLS） */
+  font-size: 16px; text-align: right;
+  -webkit-appearance: none;
+}
+.set-num:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(255, 153, 15, .14);
+}
+.set-num:disabled { opacity: .55; }
+.set-unit { font-size: 12px; color: #8A8A8E; white-space: nowrap; }
+
+/* 字段块：标签在上、控件整行（说明放在控件下方） */
+.set-field { padding: 12px 16px; border-top: 1px solid #F0F0F2; }
+.set-card > .set-field:first-child { border-top: 0; }
+.set-field-head {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 7px;
+}
+.set-label { font-size: 12.5px; font-weight: 500; color: #1C1C1E; }
+.set-chip {
+  padding: 3px 7px; border-radius: 999px;
+  background: #F2F2F7; color: #8A8A8E;
+  font-size: 10.5px; line-height: 1;
+}
+.set-chip.ok { background: #EDF7E3; color: #3D7A13; }
+
+.set-page input.set-input,
+.set-page select.set-select {
+  display: block;
+  width: 100%; max-width: none;
+  height: 42px; box-sizing: border-box;
+  padding: 0 12px;
+  border: 1px solid transparent; border-radius: 10px;
+  background-color: #F7F7F9; color: #1C1C1E;
+  /* 不能小于 16px：iOS 聚焦时会把整个视口放大（见 FRONTEND_PITFALLS） */
+  font-size: 16px; text-align: left;
+  -webkit-appearance: none;
+}
+.set-page select.set-select {
+  padding-right: 36px;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23A6A6AB' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 13px center;
+}
+.set-page input.set-input::placeholder { color: #A6A6AB; font-size: 13px; }
+.set-page input.set-input:focus,
+.set-page select.set-select:focus {
+  outline: none;
+  border-color: var(--accent);
+  background-color: #fff;
+  box-shadow: 0 0 0 3px rgba(255, 153, 15, .14);
+}
+.set-page input.set-input:disabled,
+.set-page select.set-select:disabled { opacity: .55; }
+
+.set-hint { margin: 6px 0 0; font-size: 11.5px; line-height: 1.5; color: #8A8A8E; }
+.set-hint-err { color: #A63224; }
+.set-field-foot {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 10px; margin-top: 6px;
+}
+.set-field-foot .set-hint { flex: 1; margin: 0; }
+.set-clear {
+  flex: none; border: 0; background: none; padding: 0;
+  color: #B45309; font-size: 11.5px; line-height: 1.5;
+}
+.set-clear:active { opacity: .6; }
+.set-clear:disabled { opacity: .45; }
+
+/* 只读说明表（收益档）：一行一件事，比整段灰字好扫 */
+.set-explain { padding: 4px 16px 14px; border-top: 1px solid #F0F0F2; }
+.set-mintbl {
+  width: 100%; border-collapse: collapse;
+  font-size: 11.5px; color: #8A8A8E;
+}
+.set-mintbl th {
+  font-weight: 500; text-align: left;
+  padding: 0 4px 6px;
+}
+.set-mintbl th:first-child { white-space: nowrap; width: 1%; }
+.set-mintbl td {
+  padding: 6px 4px;
+  border-top: 1px solid #F0F0F2;
+  vertical-align: top;
+}
+.set-mintbl td:first-child { white-space: nowrap; color: #1C1C1E; }
+
+/* 卡片底部脚注 / 两列说明 */
+.set-footnote {
+  margin: 0; padding: 10px 16px 14px;
+  border-top: 1px solid #F0F0F2;
+  background: #FCFCFD;
+  font-size: 11.5px; line-height: 1.6; color: #8A8A8E;
+}
+.set-footnote b { color: #3A3A3C; font-weight: 600; }
+.set-note {
+  display: flex; gap: 12px;
+  padding: 10px 16px;
+  border-top: 1px solid #F0F0F2;
+}
+.set-card > .set-note:first-child { border-top: 0; }
+.set-note b {
+  flex: none; width: 62px;
+  font-size: 13px; font-weight: 500; color: #1C1C1E;
+}
+.set-note span {
+  flex: 1; min-width: 0;
+  font-size: 12px; line-height: 1.65; color: #8A8A8E;
+}
+
+/* 主按钮：与通知页「发送测试」同一个橙色 */
+.set-primary {
+  display: block;
+  width: calc(100% - 32px);
+  margin: 14px 16px 4px;
+  height: 44px;
+  border: 0; border-radius: 11px;
+  background: linear-gradient(180deg, #FFB33A, #FF990F);
+  color: #5A2D00; font-size: 15px; font-weight: 600;
+}
+.set-primary:disabled { opacity: .55; }
+.set-primary:active { opacity: .85; }
+.set-msg {
+  margin: 0 16px 14px;
+  font-size: 12px; line-height: 1.5; color: #3D7A13;
+}
+.set-msg.sub { color: #8A8A8E; }
+.set-msg.err { color: #A63224; }
+
+/* 键盘可达性 */
+.set-menu-row:focus-visible,
+.set-clear:focus-visible,
+.set-primary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .set-menu-row, .set-primary, .set-clear { transition: none; }
+}

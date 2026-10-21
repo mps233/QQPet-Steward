@@ -13,6 +13,8 @@ import './styles/career-tree.css'
 import './styles/live.css'
 // 通知页（渠道卡片 / 事件开关 / 可折叠历史）
 import './styles/notify.css'
+// 设置页（与通知页同一套白卡分节；合并成 7 个二级页）
+import './styles/settings.css'
 
 installStageUnit()
 
