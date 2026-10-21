@@ -17,6 +17,8 @@ import './styles/notify.css'
 import './styles/settings.css'
 // 日志页（实时日志 / 收益记录，同套白卡）
 import './styles/logs.css'
+// 冒险记录（游戏风格「冒险手账」，独立命名空间 .adv-*）
+import './styles/adv.css'
 
 installStageUnit()
 
