@@ -67,6 +67,12 @@ function nodes(tree) {
   if (Array.isArray(tree)) return tree.flatMap(nodes)
   return [tree, ...nodes(tree.props?.children)]
 }
+/** 状态条的文本可能被拆成多段（圆点图标 + 文案），断言要看拼接后的整串 */
+function textOf(tree) {
+  if (typeof tree === 'string') return tree
+  if (!tree || typeof tree !== 'object') return ''
+  return Array.isArray(tree) ? tree.map(textOf).join('') : textOf(tree.props?.children)
+}
 function render(onSave) {
   hookIndex = 0
   return nodes(component.NotifyPage({
@@ -81,7 +87,7 @@ assert.equal(render(async () => {}).find((node) => node.type === form.Switch).pr
 await tick()
 view = render(async () => {})
 assert.equal(view.find((node) => node.type === form.Switch).props.on, false)
-assert.match(view.find((node) => node.props?.role === 'alert').props.children, /save rejected/)
+assert.match(textOf(view.find((node) => node.props?.role === 'alert')), /save rejected/)
 
 hooks = []
 let finishSave
@@ -93,7 +99,7 @@ assert.equal(sent, 0, 'Test must wait for an in-flight save')
 finishSave()
 await tick()
 assert.equal(sent, 1)
-assert.match(render(async () => {}).find((node) => node.props?.id === 'notifyTestMsg').props.children,
+assert.match(textOf(render(async () => {}).find((node) => String(node.props?.className || '').includes('ntf-testmsg'))),
   /detailed failure/)
 
 console.log('Notification API details, rollback and save-before-test checks passed')
