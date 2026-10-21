@@ -390,7 +390,7 @@ export function LogPage({
           aria-selected={cur === 'index'}
           className={cur === 'index' ? 'on' : ''}
           title="调度器全部输出"
-          onClick={() => onSub('index')}
+          onClick={() => cur !== 'index' && onSub('index')}
         >
           实时日志
         </button>
@@ -400,7 +400,7 @@ export function LogPage({
           aria-selected={cur === 'reward'}
           className={cur === 'reward' ? 'on' : ''}
           title="每次学习/打工结算拿到的学分·属性·金币"
-          onClick={() => onSub('reward')}
+          onClick={() => cur !== 'reward' && onSub('reward')}
         >
           收益记录
         </button>

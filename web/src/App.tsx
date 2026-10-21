@@ -228,7 +228,7 @@ export default function App() {
 
   /** 首帧前准备转场，不能先画目标页、下一帧才把它移到动画起点。
    *  首次渲染不触发（prevView 还是 null）。方向按**层级**判：变深 = fwd、变浅 = back；
-   *  同级互切（日志子页 index↔reward）不滑，直接换内容。 */
+   *  日志子页互切（sub 为空 / index / reward）不滑，直接换内容。 */
   useLayoutEffect(() => {
     const cur: View = { page, grp, sub }
     const from = prevView.current
@@ -241,7 +241,11 @@ export default function App() {
     window.clearTimeout(leaveTimer.current)
     const dFrom = depthOf(from)
     const dTo = depthOf(cur)
-    if (dFrom === dTo || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    // 同页同级只换内容：日志刚进来时 sub 是空的，点 tab 才变成 index/reward，
+    // 只看 depth 会把这次点击当成"进二级"，整页（含标题栏和 tab 条）横滑一次 —— 用户实报。
+    // 注意只认 sub：设置页的 grp（null → work）仍要走进二级的动画。
+    const sameLevel = from.page === cur.page && (from.grp || '') === (cur.grp || '')
+    if (sameLevel || dFrom === dTo || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
       finishTransition()
       return
     }
@@ -509,8 +513,11 @@ export default function App() {
             {renderView(leaving, data)}
           </div>
         ) : null}
+        {/* 进场 slot 的 key **不含 sub**：日志两个子页共用同一个 slot，tab 条不重建，
+            白色药丸的 180ms 过渡才跑得起来；页面 / 设置分组（grp）变化仍换 key，
+            保持整页转场。 */}
         <div
-          key={'enter:' + scrollKeyOf(page, grp, sub)}
+          key={'enter:' + scrollKeyOf(page, grp, null)}
           className={'page-slot page-enter' + (transiting ? ' page-enter-' + dir : '')}
         >
           {renderView({ page, grp, sub }, data)}
