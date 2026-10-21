@@ -11,6 +11,8 @@ import './styles/overview-v2.css'
 import './styles/career-tree.css'
 // 实时画面（定时截图）页
 import './styles/live.css'
+// 通知页（渠道卡片 / 事件开关 / 可折叠历史）
+import './styles/notify.css'
 
 installStageUnit()
 
