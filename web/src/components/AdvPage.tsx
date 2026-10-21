@@ -99,7 +99,7 @@ export function AdvPage() {
   if (err) {
     return (
       <div className="adv-state">
-        <img src="/qp-icons/official/adventure_badge.png" alt="" />
+        <img src="/qp-icons/official/cap_compass.png" alt="" />
         <p>读取冒险记录失败</p>
         <span>{err}</span>
       </div>
@@ -108,7 +108,7 @@ export function AdvPage() {
   if (!d) {
     return (
       <div className="adv-state">
-        <img src="/qp-icons/official/adventure_badge.png" alt="" />
+        <img src="/qp-icons/official/cap_compass.png" alt="" />
         <p>正在翻开冒险手账…</p>
       </div>
     )
@@ -116,7 +116,7 @@ export function AdvPage() {
   if (!d.ok) {
     return (
       <div className="adv-state">
-        <img src="/qp-icons/official/adventure_badge.png" alt="" />
+        <img src="/qp-icons/official/cap_compass.png" alt="" />
         <p>还没有冒险记录</p>
         <span>出门冒险一次，第一条足迹就会记在这里</span>
       </div>
@@ -213,7 +213,7 @@ export function AdvPage() {
     <div className="adv-page">
       <header className="adv-hero">
         <div className="adv-brand">
-          <img className="adv-logo" src="/qp-icons/official/adventure_badge.png" alt="" />
+          <img className="adv-logo" src="/qp-icons/official/cap_compass.png" alt="" />
           <div className="adv-brand-main">
             <h2 className="adv-title">冒险手账</h2>
             <p className="adv-meta" id="advMeta">
@@ -629,7 +629,7 @@ export function AdvPage() {
             })
           ) : (
             <div className="adv-list-empty">
-              <img src="/qp-icons/official/adventure_badge.png" alt="" />
+              <img src="/qp-icons/official/cap_compass.png" alt="" />
               这一段还没有可显示的记录
             </div>
           )}
