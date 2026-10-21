@@ -297,6 +297,10 @@ export default function App() {
       // （用户实报「手机上 PWA 顶部是白色的」）。
       // 取职业树背景渐变的**顶部色** #5D4443（见 career-tree.css 的 --ct-bg-top）。
       want = '#5D4443'
+    } else if (page === 'adv') {
+      // 冒险手账是米色页面（透明 navhead 叠在奶油渐变上），跟着内页白底会在
+      // PWA 顶部露出白带。取页头渐变顶部实测色。
+      want = '#FAF0DA'
     }
     document.querySelectorAll('meta[name="theme-color"]').forEach((m) => {
       // 两组 meta 各带一个 media 查询，只改属于当前主题的那条 ——
