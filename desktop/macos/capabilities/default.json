@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "The local startup page can read progress and retry app startup.",
+  "windows": [
+    "launcher"
+  ],
+  "permissions": [
+    "core:default",
+    "core:path:default",
+    "local-startup"
+  ]
+}

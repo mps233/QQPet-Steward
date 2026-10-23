@@ -8,13 +8,12 @@
 > JS 副作用清单（历史栈 / syncThemeColor / html[data-page] / place() / 勾选框 click 委托）等。
 > 每条都写明"改了 X 就必须验 Y"。**别不看就动手。**
 
-> ⚠️ **本版已移除上游的 Windows 桌面 GUI 与打包链路**：`main.py`、`src/stats_chart.py`、
-> `build.py`、`QQPetCopilot.spec`、`tools/pyi_rth_preload_onnxruntime.py`、
-> `.github/workflows/release.yml` 都已删除，`requirements.txt` 里也摘掉了
-> PyQt6 / PyQt6-Fluent-Widgets / pyinstaller / pywin32（这四个只有它们用）。
-> 本版**没有桌面 GUI、也没有打包链路**：界面是 `web/`（React）+ `dashboard.py`（后端），
-> 调度入口是 `scenarios/runner.py`（`./run.sh`）。`gui.theme`/`gui.mirror` 是那套 GUI
-> 的遗留死配置（全仓无消费者，改它没效果）。
+> ⚠️ **上游 PyQt6 GUI 已移除，当前已有 macOS 完整应用与 Windows 打包入口**：
+> 上游 `main.py`、`src/stats_chart.py` 与运行时 pywin32/PyQt6 依赖仍不应恢复。
+> 当前界面唯一真源是 `web/`（React）+ `dashboard.py` 后端；`desktop/macos/` 将 Tauri
+> 界面、Python、后台与调度器一起打包，启动时自动准备本机服务，无需填写 URL。
+> `desktop/windows/` 仍是 portable onedir 打包脚手架（仪表盘和 scheduler 两个 exe）。
+> `gui.theme`/`gui.mirror` 仍是死配置。
 
 ## 项目概述
 
@@ -34,8 +33,9 @@ PY=.venv/bin/python              # 项目虚拟环境（macOS / Python 3.13）�
 
 $PY -m py_compile <files>        # 改完代码最基本的验证，必做
 ./run.sh                         # 控制台调度器（= $PY scenarios/runner.py，透传参数）
-./tools/launchd/install.sh       # 手机仪表盘：交 launchd 托管（8787，KeepAlive 自愈）
-#   --uninstall 卸载。**长跑必须用这条**，`./dashboard.sh` 起的实例会被
+./tools/launchd/install.sh       # 源码手机仪表盘：交 launchd 托管（8787，KeepAlive 自愈）
+#   --uninstall 卸载。源码长跑用这条；macOS 完整 App 会自动托管自己的本机后台。
+#   `./dashboard.sh` 起的临时实例会被
 #   "退出某个 App"连带杀掉（application coalition，见「关键约定」那条 2026-10-09 事故）
 $PY scenarios/runner.py --test <target>   # 单模块测试：coins / recover / opener / school.X / work.X / adventure.X / care.X / friend_care.X / hire_friend.X
 $PY -m pytest                    # 单元测试（tests/，依赖见 requirements-dev.txt）
@@ -74,7 +74,7 @@ $PY -m pytest                    # 单元测试（tests/，依赖见 requirement
 | `src/opener.py` | 模拟器模式集成（**零注入方案**：MuMu 机型伪装 / 设备门禁本地翻转 + 官方 scheme 跳转，旧版常驻 frida 注入被 QQ 风控"使用外挂插件"）：**Root 按需**——`_has_root()` 软检查（`su -c id`），有 Root 才做 `ensure_device_spoof()` 伪装重挂与 MMKV 补丁自检，无 Root 直接 scheme 直开（伪装/补丁都已持久化的设备日常零权限运行；scheme 失败且无 Root 时报错提示开一次 Root 打补丁，之后可永久关闭）；伪装改 MuMu app 级机型映射（`emulator.device_spoof` 开关控制，**默认关闭**——门禁补丁已翻转的设备不需要，设置页"MuMu 机型伪装"开关，opener 每次运行重新 load_config 天然热生效）（`/system/etc/mumu-configs/app-device-prop-*.config` 里 QQ 行从 `yyb.config` 原始模拟器 dump 换成真实手机 profile，root `mount --bind` 覆盖，重启模拟器失效、每次运行幂等重挂，非 MuMu 静默跳过），QQ 以真机身份运行、门禁原生通过、搜索卡片"宠物"入口可用；无伪装时模拟器被 QQ 判成 TABLET（`ro.build.characteristics` 含 tablet），门禁 `PetQQMC.e()` 读 UnitedConfig 107805 的 `enable_tablet`（默认 0）拦截官方跳转，此时 `ensure_gate_open()` 用 root 改本地 MMKV 缓存（`united_config_mmkv_<uin>` 追加 `enable_tablet:1` 记录 + 重算 CRC，`_patch_gate_mmkv` 有格式自检，不符就放弃不冒损坏风险）翻转门禁兜底；然后 `am start -a VIEW -d "mqqapi://qpet/open?..."`（JumpActivity，普通 shell 可发）由 QQ 官方路径打开宠物主页并初始化 SDK；三级调度：scheme 直开 → MMKV 补丁后 scheme → frida 一次性 SDK init + `am_start_pet_page` fragment 直开兜底（伪装名 `perf_daemon`、随机端口、几秒注入窗口，格式变化时启用）；`EMULATOR_MODE`/`GATE_OPEN` 标记由 `run_scheduler`/`--test`/`open_pet_page` 置位，visit 据此选游戏内导航或 am start 好友入口分支；好友入口 uin 由 `ensure_friend_entry()` 一次性注入捕获缓存 `runs/friend_entry.json`（仅兜底模式需要）；`_start_qq` 冷启动重试（`START_QQ_ATTEMPTS`=3）；QQ 服务端重发 107805 会覆盖补丁，每次启动自检重补 |
 | `src/status_cache.py` | 宠物状态缓存（`runs/status_cache.json`，单 default 条目——曾按账号名称组织兼容多账号，账号 OCR 误识别导致状态条多行，已取消）：体力/清洁/心情（care 状态面板 OCR 后）、金币（主页 OCR 后）、香皂/饼干（喂食/洗澡结束时 OCR 控件附近小图；库存角标无文字，取离 `feed_10`/`shower_10` 控件最近的数字）；一键护理后清空体力/清洁/心情/饼干/香皂；消费方是仪表盘（dashboard 直接读这份 JSON，总览页状态环每秒刷新） |
 | `src/queue_status.py` | 任务队列状态缓存（`runs/queue_status.json`）：TaskQueueRunner 每轮调度后写当前任务/下一任务（含等待点时间，HH:MM:SS + next_ts 时间戳，前端显示"xx秒后"倒计时）/待执行数量（在等退避/每日窗口/pending 收尾时间，主任务组 pending 也算一项）/等待中数量（现在就可执行、等调度器轮到），执行中任务在 `_execute` 里先写一次；仪表盘每秒读一次（调度器未运行时不读，显示"调度器未运行"）；legacy 引擎不写。**状态新鲜度**（用户实报"宠物被送去上课、我手动召回，停掉调度器再启动，显示还是在上课"）：调度器一起来就 `mark_starting()`（清空上一轮活动 + 写自己的 PID）、停止时 `mark_stopped()`（调度器自己退出与仪表盘 `scheduler_stop` 两条路径都写）；消费端用 `status_is_current()` / `startup_placeholder_active()` 判断"这份状态是不是当前这个进程写的"，对不上就显示"启动检查中/按配置推算"，而不是把上一轮遗留的 `pending: 上课` 当现状（宽限期 `STARTUP_PLACEHOLDER_GRACE_SECONDS`=600s，超过说明该引擎根本不写队列状态） |
-| `src/config.py` | dataclass 配置 + 路径规划：`APP_ROOT`（可写）/ `RESOURCE_ROOT`（包内资源），`resource_path()` APP_ROOT 优先 |
+| `src/config.py` | dataclass 配置 + 路径规划：`APP_ROOT`（可写数据根，`QQPET_DATA_DIR` 优先；macOS 冻结版默认 `~/Library/Application Support/QQPetCopilot`，Windows 便携版仍为 exe 目录）/ `RESOURCE_ROOT`（独立只读资源根，冻结版为 `sys._MEIPASS`）。冻结版 `resource_path()` 优先 `APP_ROOT/runs/<相对路径>` 覆盖，再读包内资源 |
 | `src/settings.py` | ruamel 往返读写 config.yaml（保留注释）+ 字段校验（`DEFAULTS`/`validate_field`）；消费方是 `dashboard.py`（设置页读写）与 `scenarios/runner.py` |
 | `src/notify.py` | 告警与事件通知：桌面通知（macOS `osascript` / Windows winotify）+ 飞书群机器人 + Telegram Bot + OnePush（Bark/PushPlus/Server酱/SMTP/自定义 webhook 等），发送失败只记日志、发不出去也不吃调度。**正文可带富消息 HTML**：含 `<table>` 时 Telegram 走 **`sendRichMessage` 富消息**（原生表格；`_RICH_ONLY_RE` 判定），其余渠道由 `_escape_plain()` 剥成纯文本（表格 → 一行一条、制表符分列、表体不留空行；段落空行保留）。**四条必须守的点**：① `<table>` **绝不能**用 `sendMessage` + `parse_mode=HTML` 发 —— 旧解析器不支持 table，会 400 拒收整条（富消息上限 32k，普通消息 4096）；② 富消息失败要**回落普通消息**，表格只是排版、通知不能丢；③ 普通正文超 4096 字符是**整条拒收**而非截断，发送前用 `_fit_telegram()` 自己砍（顺手补齐被砍断的 `<pre>`）；④ `notifications.jsonl` 历史存**剥标签的纯文本**（仪表盘按 pre-wrap 渲染，存原文会看到一堆标签） |
 | `src/tg_bot.py` | **Telegram 控制机器人（项目里唯一的反向通道）**：`src/notify.py` 只做单向推送（程序→你），这里做双向——仪表盘进程里起一个后台线程长轮询 `getUpdates`，把消息解析成**改 config.yaml / 查状态 / 启停调度器**。两条轨道同一个执行器：① 确定性指令（`/help` `/set 字段 值` `/get [字段]` `/status` `/log [N]` `/run` `/halt` `/pause` `/resume`）；② 自然语言（`tgbot.llm_enabled` 打开且配好 OpenAI 兼容接口时走 tool calling，**工具集合与指令完全同一套**，越不出确定性指令的边界）。**三条刻意划死的边界**：① **只认白名单 chat**（`tgbot.allowed_chats`，留空回落 `notify.telegram_chat_id`），非白名单**静默丢弃、不回话**——token 泄露时这是唯一闸门；② **凭据类不可经 TG 修改**（`blocked_reason()`：`tgbot_*` 整段 + `notify.*token/webhook/secret` + `*_set` 状态位），聊记录永久留存且改控制通道自身凭据等于把一次泄露升级成永久接管；③ 不碰设备/场景，只改配置、看状态、开关调度器进程。与 dashboard 靠 `Bridge` 依赖注入解耦（dashboard 是脚本不是包，反向 import 会循环），因此可离线测试。**`/start` 绝不能绑成「启动调度器」**——它是 Telegram 的"开始"按钮，点开机器人就会发，绑了就是误触；启停走 `/run` `/halt`。轮询游标存 `runs/tgbot_state.json`（重启不重放旧消息）；`enabled` 每轮重读，设置页改完立即生效不用重启仪表盘；长轮询 25s 超时是正常现象不当错误记。**TG 改配置必须留审计**：HTTP 那条路的审计写在 `/api/settings` 路由里，TG 经 Bridge 直接调 `apply_settings` 不经过它，所以 dashboard 的 `_tg_apply()` 自己补一笔 audit + 写 `reload.signal` |
@@ -84,10 +84,14 @@ $PY -m pytest                    # 单元测试（tests/，依赖见 requirement
 | `tools/fetch_scrcpy.py` | 从官方 GitHub Release 下载解压 scrcpy（win64）到 `resources/scrcpy-win64/`（不入库，主要提供随包 `adb.exe` 兜底）；`--version` 指定版本、`--force` 强制覆盖。直播已移除，不再由代码自动调用 |
 | `tools/fetch_frida_server.py` | 下载 frida-server 离线包到 `resources/frida-server/`（不入库）；`--version`/`--arch`（可多个）/`--force`，GitHub 直连失败自动试镜像；源码运行 `src/opener.py` 缺失时自动调用 |
 | `tools/fetch_minitouch.py` | 下载 minitouch 预编译二进制到 `resources/minitouch/minitouch-<abi>`（不入库，jsDelivr/unpkg/GitHub 多源）；`--arch`（可多个）/`--force`；源码运行 `src/u2dev.py` 控制方案选 minitouch 且缺失时自动调用 |
-| `resources/` | 第三方二进制/离线包（不入库）：`scrcpy-win64/`（tools/fetch_scrcpy.py 拉取）、`frida-server/`（离线 xz，不随 exe 打包，兜底触发时手动放置/源码运行自动下载）、`minitouch/`（minitouch 二进制，tools/fetch_minitouch.py 拉取，普通版/模拟器版都带上） |
+| `resources/` | 第三方二进制/离线包（不入库）：`scrcpy-win64/`（tools/fetch_scrcpy.py 拉取）、`frida-server/`（离线 xz，macOS App 随包提供；Windows exe 不内置，兜底触发时手动放置/源码运行自动下载）、`minitouch/`（minitouch 二进制，tools/fetch_minitouch.py 拉取，普通版/模拟器版都带上） |
 | `tools/test_locator.py` | 测试 locator 的 xpath 在当前页面的命中稳定性（连设备连续多轮 dump，统计 live/snapshot 两种调用方式的命中率与 bounds 漂移，定位深层 xpath 时有时无/位置漂移问题） |
 | `tools/capture_visit_jump.py` | 抓取 QQ 宠物"访问好友"跳转参数（doJumpAction URL + doAction attrs），真机/模拟器对比、QQ 更新后排查用；`-s` 设备、`-c` 自动点 好友->访问；frida-server 按 opener 的隐身方式自动部署（伪装名 + 随机端口，用完即杀） |
-| `dashboard.py` | 手机仪表盘（纯标准库 HTTP 服务，默认端口 8787，`./dashboard.sh` 后台常驻，已在跑则提示并退出）。**后端只提供接口与静态资源，界面是 React 前端 `web/`**（构建产物 `web/dist/`，按请求读盘、**改前端无需重启仪表盘**；改 `web/` 前必读 [`web/FRONTEND_PITFALLS.md`](web/FRONTEND_PITFALLS.md)）。访问需鉴权：访问码存 `runs/`，`/api/auth` 校验后发 Cookie（`src/dashboard_auth.py`），改 dashboard 路由要留意这条守卫。路由：`/`（`web/dist/index.html`）、`/assets/*`（Vite 产物，带 hash 的长缓存）、`/manifest.json`、`/sw.js`、`/qp-icons/*`（图标与背景，路径归属校验；`Cache-Control: max-age=3600`）、`/files/*`（异常截图等）、`GET /api/data`（总览聚合）`/api/logs` `/api/rewards` `/api/adventure` `/api/friends` `/api/plan` `/api/adb` `/api/notify/history` `/api/screenshot`、`POST /api/auth` `/api/access-key` `/api/settings` `/api/runner/start|stop|pause|resume` `/api/adb/connect` `/api/plan/sync` `/api/preset/alt` `/api/notify/test`。验证：`python3 dashboard.py --port 8899` 起副本（不影响 8787 在跑的实例）。**实时画面**：前端每 15 秒轮询 `GET /api/screenshot`（切后台暂停、回前台立即补一张）；`capture_phone()` 走 adb `exec-out screencap -p` → PIL 缩到 390 宽 → JPEG，服务端 5 秒节流缓存，截图失败时回退 120 秒内的缓存并标注「(缓存)」。网页上的**直播与接管已整体移除**（`src/screen_stream.py`、`/stream/*`、`/api/stream/*` 均已删除，不要再加回来）；但**Telegram `/pause` / `/resume`** 仍复用同一套让路机制：写/删 `runs/pause.signal` → 调度器在安全点（每轮调度开头 + `sleep_interruptible` 睡眠切片里的 `wait_if_paused()`）原地等待，**不退出进程、pending 与进度全保留**，`PAUSE_MAX_SECONDS`=300 秒无更新自动恢复。**房间背景**：总览页圆钮开选择面板——**点按开面板、长按切下一张**；背景库见 `web/src/lib/scene.ts` 的 `SCENE_INFO`（「自动」+ 官方 4 套房间场景 + 15 款家居 `home-*` + 8 个职业主题 `career-*`；**`room-store` 已按用户要求移除**，图片仍在磁盘随时可加回，`readManualScene` 会校验旧 localStorage 值并回落「自动」）；那 15 款的真原图来自 app 下载的**素材包**（root 可读），归档 `qqpet_assets/_raw/pet_home_bg_packs/`，重建 `extract_home_bgs.py --from-packs`；**深色模式必须换图**（`SCENE_INFO.dark` + `sbDark`），别拿亮版调暗；**换背景图必须把 `web/src/lib/scene.ts` 的 `BG_VER` +1**（`/qp-icons/*` 走 `max-age=3600`，同名覆盖时浏览器一小时内仍显示旧图）；手动选择存 `localStorage('qpet_scene')` 并**暂停"按任务自动换背景"**；背景与状态栏采样色由 JS 内联写到 `html`（色表只在 `SCENE_INFO` 一份）。**调度器单实例守卫**：`src/instance.py`（`runs/runner.pid` + 内核判活，**绝不依赖 ps**；runner 自守卫、多开时后启动者退出 2）。**状态新鲜度**：`work_eta()` 只认最近一次调度器启动（日志里的 `调度引擎: task_queue|legacy` 行，常量 `RUN_START_LOG_RE`，改 runner 那行日志时须同步）之后的"进行中"登记——重启后上一轮的登记作废，否则界面会继续显示"上课中/剩余 xx 分钟"（用户实报）；队列状态 `starting`/`stopped`/PID 与当前调度器对不上时状态条显示"启动中"、任务列表退回按配置渲染，超过 10 分钟宽限期不再显示"启动中"（legacy 引擎不写队列状态）；`scheduler_stop()` 顺手 `mark_stopped()` |
+| `dashboard.py` | 仪表盘后台（标准库 HTTP 服务，默认端口 8787；源码临时调试用 `./dashboard.sh`，长跑交 launchd，macOS 完整 App 自动准备随包本机后台）。**后端只提供接口与静态资源，界面是 React 前端 `web/`**（构建产物 `web/dist/`，按请求读盘、**改前端无需重启仪表盘**；改 `web/` 前必读 [`web/FRONTEND_PITFALLS.md`](web/FRONTEND_PITFALLS.md)）。访问需鉴权：访问码存 `runs/`，`/api/auth` 校验后发 Cookie（`src/dashboard_auth.py`），改 dashboard 路由要留意这条守卫。路由：`/`（`web/dist/index.html`）、`/assets/*`（Vite 产物，带 hash 的长缓存）、`/manifest.json`、`/sw.js`、`/qp-icons/*`（图标与背景，路径归属校验；`Cache-Control: max-age=3600`）、`/files/*`（异常截图等）、`GET /api/data`（总览聚合）`/api/logs` `/api/rewards` `/api/adventure` `/api/friends` `/api/plan` `/api/adb` `/api/notify/history` `/api/screenshot`、`POST /api/auth` `/api/access-key` `/api/settings` `/api/runner/start|stop|pause|resume` `/api/adb/connect` `/api/plan/sync` `/api/preset/alt` `/api/notify/test`。验证：`python3 dashboard.py --port 8899` 起副本（不影响 8787 在跑的实例）。**实时画面**：前端每 15 秒轮询 `GET /api/screenshot`（切后台暂停、回前台立即补一张）；`capture_phone()` 走 adb `exec-out screencap -p` → PIL 缩到 390 宽 → JPEG，服务端 5 秒节流缓存，截图失败时回退 120 秒内的缓存并标注「(缓存)」。网页上的**直播与接管已整体移除**（`src/screen_stream.py`、`/stream/*`、`/api/stream/*` 均已删除，不要再加回来）；但**Telegram `/pause` / `/resume`** 仍复用同一套让路机制：写/删 `runs/pause.signal` → 调度器在安全点（每轮调度开头 + `sleep_interruptible` 睡眠切片里的 `wait_if_paused()`）原地等待，**不退出进程、pending 与进度全保留**，`PAUSE_MAX_SECONDS`=300 秒无更新自动恢复。**房间背景**：总览页圆钮开选择面板——**点按开面板、长按切下一张**；背景库见 `web/src/lib/scene.ts` 的 `SCENE_INFO`（「自动」+ 官方 4 套房间场景 + 15 款家居 `home-*` + 8 个职业主题 `career-*`；**`room-store` 已按用户要求移除**，图片仍在磁盘随时可加回，`readManualScene` 会校验旧 localStorage 值并回落「自动」）；那 15 款的真原图来自 app 下载的**素材包**（root 可读），归档 `qqpet_assets/_raw/pet_home_bg_packs/`，重建 `extract_home_bgs.py --from-packs`；**深色模式必须换图**（`SCENE_INFO.dark` + `sbDark`），别拿亮版调暗；**换背景图必须把 `web/src/lib/scene.ts` 的 `BG_VER` +1**（`/qp-icons/*` 走 `max-age=3600`，同名覆盖时浏览器一小时内仍显示旧图）；手动选择存 `localStorage('qpet_scene')` 并**暂停"按任务自动换背景"**；背景与状态栏采样色由 JS 内联写到 `html`（色表只在 `SCENE_INFO` 一份）。**调度器单实例守卫**：`src/instance.py`（`runs/runner.pid` + 内核判活，**绝不依赖 ps**；runner 自守卫、多开时后启动者退出 2）。**状态新鲜度**：`work_eta()` 只认最近一次调度器启动（日志里的 `调度引擎: task_queue|legacy` 行，常量 `RUN_START_LOG_RE`，改 runner 那行日志时须同步）之后的"进行中"登记——重启后上一轮的登记作废，否则界面会继续显示"上课中/剩余 xx 分钟"（用户实报）；队列状态 `starting`/`stopped`/PID 与当前调度器对不上时状态条显示"启动中"、任务列表退回按配置渲染，超过 10 分钟宽限期不再显示"启动中"（legacy 引擎不写队列状态）；`scheduler_stop()` 顺手 `mark_stopped()` |
+| `src/client_protocol.py` / `src/dashboard_auth.py` | **客户端协议 v1**：`GET /api/client/meta` 公开协议/能力；同源浏览器用 `/api/auth` Cookie，手机通过 `POST /api/client/pairing`（需已登录）取得 5 分钟、一次性配对票据，再 `POST /api/client/pair` 换取长期设备 Bearer Token。磁盘只存票据/token 的 SHA-256 哈希（`runs/client_protocol.json`，0600）。设备路由 `GET /api/client/session|devices`、`POST /api/client/heartbeat`、`DELETE /api/client/devices/<id>`；跨域只允许设备 Bearer 并返回 CORS，Cookie 与旧访问码 Bearer 始终限同源。根页面 `web/dist/index.html` 公开（否则远程客户端看不到配对页），所有 `/api/*`、`/files/*` 仍鉴权。二维码由服务端标准 `qrcode` 库生成 PNG，不把二维码编码器塞进前端。 |
+| `src/runtime_process.py` | 跨平台本地托管进程层：源码选 `.venv/bin/python` / `.venv/Scripts/python.exe`；macOS 冻结版调用同一 `QQPetRuntime scheduler`（职业识别用 `career-sync`），Windows 冻结版仍用同级 `QQPetCopilotScheduler.exe`；`spawn_detached_scheduler` POSIX 用 `start_new_session`、Windows 用 `CREATE_NEW_PROCESS_GROUP\|CREATE_NO_WINDOW`；停止 POSIX `SIGINT→SIGTERM→SIGKILL`、Windows `CTRL_BREAK_EVENT→taskkill /T→/F`；便携/安装数据根解析。`dashboard.py` 的启停已接这套，不再硬编码 POSIX 路径。 |
+| `desktop/macos/` | 完整本机 App：Tauri UI + PyInstaller onedir `QQPetRuntime`，随包 Python/后台/调度器/前端/ADB/OCR/控制资源；打开自动启动本机后台并登录，无 URL 输入。App 自动 bootstrap 用户级 launchd 作业 `ai.qqpet.dashboard.app`，采用已有 `ai.qqpet.dashboard` 时不抢生命周期；后台按构建指纹复制到控制端 Application Support 的 `backends/`，`data-root.txt` 记录沿用的数据根，移动 App 不影响后台路径。关闭窗口留菜单栏、退出 App 不主动停任务。`scripts/build-macos.sh` 先构建 runtime 再打完整包；构建脚本本身不启停服务。 |
+| `desktop/windows/` | Windows portable 脚手架：PyInstaller onedir 打 `QQPetCopilot.exe` + `QQPetCopilotScheduler.exe`，`build_portable.py`、首次运行/启停脚本与 README；真实 Windows 构建/防火墙/ADB 仍需实机验证。 |
 
 ## 关键约定（改动时必须遵守）
 
@@ -215,7 +219,8 @@ $PY -m pytest                    # 单元测试（tests/，依赖见 requirement
   两者都留在那个 App 的联盟里；从 Dock 强制退出该 App 时系统按联盟清扫：
   `Dock _LSForceQuitApplication: ... coalition pids to consider killing:[, ..., 88553, 95815]`
   → `killPID ... hard=NO succeeded`，两个常驻进程一起没、手机停在冒险页（当日 11:30:25
-  事故）。现在仪表盘交给 launchd（`tools/launchd/install.sh` 装 `ai.qqpet.dashboard`，
+  事故）。现在仪表盘交给 launchd（源码通过 `tools/launchd/install.sh` 装 `ai.qqpet.dashboard`；
+  macOS 完整 App 自动准备 `ai.qqpet.dashboard.app`，已有源码托管继续被采用，
   KeepAlive + RunAtLoad），调度器仍由 `/api/runner/start` 按需拉起、归属该 launchd 作业的
   联盟，不再随任何 App 退出被连带杀。**只托管仪表盘、不托管调度器**——给调度器加 KeepAlive
   会让按钮「停止」被立刻拉回，破坏交互。
@@ -476,10 +481,21 @@ $PY -m pytest                    # 单元测试（tests/，依赖见 requirement
 
 ## 打包
 
-**本仓库没有打包链路**（上游的 `build.py` / PyInstaller / Windows CI 已移除）——
-源码直接跑：`./run.sh`（调度器）+ `./dashboard.sh`（仪表盘）。
-`src/config.py` 仍保留 `APP_ROOT` / `RESOURCE_ROOT` 双根设计（打包版
-`APP_ROOT` = exe 目录、`RESOURCE_ROOT` = `sys._MEIPASS`），源码运行时两者都是仓库根，
-`resource_path()` 让 `runs/` 下的同名文件可覆盖包内资源（如
-`runs/resources/scrcpy-win64/`）——`resources/` 里的第三方二进制不入库，
-按需用 `tools/fetch_*.py` 拉取。
+**上游的根目录 `build.py` / Windows CI 已移除；现有打包入口在 `desktop/`**——
+源码调度器可用 `./run.sh` 调试；仪表盘长期运行仍用 `tools/launchd/install.sh`，
+`./dashboard.sh` 只作临时调试。
+
+- macOS 完整 `.app`：`desktop/macos/scripts/build-macos.sh`，包含 Tauri UI 与随包
+  Python 后台/调度器，默认自动本机启动，无 URL 输入。`scripts/verify.sh` 使用临时数据根做
+  导入、资源、真实 OCR 与调度器命令离线自检，不碰设备或真实进度。
+- Windows portable：`desktop/windows/build_portable.py`（必须在 Windows 上构建；产物
+  `dist/QQPetCopilot-Windows-x64.zip`，包含 dashboard + scheduler 两个 exe）。
+
+`src/config.py` 保留 `APP_ROOT` / `RESOURCE_ROOT` 双根设计：`QQPET_DATA_DIR` 显式覆盖
+可写数据根；未覆盖时 macOS 打包版默认 `~/Library/Application Support/QQPetCopilot`，
+Windows 便携版仍为 exe 目录，源码默认为仓库根。只读 `RESOURCE_ROOT` 在冻结版为
+`sys._MEIPASS`、源码为仓库根，不随数据根重定向。冻结版 `resource_path()` 让
+`APP_ROOT/runs/` 下的同名文件覆盖包内资源（如 `runs/resources/frida-server/`）。
+macOS App 采用已有后台时沿用其数据根；包内不保存用户配置、访问码或进度。
+`resources/` 的第三方二进制不入库，按需用 `tools/fetch_*.py` 准备；
+完整 App 只打指定控制资源和三个公开 OCR 模型，不打整个真实 `runs/`。

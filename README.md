@@ -5,10 +5,44 @@
 
 核心是 Python + adb + uiautomator2 + RapidOCR。项目源自
 [490720818/qq-pet-copilot](https://github.com/490720818/qq-pet-copilot)（GPL-3.0）：
-本版在它的基础上做了 **macOS 适配**，把界面换成了**手机浏览器仪表盘**（两种系统通用）；
+本版在它的基础上做了 **macOS 适配**，以 React 仪表盘统一 macOS 本机 App 与手机浏览器界面；
 与上游的差异见 [MAC-PORT.md](MAC-PORT.md)。
 
 > 调度器与仪表盘主要在 macOS 上验证，Windows / Linux 未实测。
+
+## 客户端与运行方式
+
+- **Android / 手机 PWA**：现有 React 仪表盘，作为**遥控端**连接 Windows / macOS 上的托管服务；手机不跑 OCR、ADB 或 Python。
+- **同源浏览器**：直接打开 `http://<电脑IP>:8787/` 仍用访问码 + Cookie；根页面壳公开以便远程客户端进入配对门禁，所有数据/文件 API 仍然鉴权。
+- **macOS `.app`**：`desktop/macos/` 的完整本机应用，包含 UI、Python、仪表盘后台和调度器；打开后自动启动本机后台并进入界面，无需填写 URL 或另装 Python。App 自动通过 launchd 托管后台，已有源码托管实例会继续被采用；关闭窗口或退出 App 不会主动停止任务。
+- **Windows 便携版**：`desktop/windows/` 的 onedir 打包脚手架，仪表盘与调度器是两个 exe；安装器、开机自启属于下一阶段。
+
+手机首次连接点「打开连接设置」或「扫码配对」：电脑在「设置 → 手机遥控」生成一次性二维码/链接。配对使用一次性票据换取设备 Bearer Token，
+票据 5 分钟有效且只能用一次；设备可在同一页撤销。Cookie 仍用于同源浏览器，不会跨域复用。
+
+构建完整 macOS App：
+
+```bash
+desktop/macos/scripts/build-macos.sh
+```
+
+产物在 `desktop/macos/target/release/bundle/macos/QQ Pet Dashboard.app`。
+构建条件、随包资源和离线校验见 [macOS 说明](desktop/macos/README.md)。
+
+构建 Windows portable（在 Windows 上执行）：
+
+```powershell
+.venv\Scripts\python.exe desktop\windows\build_portable.py
+```
+
+`src.runtime_process` 在源码模式选择 `.venv/bin/python` / `.venv\Scripts\python.exe`；
+macOS 冻结版执行随包 `QQPetRuntime scheduler`，Windows 冻结版维持同级 scheduler exe。
+Windows 停止进程使用 `CTRL_BREAK_EVENT → taskkill /T → /F`，POSIX 保持
+`SIGINT → SIGTERM → SIGKILL`。Windows 打包与真实进程行为仍需在 Windows 实机验证。
+
+macOS 打包版默认把配置和进度放在 `~/Library/Application Support/QQPetCopilot/`，
+可通过 `QQPET_DATA_DIR` 指定数据根；采用已有后台时沿用它的数据。App 的只读运行资源与用户数据分开，
+移动 App 不需要移动源码。源码运行及原有 `tools/launchd/install.sh` 托管方式继续有效。
 
 ![仪表盘总览页](docs/overview-guide.png)
 
@@ -28,7 +62,10 @@
 
 ## 快速开始
 
-需要 **Python 3.13**、**adb（Android platform-tools）** 和一台 **Android 真机**
+**macOS 完整 App**：打开 App 后自动准备本机后台；Python、ADB 和后台已随包提供，
+无需填写服务器地址。可在设置中选择设备、调整任务，然后在首页点击「启动」。
+
+以下是仍然有效的**源码运行方式**。需要 **Python 3.13**、**adb（Android platform-tools）** 和一台 **Android 真机**
 （USB 调试打开、QQ 已登录宠物、充电时不熄屏）。
 
 ```bash
@@ -73,7 +110,9 @@ macOS 与 Windows 在 adb 探测、模拟器探测、桌面通知上的差异见
 
 ## 手机仪表盘
 
-纯标准库零依赖，端口 8787、绑定 `0.0.0.0`。日志 3 秒、数据 6 秒、实时画面 15 秒自动刷新。
+源码仪表盘默认端口 8787、绑定 `0.0.0.0`；macOS 完整 App 的随包后台默认只绑定
+`127.0.0.1`，自动供本机界面使用。需要局域网手机遥控时可继续使用源码 launchd 托管方式。
+日志 3 秒、数据 6 秒、实时画面 15 秒自动刷新。
 
 **界面不限于手机**：同一局域网里任何设备打开 `http://<跑仪表盘那台机器的 IP>:8787`
 都是同一个界面（平板、另一台电脑都行）。注意这是「一台跑、多台看」——调度器与手机
@@ -182,8 +221,9 @@ Telegram 用原生表格，飞书/桌面/OnePush 自动转纯文本；完整示�
 本版做了 macOS 运行链路适配、浏览器仪表盘、实时画面截图，以及一批新版 QQ 界面适配；
 差异清单见 [MAC-PORT.md](MAC-PORT.md)。
 
-上游的 PyQt6 桌面 GUI（`main.py`）、PyInstaller 打包链路与 Windows 打包 CI
-（`release.yml`）已从本仓库移除——本版按「源码运行 + 浏览器界面」使用。
+上游的 PyQt6 桌面 GUI（`main.py`）、旧打包脚本与 Windows 打包 CI
+（`release.yml`）已从本仓库移除；当前支持源码运行与浏览器界面，并在 `desktop/` 提供
+完整 macOS App 和 Windows portable 打包入口。
 要用上游桌面版（含打包 exe 说明），见
 [上游 README](https://github.com/490720818/qq-pet-copilot)。
 

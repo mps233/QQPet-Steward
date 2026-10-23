@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "local-startup"
+description = "Read local startup progress and retry the bundled backend."
+commands.allow = ["get_startup_status", "retry_startup"]

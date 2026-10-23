@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <meta name="color-scheme" content="light" />
+    <title>QQ 宠物托管</title>
+    <link rel="stylesheet" href="launcher.css" />
+    <script src="window-chrome.js"></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="masthead">
+        <div class="mark" aria-hidden="true">Q</div>
+        <div>
+          <p class="eyebrow">QQ PET · DESKTOP</p>
+          <h1>QQ 宠物托管</h1>
+        </div>
+      </header>
+
+      <section class="startup" aria-label="应用启动状态">
+        <div class="status-card" data-state="starting" aria-live="polite">
+          <span class="status-dot" aria-hidden="true"></span>
+          <div>
+            <p id="status-title" class="status-title">正在启动 QQ 宠物托管</p>
+            <p id="status-detail" class="status-detail">正在准备后台服务，完成后将自动打开主界面。</p>
+          </div>
+        </div>
+        <button id="retry" class="primary" type="button" disabled>重试启动</button>
+      </section>
+    </main>
+    <script type="module" src="launcher.js"></script>
+  </body>
+</html>

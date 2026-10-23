@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "panel-snapshot"
+description = "Read the local dashboard state for the menu bar panel."
+commands.allow = ["panel_snapshot"]

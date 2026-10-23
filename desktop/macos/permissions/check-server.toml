@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "check-server"
+description = "Probe the configured dashboard URL."
+commands.allow = ["check_server"]

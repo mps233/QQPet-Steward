@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "get-server"
+description = "Read the persisted dashboard URL."
+commands.allow = ["get_server"]

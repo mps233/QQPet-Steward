@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "panel-control"
+description = "Control the local scheduler from the menu bar panel."
+commands.allow = ["panel_start_runner", "panel_stop_runner", "panel_pause_runner", "panel_resume_runner"]

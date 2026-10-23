@@ -18,10 +18,12 @@
 import errno
 import gzip
 import hmac
+import ipaddress
 import io
 import json
 import os
 import re
+import secrets
 import signal
 import subprocess
 import sys
@@ -45,6 +47,9 @@ BASE = RESOURCE_ROOT
 
 RUNS = APP_ROOT / 'runs'
 RUNNER_PID = RUNS / 'runner.pid'      # 调度器自己写的单实例登记（见 src/instance.py）
+LOCAL_CONTROL_HEADER = 'X-QPet-Control'
+LOCAL_CONTROL_FILE = RUNS / 'desktop_control.token'
+LOCAL_CONTROL_HOST = '127.0.0.1'
 
 sys.path.insert(0, str(BASE))          # 让 `import src.instance` 在源码运行/打包都成立
 from src import instance  # noqa: E402  （判活工具：pidfile + os.kill(pid,0)，不依赖 ps）
@@ -282,6 +287,44 @@ def _runtime_data_paths() -> runtime_process.UserDataPaths:
     portable = bool(os.environ.get(runtime_process.PORTABLE_ENV))
     return runtime_process.user_data_paths(
         data_root, frozen=frozen, portable=portable)
+
+
+def _local_control_key() -> str:
+    """Load or create the private token used by the macOS menu-bar host.
+
+    This is deliberately separate from the browser access key: the desktop
+    host may read live state without copying an HttpOnly cookie, and a leaked
+    browser cookie cannot be replayed as a local control credential.
+    """
+    LOCAL_CONTROL_FILE.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        fd = os.open(LOCAL_CONTROL_FILE, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        return LOCAL_CONTROL_FILE.read_text('utf-8').strip()
+    key = secrets.token_urlsafe(32)
+    with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+        handle.write(key + '\n')
+    LOCAL_CONTROL_FILE.chmod(0o600)
+    return key
+
+
+def _is_loopback_client(address: str) -> bool:
+    try:
+        return ipaddress.ip_address(str(address)).is_loopback
+    except ValueError:
+        return False
+
+
+def _local_control_is_loopback(handler) -> bool:
+    return _is_loopback_client(handler.client_address[0])
+
+
+def _local_control_authorized(handler) -> bool:
+    credential = str(handler.headers.get(LOCAL_CONTROL_HEADER) or '')
+    if not _local_control_is_loopback(handler) or not credential:
+        return False
+    key = _local_control_key()
+    return len(key) >= 32 and hmac.compare_digest(credential, key)
 
 
 def scheduler_start() -> dict:
@@ -1833,6 +1876,10 @@ class Handler(BaseHTTPRequestHandler):
             'name': meta.pop('server_name'),
             'protocol_version': meta['protocol_version'],
         }
+        meta['runtime'] = {
+            'packaged': bool(getattr(sys, 'frozen', False)),
+            'desktop_session': True,
+        }
         return meta
 
     def _session_payload(self, context: dict) -> dict:
@@ -2100,7 +2147,7 @@ class Handler(BaseHTTPRequestHandler):
         # contains no data and its JS immediately shows the pairing gate.
         if path in ('/', '/index.html', '/next', '/next/'):
             needs_auth = False
-        if needs_auth and not self._authenticated():
+        if needs_auth and not (self._authenticated() or _local_control_authorized(self)):
             if path.startswith(('/api/', '/files/')):
                 self._send_json(401, {
                     'ok': False,
@@ -2182,6 +2229,13 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(404, 'text/plain', b'not found')
             elif path == '/api/data':
                 body = json.dumps(build_data(), ensure_ascii=False).encode('utf-8')
+                self._send(200, 'application/json; charset=utf-8', body)
+            elif path == '/api/runner/pause':
+                body = json.dumps({
+                    'ok': True,
+                    'paused': PAUSE_SIGNAL.exists(),
+                    'scheduler': scheduler_info(),
+                }, ensure_ascii=False).encode('utf-8')
                 self._send(200, 'application/json; charset=utf-8', body)
             elif path == '/api/notify/history':
                 from src.notify import HISTORY_FILE
@@ -2329,7 +2383,8 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(payload)
             return
-        if not same_origin(self.headers):
+        local_control = _local_control_authorized(self)
+        if not same_origin(self.headers) and not local_control:
             context = self._auth_context()
             # Native device tokens may call cross-origin, but the response must
             # carry CORS headers or browser clients cannot read it.  Cookies
@@ -2339,11 +2394,27 @@ class Handler(BaseHTTPRequestHandler):
                            b'{"ok":false,"msg":"Cross-origin request rejected"}')
                 return
 
-        if not self._authenticated():
+        if not (self._authenticated() or local_control):
             self._send_json(401, {'ok': False, 'msg': '请刷新页面并完成访问验证'})
             return
         try:
-            if u.path == '/api/client/pairing':
+            if u.path == '/api/desktop/session':
+                if not local_control or not same_origin(self.headers):
+                    self._send_json(403, {
+                        'ok': False, 'error': 'local_control_required',
+                    })
+                    return
+                key = getattr(self.server, 'access_key', None)
+                if not key:
+                    self._send_json(503, {
+                        'ok': False, 'error': 'session_unavailable',
+                    })
+                    return
+                self._send_json(200, {
+                    'cookieName': COOKIE_NAME,
+                    'cookieValue': session_value(key),
+                })
+            elif u.path == '/api/client/pairing':
                 try:
                     result = self._pairing_payload()
                 except ProtocolStoreError as exc:
@@ -2483,17 +2554,21 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     port = DEFAULT_PORT
+    bind = '0.0.0.0'
     if '--port' in sys.argv:
         port = int(sys.argv[sys.argv.index('--port') + 1])
+    if '--bind' in sys.argv:
+        bind = sys.argv[sys.argv.index('--bind') + 1]
 
     # 端口占用时不要甩一堆 traceback 就死——给出可操作的提示（常见于重复启动/上次没退干净）
     try:
-        srv = ThreadingHTTPServer(('0.0.0.0', port), Handler)
+        srv = ThreadingHTTPServer((bind, port), Handler)
         key_file = Path(os.environ.get('QQPET_DASHBOARD_ACCESS_FILE')
                         or RUNS / 'dashboard_access.token')
         srv.access_key = load_access_key(key_file)
         srv.access_key_file = key_file      # /api/access-key 改码时写回同一个文件
         set_client_protocol_store(ClientProtocolStore(RUNS / 'client_protocol.json'))
+        _local_control_key()                # create the 0600 desktop control credential
     except OSError as e:
         if e.errno in (errno.EADDRINUSE, errno.EACCES):
             print(f'端口 {port} 已被占用，仪表盘未启动。'
@@ -2504,15 +2579,17 @@ def main():
         raise
 
     # 记录生命周期：进程是"被谁杀/何时死"的唯一线索（此前日志被启动脚本覆盖，无从排查）
+    port = srv.server_port
     audit(f'仪表盘启动: pid={os.getpid()} port={port} '
           f'ppid={os.getppid()} argv={" ".join(sys.argv[1:]) or "-"}')
-    print(f'QQ宠物托管仪表盘已启动: http://0.0.0.0:{port} (Ctrl+C 停止)', flush=True)
+    print(f'QQ宠物托管仪表盘已启动: http://{bind}:{port} (Ctrl+C 停止)', flush=True)
     print(f'首次访问需验证；访问码文件: {key_file}', flush=True)
 
     # TG 控制机器人（反向通道）：后台长轮询。**必须在 serve_forever 之前起**，
     # 否则第一次 /api/data 里 tgbot_running 会是 false（设置页显示"线程没跑"）。
     # 没开开关 / 没配 token 时线程只睡不联网，见 src/tg_bot.py 的 Worker._run。
-    start_tg_bot()
+    if os.environ.get('QQPET_DISABLE_TG') != '1':
+        start_tg_bot()
 
 
     # 客户端的半截连接（刷新/切页/手机休眠断连）不该打堆栈刷屏——静音，交给下面统一记账

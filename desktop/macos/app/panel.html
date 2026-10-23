@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>QQ 宠物托管</title>
+    <link rel="stylesheet" href="panel.css" />
+  </head>
+  <body data-ready="false">
+    <div id="scrim" class="scrim" aria-hidden="true"></div>
+    <main id="panel-card" class="panel" role="dialog" aria-modal="true" aria-labelledby="panel-title">
+      <header class="panel-head">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">Q</span>
+          <div>
+            <p class="eyebrow">QQ PET · MENU BAR</p>
+            <h1 id="panel-title">QQ 宠物托管</h1>
+          </div>
+        </div>
+        <span id="conn-state" class="conn-state" data-state="loading">
+          <i aria-hidden="true"></i><span>读取中</span>
+        </span>
+      </header>
+
+      <section class="hero-card" aria-live="polite">
+        <div class="hero-top">
+          <span id="runner-dot" class="runner-dot idle" aria-hidden="true"></span>
+          <strong id="runner-state">正在读取托管状态</strong>
+          <span id="remaining" class="remaining"></span>
+        </div>
+        <p id="activity" class="activity">连接本机仪表盘…</p>
+        <p id="detail" class="detail"></p>
+        <div class="mini-stats">
+          <span><b id="learn-min">—</b> 学习</span>
+          <span><b id="work-min">—</b> 打工</span>
+          <span><b id="eff-pct">—</b> 效率</span>
+        </div>
+      </section>
+
+      <section class="summary-card">
+        <div class="summary-head">
+          <span>今日进度</span>
+          <span id="next-task" class="next-task"></span>
+        </div>
+        <div class="summary-grid">
+          <span><b id="today-total">—</b><small>分钟合计</small></span>
+          <span><b id="queue-pending">—</b><small>待执行</small></span>
+          <span><b id="uptime">—</b><small>已运行</small></span>
+        </div>
+      </section>
+
+      <section class="actions">
+        <button id="toggle-runner" type="button" disabled>启动托管</button>
+        <button id="pause-runner" class="secondary" type="button" disabled>暂停</button>
+        <button id="open-dashboard" class="secondary" type="button">打开主界面</button>
+      </section>
+
+      <p id="notice" class="notice" role="status" aria-live="polite"></p>
+
+      <footer class="panel-foot">
+        <button id="open-settings" class="text-button" type="button">设置</button>
+        <button id="quit-app" class="text-button danger" type="button">退出</button>
+      </footer>
+    </main>
+    <script type="module" src="panel.js"></script>
+  </body>
+</html>

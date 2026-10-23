@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "save-server"
+description = "Persist a validated dashboard URL."
+commands.allow = ["save_server"]

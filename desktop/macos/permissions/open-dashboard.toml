@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "open-dashboard"
+description = "Open the dashboard in the shell's own webview."
+commands.allow = ["open_dashboard"]

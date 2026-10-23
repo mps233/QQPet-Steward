@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "panel-navigation"
+description = "Open the dashboard, settings, or quit the menu bar panel host."
+commands.allow = ["panel_open_dashboard", "panel_open_settings", "panel_hide", "panel_quit"]
