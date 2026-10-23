@@ -7,6 +7,7 @@ import os
 import secrets
 from http.cookies import SimpleCookie
 from pathlib import Path
+from typing import Callable
 from urllib.parse import urlparse
 
 COOKIE_NAME = 'qqpet_session'
@@ -89,19 +90,74 @@ def session_value(key: str) -> str:
     return hmac.new(key.encode(), b'qqpet-dashboard-browser', hashlib.sha256).hexdigest()
 
 
-def authorized(headers, key: str | None) -> bool:
-    if not key:
-        return False
+def bearer_credential(headers) -> str | None:
+    """Return a syntactically valid Bearer credential, if present.
+
+    ``None`` means there is no usable Bearer header.  Keeping this separate
+    from credential verification lets the HTTP layer decide whether a
+    cross-origin request may carry the credential.
+    """
     try:
-        bearer = headers.get('Authorization', '')
-        if bearer.startswith('Bearer ') and hmac.compare_digest(bearer[7:].strip(), key):
-            return True
+        header = headers.get('Authorization', '')
+        if not isinstance(header, str):
+            return None
+        scheme, separator, credential = header.partition(' ')
+        credential = credential.strip()
+        if separator and scheme.lower() == 'bearer' and credential:
+            return credential
+    except (ValueError, TypeError):
+        return None
+    return None
+
+
+def authorize(headers, key: str | None,
+              device_authenticator: Callable[[str], dict | None] | None = None,
+              *, allow_cross_origin_cookie: bool = False) -> dict | None:
+    """Identify a request credential.
+
+    Returns a small auth context (never the credential itself), or ``None``.
+    The legacy access-key Bearer remains accepted for backwards compatibility.
+    Cookie sessions are deliberately restricted to the dashboard origin unless
+    a caller explicitly opts in (there is currently no such production use).
+    """
+    origin_is_same = same_origin(headers)
+    bearer = bearer_credential(headers)
+    if bearer:
+        if key and hmac.compare_digest(bearer, key):
+            return {'type': 'access_key', 'device': None}
+        if device_authenticator is not None:
+            device = device_authenticator(bearer)
+            if device:
+                return {'type': 'device', 'device': device}
+    if not origin_is_same and not allow_cross_origin_cookie:
+        return None
+    if not key:
+        return None
+    try:
         cookies = SimpleCookie()
         cookies.load(headers.get('Cookie', ''))
         cookie = cookies.get(COOKIE_NAME)
-        return bool(cookie and hmac.compare_digest(cookie.value, session_value(key)))
+        if cookie and hmac.compare_digest(cookie.value, session_value(key)):
+            return {'type': 'cookie', 'device': None}
     except (ValueError, TypeError):
-        return False
+        return None
+    return None
+
+
+def authorized(headers, key: str | None,
+               device_authenticator: Callable[[str], dict | None] | None = None) -> bool:
+    """Backwards-compatible boolean auth check."""
+    return authorize(headers, key, device_authenticator) is not None
+
+
+def cors_granted(headers, auth_context: dict | None) -> bool:
+    """Whether a cross-origin request may receive CORS response headers.
+
+    Device tokens are purpose-built for native remote clients.  The legacy
+    dashboard access key stays same-origin only.
+    """
+    origin = headers.get('Origin')
+    return bool(origin and auth_context and auth_context.get('type') == 'device')
 
 
 def same_origin(headers) -> bool:
@@ -110,8 +166,9 @@ def same_origin(headers) -> bool:
         return True
     try:
         parsed = urlparse(origin)
-        return parsed.scheme in ('http', 'https') and parsed.netloc == headers.get('Host')
-    except ValueError:
+        return bool(parsed.scheme in ('http', 'https') and parsed.netloc
+                    and parsed.netloc == headers.get('Host'))
+    except (TypeError, ValueError):
         return False
 
 

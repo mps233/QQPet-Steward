@@ -21,8 +21,10 @@
  * 缓存继续显示旧橙色，表现为"改了没生效"。要么换文件名，要么挂 `?v=`（推荐后者，
  * 与这套机制一致）。
  */
+import { assetUrl } from './connection'
+
 export const ICON_VER = '5'
 
 /** 给 `/qp-icons/...` 路径加上当前版本号。 */
 export const icon = (path: string): string =>
-  `${path}${path.includes('?') ? '&' : '?'}v=${ICON_VER}`
+  assetUrl(`${path}${path.includes('?') ? '&' : '?'}v=${ICON_VER}`)

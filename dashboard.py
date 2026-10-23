@@ -32,7 +32,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 from src.config import APP_ROOT, RESOURCE_ROOT
-from src.dashboard_auth import (COOKIE_NAME, LOGIN_HTML, MIN_KEY_LENGTH, authorized,
+from src.client_protocol import (PROTOCOL_VERSION, ClientProtocolStore,
+                                 InvalidPairingTicket, PairingAttemptLimiter,
+                                 ProtocolStoreError, candidate_base_urls,
+                                 client_meta, pairing_payloads)
+from src.dashboard_auth import (COOKIE_NAME, LOGIN_HTML, MIN_KEY_LENGTH, authorize,
+                                bearer_credential, cors_granted,
                                 is_custom_key, load_access_key, same_origin,
                                 save_access_key, session_value, validate_new_key)
 
@@ -73,6 +78,24 @@ LOGS = RUNS / 'logs'
 ADV_LIVE_FILE = RUNS / 'adventure_live.jsonl'   # 冒险统一记录（实验 300 把 + 日常实时）
 DEFAULT_PORT = 8787
 _SETTINGS_LOCK = threading.RLock()
+_CLIENT_STORE_LOCK = threading.RLock()
+_CLIENT_PROTOCOL_STORE: ClientProtocolStore | None = None
+
+
+def _default_client_store() -> ClientProtocolStore:
+    """Process-wide default store; tests/servers may inject their own instance."""
+    global _CLIENT_PROTOCOL_STORE
+    with _CLIENT_STORE_LOCK:
+        if _CLIENT_PROTOCOL_STORE is None:
+            _CLIENT_PROTOCOL_STORE = ClientProtocolStore(RUNS / 'client_protocol.json')
+        return _CLIENT_PROTOCOL_STORE
+
+
+def set_client_protocol_store(store) -> None:
+    """Install a protocol store (used by the server bootstrap and tests)."""
+    global _CLIENT_PROTOCOL_STORE
+    with _CLIENT_STORE_LOCK:
+        _CLIENT_PROTOCOL_STORE = store
 
 # ---- 静态资源的传输优化（见 docs/review/03-p0-交付链与安全.md B/C 节）----
 # 小于此不压：省 CPU，收益也小。
@@ -190,6 +213,10 @@ AUTH_FAIL_WINDOW = 300
 AUTH_LOCK = threading.RLock()
 AUTH_FAILURES: dict[str, list[float]] = {}
 
+#: 客户端配对失败限流（默认每来源 5 分钟 8 次）。按来源 IP 记账，
+#: 与访问码登录限流分开，避免一个泄露的配对票据拖垮浏览器登录。
+PAIRING_FAILURES = PairingAttemptLimiter(limit=8, window=300)
+
 
 def auth_retry_after(ip: str) -> int:
     """还剩多少秒处于锁定中；0 = 现在可以尝试。"""
@@ -255,7 +282,6 @@ def _runtime_data_paths() -> runtime_process.UserDataPaths:
     portable = bool(os.environ.get(runtime_process.PORTABLE_ENV))
     return runtime_process.user_data_paths(
         data_root, frozen=frozen, portable=portable)
-
 
 
 def scheduler_start() -> dict:
@@ -1707,10 +1733,323 @@ def build_data() -> dict:
 
 
 class Handler(BaseHTTPRequestHandler):
-    def _send(self, code: int, ctype: str, body: bytes, cache: str = 'no-store'):
+    # ------------------------------------------------------------ client protocol v1
+
+    def _protocol_store(self):
+        store = getattr(self.server, 'client_protocol_store', None)
+        if store is None:
+            store = _default_client_store()
+            self.server.client_protocol_store = store
+        return store
+
+    def _auth_context(self):
+        """Authenticate once per request and cache the non-secret context."""
+        if not hasattr(self, '_request_auth_context'):
+            store = self._protocol_store()
+            key = getattr(self.server, 'access_key', None)
+            bearer = bearer_credential(self.headers)
+            # Device tokens may authenticate cross-origin; the legacy access
+            # key remains same-origin-only so a leaked key cannot be embedded
+            # in a remote web page.  Heartbeats are a device-token-only route
+            # and perform the atomic last_seen update below.
+            authenticator = None
+            if bearer and not (key and hmac.compare_digest(bearer, key)):
+                touch = urlparse(self.path).path == '/api/client/heartbeat'
+                authenticator = lambda token: store.resolve_device(token, touch=touch)
+            context = authorize(self.headers, key, authenticator)
+            if (context and context.get('type') == 'access_key'
+                    and not same_origin(self.headers)):
+                context = None
+            if (context and context.get('type') == 'cookie'
+                    and not same_origin(self.headers)):
+                context = None
+            self._request_auth_context = context
+        return self._request_auth_context
+
+    def _authenticated(self) -> bool:
+        return self._auth_context() is not None
+
+    def _send_json(self, code: int, payload: dict) -> None:
+        body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+        self._send(code, 'application/json; charset=utf-8', body)
+
+    def _send_public_json(self, code: int, payload: dict) -> None:
+        """JSON response for public cross-origin client bootstrap calls.
+
+        The payload contains no credentials by construction.  Only origins
+        that use Bearer auth are allowed to call us cross-origin in practice,
+        so a browser can read this handshake before pairing.
+        """
+        body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+        origin = self.headers.get('Origin')
+        headers = ([('Access-Control-Allow-Origin', origin),
+                    ('Vary', 'Origin')] if origin else [])
+        self._send(code, 'application/json; charset=utf-8', body,
+                   extra_headers=headers)
+
+    def _cors_headers(self) -> list[tuple[str, str]]:
+        context = self._auth_context()
+        if not cors_granted(self.headers, context):
+            return []
+        return [
+            ('Access-Control-Allow-Origin', self.headers.get('Origin')),
+            ('Access-Control-Allow-Credentials', 'false'),
+            ('Vary', 'Origin'),
+        ]
+
+    def _read_json(self, limit: int = 16384) -> dict:
+        try:
+            length = int(self.headers.get('Content-Length') or 0)
+        except (TypeError, ValueError):
+            raise ValueError('Invalid Content-Length')
+        if length < 0 or length > limit:
+            raise ValueError('JSON body is too large')
+        raw = self.rfile.read(length)
+        try:
+            payload = json.loads(raw.decode('utf-8') or '{}')
+        except (UnicodeDecodeError, ValueError):
+            raise ValueError('Invalid JSON body')
+        if not isinstance(payload, dict):
+            raise ValueError('JSON body must be an object')
+        return payload
+
+    def _request_scheme(self) -> str:
+        # Dashboard authentication is currently HTTP-only.  Do not trust a
+        # client-supplied forwarded scheme when deriving pairing URLs.
+        return 'http'
+
+    def _server_port(self) -> int:
+        try:
+            return int(self.server.server_port)
+        except (AttributeError, TypeError, ValueError):
+            try:
+                return int((self.headers.get('Host') or '').rsplit(':', 1)[1])
+            except (IndexError, TypeError, ValueError):
+                return DEFAULT_PORT
+
+    def _client_meta(self) -> dict:
+        meta = client_meta(bool(self._protocol_store().pairing_available()))
+        meta['server'] = {
+            'name': meta.pop('server_name'),
+            'protocol_version': meta['protocol_version'],
+        }
+        return meta
+
+    def _session_payload(self, context: dict) -> dict:
+        device = context.get('device') if context else None
+        payload = self._client_meta()
+        payload.update({
+            'authenticated': True,
+            'auth_type': context.get('type') if context else None,
+            'device': device,
+        })
+        return payload
+
+    def _pairing_payload(self) -> dict:
+        store = self._protocol_store()
+        created = store.create_ticket()
+        base_urls = candidate_base_urls(
+            self.headers.get('Host') or '',
+            self._server_port(),
+            scheme=self._request_scheme(),
+        )
+        payload = {
+            'ok': True,
+            'protocol_version': PROTOCOL_VERSION,
+            'ticket': created['ticket'],
+            'expires_at': created['expires_at'],
+            'expires_at_iso': created['expires_at_iso'],
+            'ticket_ttl_seconds': created['ticket_ttl_seconds'],
+            'candidate_base_urls': base_urls,
+        }
+        payload.update(pairing_payloads(
+            created['ticket'], created['expires_at'], base_urls))
+        # The browser renders a standard PNG from the server instead of
+        # maintaining a partial QR encoder. This keeps the pairing entry
+        # compatible with phone scanners across versions and ECC modes.
+        try:
+            import base64
+            from io import BytesIO
+            try:
+                import qrcode  # optional dependency
+            except ImportError:
+                # Keep the link/pairing flow usable even before `pip install -r
+                # requirements.txt` is rerun. The UI renders its explicit
+                # "copy link" fallback instead of crashing the whole route.
+                raise
+            link = payload.get('deep_link') or payload.get('payload') or ''
+            if link:
+                img = qrcode.make(link)
+                buf = BytesIO()
+                img.save(buf, format='PNG')
+                payload['qr_image'] = ('data:image/png;base64,'
+                                       + base64.b64encode(buf.getvalue()).decode('ascii'))
+        except Exception:
+            # The link remains copyable; the UI shows a clear fallback.
+            pass
+        return payload
+
+    def _cors_preflight(self) -> None:
+        origin = self.headers.get('Origin')
+        request_method = (self.headers.get('Access-Control-Request-Method') or '').upper()
+        request_headers = {
+            item.strip().lower()
+            for item in (self.headers.get('Access-Control-Request-Headers') or '').split(',')
+            if item.strip()
+        }
+        allowed_methods = {'GET', 'POST', 'DELETE'}
+        allowed_headers = {'content-type', 'authorization'}
+        if (not origin or request_method not in allowed_methods
+                or not request_headers.issubset(allowed_headers)):
+            self._send(403, 'application/json',
+                       b'{"ok":false,"msg":"CORS preflight rejected"}',
+                       extra_headers=[('Vary', 'Origin')])
+            return
+        self._send(204, 'text/plain; charset=utf-8', b'', extra_headers=[
+            ('Access-Control-Allow-Origin', origin),
+            ('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS'),
+            ('Access-Control-Allow-Headers', 'Content-Type, Authorization'),
+            ('Access-Control-Max-Age', '600'),
+            ('Vary', 'Origin'),
+        ])
+
+    def _handle_client_route(self, method: str, path: str) -> bool:
+        """Handle protocol-v1 routes; return ``False`` when path is unrelated."""
+        if not path.startswith('/api/client/'):
+            return False
+        if path == '/api/client/meta' and method == 'GET':
+            self._send_public_json(200, self._client_meta())
+            return True
+        if path == '/api/client/pair' and method == 'POST':
+            return self._client_pair(path)
+        if path == '/api/client/pair':
+            self._send_json(405, {'ok': False, 'error': 'method_not_allowed'})
+            return True
+        context = self._auth_context()
+        if (not same_origin(self.headers) and bearer_credential(self.headers)
+                and not context):
+            # A cross-origin request that presents the legacy access key is
+            # rejected explicitly rather than downgraded to a generic 401.
+            self._send(403, 'application/json',
+                       b'{"ok":false,"msg":"Cross-origin request rejected"}')
+            return True
+        if not context:
+            self._send_json(401, {
+                'ok': False,
+                'error': 'authentication_required',
+                'msg': '需要 Bearer 设备令牌或同源浏览器会话',
+            })
+            return True
+
+        if path == '/api/client/session' and method == 'GET':
+            self._send_json(200, self._session_payload(self._auth_context()))
+            return True
+        if path == '/api/client/devices' and method == 'GET':
+            self._send_json(200, {
+                'ok': True,
+                'devices': self._protocol_store().list_devices(),
+            })
+            return True
+        if path == '/api/client/heartbeat' and method == 'POST':
+            context = self._auth_context()
+            device = context.get('device') if context else None
+            if not device:
+                self._send_json(403, {
+                    'ok': False,
+                    'error': 'device_token_required',
+                    'msg': '心跳只能由已配对设备发送',
+                })
+                return True
+            updated = self._protocol_store().resolve_device(
+                bearer_credential(self.headers) or '', touch=True)
+            if not updated:
+                self._send_json(401, {
+                    'ok': False,
+                    'error': 'device_revoked',
+                    'msg': '设备令牌已失效',
+                })
+                return True
+            self._send_json(200, {'ok': True, 'device': updated})
+            return True
+        if method == 'DELETE' and path.startswith('/api/client/devices/'):
+            device_id = path[len('/api/client/devices/'):]
+            if not re.fullmatch(r'[0-9a-f]{16}', device_id or ''):
+                self._send_json(404, {'ok': False, 'error': 'device_not_found'})
+                return True
+            removed = self._protocol_store().revoke_device(device_id)
+            if not removed:
+                self._send_json(404, {'ok': False, 'error': 'device_not_found'})
+                return True
+            audit(f'客户端设备已撤销(来自 {self.client_address[0]}): {device_id}')
+            self._send_json(200, {'ok': True, 'revoked': device_id})
+            return True
+
+        if path == '/api/client/pairing' and method == 'POST':
+            # Authenticated creation route is implemented below after the
+            # shared origin policy; return False to let do_POST continue.
+            return False
+        if method != 'GET' and method != 'DELETE':
+            self._send_json(405, {'ok': False, 'error': 'method_not_allowed'})
+            return True
+        self._send_json(404, {'ok': False, 'error': 'not_found'})
+        return True
+
+    def _client_pair(self, path: str) -> bool:
+        """Exchange a one-time ticket without requiring a browser session."""
+        identity = self.client_address[0]
+        retry_after = PAIRING_FAILURES.retry_after(identity)
+        if retry_after:
+            self._send_public_json(429, {
+                'ok': False,
+                'error': 'pairing_rate_limited',
+                'msg': f'配对尝试过于频繁，请 {retry_after} 秒后再试',
+                'retry_after': retry_after,
+            })
+            return True
+        try:
+            body = self._read_json(4096)
+            name = body.get('name') or body.get('device_name')
+            token, device = self._protocol_store().pair(
+                body.get('ticket'), name, body.get('platform'))
+        except InvalidPairingTicket:
+            PAIRING_FAILURES.record_failure(identity)
+            self._send_public_json(401, {
+                'ok': False,
+                'error': 'pairing_ticket_invalid',
+                'msg': '配对票据无效、已过期或已使用',
+            })
+            return True
+        except (ValueError, ProtocolStoreError) as exc:
+            self._send_public_json(400 if isinstance(exc, ValueError) else 500, {
+                'ok': False,
+                'error': ('pairing_invalid_request'
+                          if isinstance(exc, ValueError) else 'pairing_failed'),
+                'msg': str(exc),
+            })
+            return True
+        PAIRING_FAILURES.clear(identity)
+        audit(f'客户端配对成功(来自 {identity}): {device["name"]} / {device["platform"]}')
+        self._send_public_json(200, {
+            'ok': True,
+            'protocol_version': PROTOCOL_VERSION,
+            'token': token,
+            'token_type': 'Bearer',
+            'device': device,
+        })
+        return True
+
+    def _send(self, code: int, ctype: str, body: bytes, cache: str = 'no-store',
+              extra_headers: list[tuple[str, str]] | None = None):
         self.send_response(code)
         self.send_header('Content-Type', ctype)
         self.send_header('Cache-Control', cache)
+        headers = list(extra_headers or ())
+        if not any(key.lower() == 'access-control-allow-origin'
+                   for key, _ in headers):
+            headers.extend(self._cors_headers())
+        for key, value in headers:
+            if value:
+                self.send_header(key, value)
         # 文本类按客户端声明压缩（实测 index-*.js 470510 → 107851 B）。
         # ⚠ 压缩必须在 Content-Length 之前完成，否则长度对不上会截断下载（页面白屏）。
         if (len(body) >= _GZIP_MIN
@@ -1728,16 +2067,46 @@ class Handler(BaseHTTPRequestHandler):
         except BrokenPipeError:
             pass
 
+    def do_DELETE(self):
+        u = urlparse(self.path)
+        if not same_origin(self.headers):
+            context = self._auth_context()
+            if not (context and context.get('type') == 'device'):
+                self._send(403, 'application/json',
+                           b'{"ok":false,"msg":"Cross-origin request rejected"}')
+                return
+        if self._handle_client_route('DELETE', u.path):
+            return
+        if u.path == '/api/client/pairing':
+            self._send_json(405, {'ok': False, 'error': 'method_not_allowed'})
+            return
+        self._send_json(404, {'ok': False, 'error': 'not_found'})
+
+    def do_OPTIONS(self):
+        if not urlparse(self.path).path.startswith('/api/'):
+            self._send(404, 'text/plain', b'not found')
+            return
+        self._cors_preflight()
+
     def do_GET(self):
         u = urlparse(self.path)
         path = u.path
+        if self._handle_client_route('GET', path):
+            return
         needs_auth = (path.startswith(('/api/', '/files/'))
                       or path in ('/', '/index.html', '/next', '/next/'))
-        if needs_auth and not authorized(self.headers, getattr(self.server, 'access_key', None)):
+        # Remote/native clients need the app shell before they have a cookie.
+        # API endpoints and private files stay behind auth; the shell itself
+        # contains no data and its JS immediately shows the pairing gate.
+        if path in ('/', '/index.html', '/next', '/next/'):
+            needs_auth = False
+        if needs_auth and not self._authenticated():
             if path.startswith(('/api/', '/files/')):
-                self._send(401, 'application/json; charset=utf-8',
-                           json.dumps({'ok': False, 'msg': '请刷新页面并完成访问验证'},
-                                      ensure_ascii=False).encode())
+                self._send_json(401, {
+                    'ok': False,
+                    'error': 'authentication_required',
+                    'msg': '请刷新页面并完成访问验证',
+                })
             else:
                 self._send(200, 'text/html; charset=utf-8', LOGIN_HTML.encode())
             return
@@ -1904,10 +2273,20 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         u = urlparse(self.path)
-        if not same_origin(self.headers):
-            self._send(403, 'application/json', b'{"ok":false,"msg":"Cross-origin request rejected"}')
+        if u.path == '/api/client/pair':
+            self._handle_client_route('POST', u.path)
             return
+        if u.path.startswith('/api/client/'):
+            if self._handle_client_route('POST', u.path):
+                return
+            # Only pairing-ticket creation falls through to the shared
+            # origin/auth policy below; all other protocol POSTs are handled
+            # by the protocol dispatcher.
         if u.path == '/api/auth':
+            if not same_origin(self.headers):
+                self._send(403, 'application/json',
+                           b'{"ok":false,"msg":"Cross-origin request rejected"}')
+                return
             retry_after = auth_retry_after(self.client_address[0])
             if retry_after:
                 self._send(429, 'application/json; charset=utf-8',
@@ -1950,13 +2329,33 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(payload)
             return
-        if not authorized(self.headers, getattr(self.server, 'access_key', None)):
-            self._send(401, 'application/json; charset=utf-8',
-                       json.dumps({'ok': False, 'msg': '请刷新页面并完成访问验证'},
-                                  ensure_ascii=False).encode())
+        if not same_origin(self.headers):
+            context = self._auth_context()
+            # Native device tokens may call cross-origin, but the response must
+            # carry CORS headers or browser clients cannot read it.  Cookies
+            # and the legacy access-key Bearer remain same-origin only.
+            if not (context and context.get('type') == 'device'):
+                self._send(403, 'application/json',
+                           b'{"ok":false,"msg":"Cross-origin request rejected"}')
+                return
+
+        if not self._authenticated():
+            self._send_json(401, {'ok': False, 'msg': '请刷新页面并完成访问验证'})
             return
         try:
-            if u.path == '/api/access-key':
+            if u.path == '/api/client/pairing':
+                try:
+                    result = self._pairing_payload()
+                except ProtocolStoreError as exc:
+                    self._send_json(500, {
+                        'ok': False,
+                        'error': 'pairing_unavailable',
+                        'msg': str(exc),
+                    })
+                    return
+                audit(f'客户端配对票据创建(来自 {self.client_address[0]})')
+                self._send_json(200, result)
+            elif u.path == '/api/access-key':
                 length = int(self.headers.get('Content-Length') or 0)
                 payload = json.loads(self.rfile.read(length).decode('utf-8') or '{}')
                 ok, fixed = validate_new_key(payload.get('key'))
@@ -2094,6 +2493,7 @@ def main():
                         or RUNS / 'dashboard_access.token')
         srv.access_key = load_access_key(key_file)
         srv.access_key_file = key_file      # /api/access-key 改码时写回同一个文件
+        set_client_protocol_store(ClientProtocolStore(RUNS / 'client_protocol.json'))
     except OSError as e:
         if e.errno in (errno.EADDRINUSE, errno.EACCES):
             print(f'端口 {port} 已被占用，仪表盘未启动。'

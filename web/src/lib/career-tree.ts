@@ -1,3 +1,5 @@
+import { assetUrl } from './connection'
+
 /**
  * 职业树静态数据：8 条职业线 × 5 个层级 = 40 格。
  *
@@ -318,19 +320,19 @@ const OFFICIAL_OFF = new Set([
 /** 三个属性小图标（拳套/灯泡/花）—— 从官方 1080 截图抠的 3D 原图。
  *  之前用 emoji（🥊💡🌸）代替，形状和官方差太远（用户指出）。 */
 export const attrIcon = (kind: 'str' | 'int' | 'cha'): string =>
-  `/qp-icons/career/attr/${kind}.png?v=${CAREER_ICON_VER}`
+  assetUrl(`/qp-icons/career/attr/${kind}.png?v=${CAREER_ICON_VER}`)
 
 /** 占位格（大师级未投放）的图标：从官方 1080 截图抠的六边形+问号原图。
  *  之前用 CSS `clip-path` 画，形状/描边粗细/问号字重都跟官方对不上。 */
 export const placeholderIcon = (): string =>
-  `/qp-icons/career/placeholder.png?v=${CAREER_ICON_VER}`
+  assetUrl(`/qp-icons/career/placeholder.png?v=${CAREER_ICON_VER}`)
 
 export const careerIcon = (line: number, tier: number, unlocked = false): string => {
   const key = `${line}_${tier}`
   let dir = 'career'
   if (unlocked && OFFICIAL_ON.has(key)) dir = 'career/on'
   else if (OFFICIAL_OFF.has(key)) dir = 'career/off'
-  return `/${'qp-icons'}/${dir}/${key}.png?v=${CAREER_ICON_VER}`
+  return assetUrl(`/qp-icons/${dir}/${key}.png?v=${CAREER_ICON_VER}`)
 }
 
 /** 单元格五态（`empty` 是"连格子都不画"的那种，见 CareerCellDef）。 */

@@ -7,6 +7,7 @@ import {
   type RewardsData,
   type Shot,
 } from '../api'
+import { assetUrl } from '../lib/connection'
 import { usePoll } from '../lib/usePoll'
 import { Switch } from './form'
 
@@ -47,7 +48,7 @@ function StatRow({
 }) {
   return (
     <div className="lg-stat">
-      <img className="lg-stat-ico" src={icon} alt="" />
+      <img className="lg-stat-ico" src={assetUrl(icon)} alt="" />
       <div className="lg-stat-main">
         <div className="lg-stat-top">
           <span className="lg-stat-k">{label}</span>
@@ -111,7 +112,7 @@ function RewardRowItem({ r, tsLab }: { r: RewardRow; tsLab: boolean }) {
   return (
     <div className="lg-rrow">
       <span className="lg-rtime">
-        <img src={RW_ICON[kind] ?? ''} alt="" />
+        <img src={assetUrl(RW_ICON[kind] ?? '')} alt="" />
         <span>{tsLab ? ts : (ts || '').slice(6)}</span>
       </span>
       <div className="lg-rmain">

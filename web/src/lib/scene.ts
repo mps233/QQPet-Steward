@@ -1,3 +1,5 @@
+import { assetUrl } from './connection'
+
 /**
  * 房间背景库与推导逻辑（从旧版原生实现移植，含注释里的那些坑）。
  *
@@ -92,7 +94,7 @@ export const sceneBgFile = (key: string, dark = isDarkTheme()): string => {
 
 export const sceneBgUrl = (key: string, dark = isDarkTheme()): string => {
   const f = sceneBgFile(key, dark)
-  return f ? `url('/qp-icons/bg/${f}.jpg?v=${BG_VER}')` : ''
+  return f ? `url('${assetUrl(`/qp-icons/bg/${f}.jpg?v=${BG_VER}`)}')` : ''
 }
 
 export const sceneName = (key: string): string =>

@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { apiUrl, readConnection } from '../api'
 import { usePoll } from '../lib/usePoll'
 
 /** 截图间隔：与旧版一致（服务端 capture_phone 另有 5 秒节流缓存） */
@@ -11,7 +12,12 @@ interface ShotFrame {
 
 /** 走 fetch 而不是 <img src>：要读 X-Shot-At 拍摄时间，也方便把失败原因显示出来。 */
 async function fetchShot(): Promise<ShotFrame> {
-  const r = await fetch(`/api/screenshot?t=${Date.now()}`, { cache: 'no-store' })
+  const c = readConnection()
+  const r = await fetch(apiUrl(`/api/screenshot?t=${Date.now()}`, c.server), {
+    cache: 'no-store',
+    credentials: c.server ? 'omit' : 'same-origin',
+    headers: c.token ? { Authorization: `Bearer ${c.token}` } : {},
+  })
   if (!r.ok) {
     const detail = (await r.text().catch(() => '')).trim().slice(0, 120)
     throw new Error(detail || `HTTP ${r.status}`)
@@ -27,6 +33,7 @@ async function fetchShot(): Promise<ShotFrame> {
 export function LivePage() {
   const { data, error, reload } = usePoll(fetchShot, SHOT_INTERVAL_MS)
   const url = data?.url
+  const shotHref = apiUrl('/api/screenshot', readConnection().server)
 
   // object URL 必须逐个释放：轮询每 15 秒换一张，不释放会一直涨内存
   useEffect(() => {
@@ -44,10 +51,18 @@ export function LivePage() {
         <a
           id="shotLink"
           className="shotscreen"
-          href="/api/screenshot"
+          href={shotHref}
           target="_blank"
           rel="noopener"
           title="点开原图"
+          onClickCapture={(e) => {
+            // The plain href cannot carry a device Bearer token; let the
+            // authenticated blob URL open instead when paired remotely.
+            if (url && readConnection().server) {
+              e.preventDefault()
+              window.open(url, '_blank', 'noopener')
+            }
+          }}
           onClick={(e) => {
             if (!url) e.preventDefault()
           }}
@@ -89,7 +104,18 @@ export function LivePage() {
         <button className="shotbtn primary" onClick={reload}>
           刷新画面
         </button>
-        <a className="shotbtn" href="/api/screenshot" target="_blank" rel="noopener">
+        <a
+          className="shotbtn"
+          href={shotHref}
+          target="_blank"
+          rel="noopener"
+          onClick={(e) => {
+            if (url && readConnection().server) {
+              e.preventDefault()
+              window.open(url, '_blank', 'noopener')
+            }
+          }}
+        >
           查看原图
         </a>
       </div>

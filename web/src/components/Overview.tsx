@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import type { Data } from '../api'
+import { assetUrl } from '../lib/connection'
 import { icon } from '../lib/icons'
 import type { useScene } from '../lib/useScene'
 import { BgSheet } from './BgSheet'
@@ -73,27 +74,27 @@ export function Overview({
       {/* 左列圆钮（官方 4 个：返回/设置/消息/日记 x=20 y=36.3/94.3/154.3/214.3） */}
       <nav className="flt col-l" id="tabbar">
         <button className="rbtn" id="btnScene" data-tab="main" title="房间背景（点按选择 / 长按换下一张）" {...sceneBtnHandlers}>
-          <img src="/qp-icons/official/off_l1_tshirt.png" alt="" />
+          <img src={assetUrl('/qp-icons/official/off_l1_tshirt.png')} alt="" />
         </button>
         <button className="rbtn" data-tab="set" title="设置" onClick={() => onNav('set')}>
-          <img src="/qp-icons/official/off_l2_gear.png" alt="" />
+          <img src={assetUrl('/qp-icons/official/off_l2_gear.png')} alt="" />
         </button>
         <button className="rbtn" data-tab="log" title="日志" onClick={() => onNav('log')}>
-          <img src="/qp-icons/official/off_l3_diary.png" alt="" />
+          <img src={assetUrl('/qp-icons/official/off_l3_diary.png')} alt="" />
         </button>
         <button className="rbtn" data-tab="notify" title="通知" onClick={() => onNav('notify')}>
-          <img src="/qp-icons/official/off_l4_bell.png" alt="" />
+          <img src={assetUrl('/qp-icons/official/off_l4_bell.png')} alt="" />
         </button>
       </nav>
 
       {/* 右列圆钮（官方 3 个：装扮/会员/盲盒 x=298 y=36.3/94.3/154.3，官方手机版） */}
       <nav className="flt col-r" id="tabbar2">
         <button className="rbtn r" data-tab="adv" title="冒险" onClick={() => onNav('adv')}>
-          <img src="/qp-icons/official/cap_compass.png" alt="" />
+          <img src={assetUrl('/qp-icons/official/cap_compass.png')} alt="" />
         </button>
         <button className="rbtn r" data-tab="plan" title="职业树" onClick={() => onNav('plan')}>
           {/* `?v=` 见 OverviewV2 同名说明：文件名复用必须挂版本号才拿得到新图。 */}
-          <img src="/qp-icons/official/off_r2_career.png?v=4" alt="" />
+          <img src={assetUrl('/qp-icons/official/off_r2_career.png?v=4')} alt="" />
         </button>
         {/* `/qp-icons/*` 走 max-age=3600，不换 URL 拿旧图 1 小时 —— 版本号统一由
             lib/icons.ts 的 ICON_VER 提供（原先这里是散落的 `?v=2`）。 */}

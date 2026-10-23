@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { assetUrl } from '../lib/connection'
 import {
   LINES,
   TIERS,
@@ -219,7 +220,7 @@ export function CareerTree({ attrs, treeLines, treeTiers, equipped, gates }: Tre
       <div className="ct-head">
         <div className="ct-head-row">
           <button className="ct-back" title="返回总览" data-back="main" onClick={() => window.history.back()}>
-            <img src="/qp-icons/official/off_l1_back.png" alt="" />
+            <img src={assetUrl('/qp-icons/official/off_l1_back.png')} alt="" />
           </button>
           <h1 className="ct-title">职业树</h1>
         </div>

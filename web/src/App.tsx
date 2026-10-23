@@ -3,6 +3,7 @@ import { TASK_GROUP, TASK_NAME, isLoopTask, keyOfTaskName, runnerStart, runnerSt
 import { Overview, type PageKey } from './components/Overview'
 import { OverviewV2 } from './components/OverviewV2'
 import { AdvPage } from './components/AdvPage'
+import { AccessKeyGate, ConnectionGate, useConnectionState } from './components/ConnectionGate'
 import { LivePage } from './components/LivePage'
 import { LogPage } from './components/LogPage'
 import { NavHead } from './components/NavHead'
@@ -11,6 +12,7 @@ import { PlanPage } from './components/PlanPage'
 import { SettingsPage } from './components/SettingsPage'
 import { useData } from './lib/useData'
 import { useScene } from './lib/useScene'
+import { readConnection } from './lib/connection'
 
 /** 前端外壳：页面切换 + 全部内页（总览 / 冒险 / 职业 / 日志 / 通知 / 设置 / 实时画面）。
  *  构建产物由 dashboard.py 的 `/` 直接服务（旧版原生界面已删除，构建见 web/build.sh）。 */
@@ -37,7 +39,35 @@ function scrollerEl(): HTMLElement | null {
 }
 
 export default function App() {
+  const [connectedOnce, setConnectedOnce] = useState(() => !readConnection().server)
+  const [loginRequired, setLoginRequired] = useState(false)
+  if (!connectedOnce) {
+    return (
+      <div className="app">
+        <main>
+          <ConnectionGate onConnected={() => setConnectedOnce(true)} />
+        </main>
+      </div>
+    )
+  }
+  if (loginRequired) {
+    return (
+      <div className="app">
+        <main>
+          <AccessKeyGate onAuthenticated={() => window.location.reload()} />
+        </main>
+      </div>
+    )
+  }
+  return <DashboardApp onLoginRequired={() => setLoginRequired(true)} />
+}
+
+/** Dashboard after the remote shell has paired. Keeping this in a child means
+ *  the connection gate's early return cannot change the App hook order. */
+function DashboardApp({ onLoginRequired }: { onLoginRequired: () => void }) {
   const { data, error, reload } = useData(6000)
+  useConnectionState()
+  const loginRequested = useRef(false)
   const [busy, setBusy] = useState('')
   /**
    * 历史栈模型（与 旧版 的 showTab / popstate 一一对应）：
@@ -413,11 +443,29 @@ export default function App() {
   )
 
   if (error && !data) {
+    const needsLogin = error.includes('HTTP 401') || error.includes('访问验证')
+    if (needsLogin && !loginRequested.current) {
+      loginRequested.current = true
+      onLoginRequired()
+    }
     return (
       <div className="app">
         <main>
           <section className="home" data-page="main">
-            <div style={{ padding: 'calc(var(--u) * 40)', color: '#b91c1c' }}>连接失败：{error}</div>
+            <div style={{ padding: 'calc(var(--u) * 40)', color: '#b91c1c' }}>
+              连接失败：{error}
+              <button
+                type="button"
+                onClick={onLoginRequired}
+                style={{
+                  display: 'block', marginTop: 18, minHeight: 44,
+                  padding: '0 18px', border: 0, borderRadius: 10,
+                  background: '#FF990F', color: '#5A2D00', fontSize: 16,
+                }}
+              >
+                重新验证访问码
+              </button>
+            </div>
           </section>
         </main>
       </div>

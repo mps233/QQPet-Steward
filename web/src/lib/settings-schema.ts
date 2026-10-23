@@ -6,7 +6,7 @@
  * 所以这里不需要知道配置键（`tasks.school.enabled` 那些），只需知道字段名与控件类型。
  *
  * 结构：一级菜单（MENU）→ 二级分组（GROUPS）→ 分组内若干节（sections）。
- * 分节不是为了好看：设置项合并成 7 页后，一页里 8~11 项必须按"学习 / 职业监控"
+ * 分节不是为了好看：设置项合并成 8 页后，一页里 8~11 项必须按"学习 / 职业监控"
  * 这种语义再分一层，否则又是一堵墙。
  */
 
@@ -271,9 +271,16 @@ export const GROUPS: Record<string, GroupDef> = {
     desc: '更换访问码、管理登录会话',
     sections: [],
   },
+  /** Remote pairing is rendered as a bespoke panel, not schema fields. */
+  remote: {
+    id: 'remote',
+    title: '手机遥控',
+    desc: '配对手机、查看和撤销设备',
+    sections: [],
+  },
 }
 
-/** 一级菜单：3 个分区，共 7 个二级页（与 GROUPS 一一对应）。
+/** 一级菜单：3 个分区，共 8 个二级页（与 GROUPS 一一对应，新增手机遥控）。
  *  合并原则：同一件事的两半放一页（好友护理 → 护理、被雇佣 → 打工、职业 → 学习、
  *  福袋/踩踩/PK → 好友互动），不再为 2~3 个字段单开一页；原来的「调度」页整个删掉，
  *  它只有冒险次数与护理间隔两个重复字段。 */
@@ -297,6 +304,7 @@ export const MENU: { section: string; items: { id: string; title: string }[] }[]
     section: '系统',
     items: [
       { id: 'system', title: '连接与机器人' },
+      { id: 'remote', title: '手机遥控' },
       { id: 'access', title: '仪表盘访问码' },
     ],
   },

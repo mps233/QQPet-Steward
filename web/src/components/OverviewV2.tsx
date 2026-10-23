@@ -1,9 +1,11 @@
 import { useRef, useState } from 'react'
 import type { Data } from '../api'
+import { assetUrl } from '../lib/connection'
 import { icon } from '../lib/icons'
 import type { useScene } from '../lib/useScene'
 import { BgSheet } from './BgSheet'
 import { Capsules } from './Capsules'
+import { useConnectionState } from './ConnectionGate'
 import { Deck } from './Deck'
 import { FuncBar } from './FuncBar'
 import { IdCard } from './IdCard'
@@ -53,6 +55,7 @@ export function OverviewV2({
   const [petOpen, setPetOpen] = useState(false)
   const [bgOpen, setBgOpen] = useState(false)
   const sch = data.scheduler
+  const connection = useConnectionState()
 
   // 左上角圆钮：点按 = 开背景选择面板、长按 500ms = 直接切下一张。
   // ⚠️ 与 V1 同样的坑：开面板必须走 **onClick 而不是 onPointerUp** ——
@@ -91,16 +94,16 @@ export function OverviewV2({
           title="房间背景（点按选择 / 长按换下一张）"
           {...sceneBtnHandlers}
         >
-          <img src="/qp-icons/official/off_l1_tshirt.png" alt="" />
+          <img src={assetUrl('/qp-icons/official/off_l1_tshirt.png')} alt="" />
         </button>
         <button className="rbtn" title="设置" onClick={() => onNav('set')}>
-          <img src="/qp-icons/official/off_l2_gear.png" alt="" />
+          <img src={assetUrl('/qp-icons/official/off_l2_gear.png')} alt="" />
         </button>
         <button className="rbtn" title="日志" onClick={() => onNav('log')}>
-          <img src="/qp-icons/official/off_l3_diary.png" alt="" />
+          <img src={assetUrl('/qp-icons/official/off_l3_diary.png')} alt="" />
         </button>
         <button className="rbtn" title="通知" onClick={() => onNav('notify')}>
-          <img src="/qp-icons/official/off_l4_bell.png" alt="" />
+          <img src={assetUrl('/qp-icons/official/off_l4_bell.png')} alt="" />
         </button>
       </nav>
 
@@ -109,6 +112,12 @@ export function OverviewV2({
         <div className="v2-top">
           <IdCard data={data} open={petOpen} onToggle={setPetOpen} />
           <Capsules data={data} />
+          {connection.remote ? (
+            <div className={`conn-chip${connection.connected ? ' on' : ' off'}`} role="status">
+              <i aria-hidden="true" />
+              {connection.connected ? '托管在线' : '托管离线 · 使用上次画面'}
+            </div>
+          ) : null}
         </div>
         {/* 任务卡 */}
         <div className="v2-seat">
@@ -120,14 +129,14 @@ export function OverviewV2({
       <div className="v2-rail right">
         <nav className="v2-rail-right-btns" aria-label="快捷入口">
           <button className="rbtn r" title="冒险" onClick={() => onNav('adv')}>
-            <img src="/qp-icons/official/cap_compass.png" alt="" />
+            <img src={assetUrl('/qp-icons/official/cap_compass.png')} alt="" />
           </button>
           <button className="rbtn r" title="职业树" onClick={() => onNav('plan')}>
             {/* `?v=` 是必需的：`/qp-icons/*` 走 `Cache-Control: max-age=3600`，
                 这个文件名复用（换的只是内容，不是新文件名），不加版本号浏览器
                 一小时内仍显示旧图 —— 用户实报「好像没生效？」踩过。
                 以后换这张图就把 v 往上加。 */}
-            <img src="/qp-icons/official/off_r2_career.png?v=4" alt="" />
+            <img src={assetUrl('/qp-icons/official/off_r2_career.png?v=4')} alt="" />
           </button>
           <button className="rbtn r" title="实时画面" onClick={() => onNav('shot')}>
             <img src={icon('/qp-icons/ctrl/phone.svg')} alt="" />

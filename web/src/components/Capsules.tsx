@@ -1,5 +1,6 @@
 import type { CSSProperties } from 'react'
 import type { Data } from '../api'
+import { assetUrl } from '../lib/connection'
 import { hrs, pct, wan } from '../lib/format'
 
 /** 图标外圈进度环：--p 是 0~100 的百分比，由 CSS 画成 conic-gradient 圆环。 */
@@ -54,7 +55,7 @@ export function Capsules({ data }: { data: Data }) {
     <div className="flt caps">
       <div className="caps-row">
         <div className="cap" title={st.coins != null ? `金币 ${st.coins.toLocaleString('zh-CN')}` : '金币'}>
-          <img className="cico" src="/qp-icons/official/cap_coin.png" alt="" />
+          <img className="cico" src={assetUrl('/qp-icons/official/cap_coin.png')} alt="" />
           <div className="capbody">
             <span className="cval" id="coins">
               {st.coins != null ? wan(st.coins) : '--'}
@@ -66,7 +67,7 @@ export function Capsules({ data }: { data: Data }) {
         </div>
 
         <div className="cap" title="今日踩踩">
-          <img className="cico" src="/qp-icons/official/cap_paw.png" alt="" />
+          <img className="cico" src={assetUrl('/qp-icons/official/cap_paw.png')} alt="" />
           <span className="cring" style={ring(visitP)} aria-hidden="true" />
           <div className="capbody">
             <span className="cval" id="visitTxt">
@@ -76,7 +77,7 @@ export function Capsules({ data }: { data: Data }) {
         </div>
 
         <div className="cap" title="今日PK">
-          <img className="cico cico-pk" src="/qp-icons/official/pk_words.png" alt="" />
+          <img className="cico cico-pk" src={assetUrl('/qp-icons/official/pk_words.png')} alt="" />
           <span className="cring" style={ring(pkP)} aria-hidden="true" />
           <div className="capbody">
             <span className="cval" id="pkTxt">
@@ -88,7 +89,7 @@ export function Capsules({ data }: { data: Data }) {
 
       <div className="caps-row">
         <div className="cap" title="今日冒险">
-          <img className="cico" src="/qp-icons/official/cap_compass.png" alt="" />
+          <img className="cico" src={assetUrl('/qp-icons/official/cap_compass.png')} alt="" />
           <span className="cring" style={ring(advP)} aria-hidden="true" />
           <div className="capbody">
             <span className="cval" id="advTxt">
@@ -98,7 +99,7 @@ export function Capsules({ data }: { data: Data }) {
         </div>
 
         <div className="cap" id="capSw" title={swTip}>
-          <img className="cico" src="/qp-icons/official/cap_cookie.png" alt="" />
+          <img className="cico" src={assetUrl('/qp-icons/official/cap_cookie.png')} alt="" />
           <span className="cring" style={ring(swP)} aria-hidden="true" />
           <div className="capbody">
             <span className="cval" id="swTxt" title={swTip}>
@@ -108,7 +109,7 @@ export function Capsules({ data }: { data: Data }) {
         </div>
 
         <div className="cap" title="经验日常">
-          <img className="cico cico-gem" src="/qp-icons/official/cap_diamond.png" alt="" />
+          <img className="cico cico-gem" src={assetUrl('/qp-icons/official/cap_diamond.png')} alt="" />
           <div className="capbody">
             <span className="cval" id="expTxt">
               {expDone ? '✓ 完成' : '未完成'}

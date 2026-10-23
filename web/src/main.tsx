@@ -5,6 +5,8 @@ import { ErrorBoundary } from './components/ErrorBoundary'
 import { installStageUnit } from './lib/stage'
 // 旧界面那 1499 行 CSS 原样搬过来（class 名保持不变 → 样式直接生效，一行没改）
 import './styles/app.css'
+// Android remote-control gate + pairing QR
+import './styles/connection.css'
 // 总览页 V2（正常流布局，独立命名空间 v2-*，不覆盖也不依赖 app.css 的规则）
 import './styles/overview-v2.css'
 // 职业树（官方逐像素复刻，独立命名空间 .ct-*）
@@ -13,7 +15,7 @@ import './styles/career-tree.css'
 import './styles/live.css'
 // 通知页（渠道卡片 / 事件开关 / 可折叠历史）
 import './styles/notify.css'
-// 设置页（与通知页同一套白卡分节；合并成 7 个二级页）
+// 设置页（与通知页同一套白卡分节；合并成 8 个二级页）
 import './styles/settings.css'
 // 日志页（实时日志 / 收益记录，同套白卡）
 import './styles/logs.css'

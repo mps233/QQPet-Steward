@@ -37,6 +37,9 @@ _PATCH_MODULES = (
     'src.notification_outbox',
     'src.daily_summary',
     'src.career_watch',
+    # 客户端协议票据/设备令牌（runs/client_protocol.json）。鉴权测试必须
+    # 使用临时 store，绝不能碰真实配对状态。
+    'src.client_protocol',
     # TG 控制机器人的轮询游标 runs/tgbot_state.json —— 不重定向的话，
     # 测试里的 Worker 会读到真实 bot 的 offset（看起来"没收到消息"），
     # 更糟的是可能把它写坏。

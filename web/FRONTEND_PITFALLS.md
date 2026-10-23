@@ -428,6 +428,21 @@ node node_modules/vite/bin/vite.js build
 `deck.bottom - drawer.bottom >= 4`，且 `.home` / `.page-slot` 溢出为 0。
 
 
+## 十一、远程模式：根页面公开、API 仍鉴权（2026-10-23）
+
+手机遥控端和同源浏览器共用同一份 React 构建。**不要**重新给 `/` 加服务端登录强制：
+远程客户端必须先拿到 `index.html` 才能渲染配对门禁。安全边界改为：
+
+- `/`、`/index.html`、`/next*` 返回静态壳（无业务数据）；
+- `/api/*`、`/files/*`、截图等继续鉴权；
+- 同源浏览器消费 `401` 后显示访问码表单（`AccessKeyGate`）；
+- 远程端携带设备 Bearer Token，跨域请求只有该令牌能拿到 CORS 头；
+- 不要用 `fetch('/api/...')` 的新调用：统一走 `api.ts` 的 `requestJSON`，它会拼接
+  `localStorage` 里的服务器地址并发送 Bearer；图片路径走 `assetUrl()`。
+
+**Hooks 顺序坑**：配对门禁不能在 `App` 中 `if (...) return` 后再声明其它 hooks，
+否则配对成功后直接触发 React error #310。门禁组件与 Dashboard 子树必须分开。
+
 ## 十二、冒险页的滚动条是 `.page-slot`，不是横条（2026-10-23）
 
 用户截图里右侧的灰色竖条来自 `.page-slot.page-enter` 的原生滚动条，不是

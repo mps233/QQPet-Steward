@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { assetUrl } from '../lib/connection'
 
 /** 内页统一顶栏：返回钮 + 标题（+ 右侧可选的 meta 区）。
  *  返回钮走 React 路由，但保留 `data-back`（旧版 JS 契约）。 */
@@ -16,7 +17,7 @@ export function NavHead({
   return (
     <div className="navhead">
       <button className="backbtn" data-back="main" title="返回总览" onClick={onBack}>
-        <img src="/qp-icons/official/off_l1_back.png" alt="" />
+        <img src={assetUrl('/qp-icons/official/off_l1_back.png')} alt="" />
       </button>
       <span className="navtitle" id={titleId}>
         {title}

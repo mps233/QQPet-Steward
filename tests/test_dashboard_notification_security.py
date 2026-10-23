@@ -134,7 +134,10 @@ def test_sensitive_routes_require_authentication(monkeypatch):
         assert request(base + '/api/screenshot')[0] == 401
         assert request(base + '/files/test.png')[0] == 401
         status, _, body = request(base + '/')
-        assert status == 200 and b'/api/auth' in body
+        # The public shell is deliberately unauthenticated so a remote native
+        # client can render the pairing gate. Data and files remain protected;
+        # the same-origin UI fetches /api/auth and shows the access-code step.
+        assert status == 200 and b'<div id="root"></div>' in body
         assert KEY.encode() not in body
 
 

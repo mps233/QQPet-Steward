@@ -1,4 +1,5 @@
 import type { Data, PetStatus } from '../api'
+import { assetUrl } from '../lib/connection'
 import { petVal } from '../lib/format'
 import { useUptime } from '../lib/useUptime'
 
@@ -40,7 +41,7 @@ export function IdCard({
     <div className={'flt idcard' + (open ? ' open' : '')} id="idCard">
       <div className="idtop">
         <span className={'avatar' + (sch.alive ? '' : ' off')} id="schedDot">
-          <img src="/qp-icons/official/mood_smile.png" alt="" />
+          <img src={assetUrl('/qp-icons/official/mood_smile.png')} alt="" />
         </span>
         <div className="idtxt">
           <div className="idname">QQ宠物托管</div>

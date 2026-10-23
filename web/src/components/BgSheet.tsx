@@ -1,4 +1,5 @@
 import { BG_VER, SCENE_INFO, SCENE_ORDER, sceneBgFile } from '../lib/scene'
+import { assetUrl } from '../lib/connection'
 
 /** 房间背景选择面板（点总览页左上角圆钮打开；点一张即生效）。
  *  缩略图跟着深浅色取对应文件（房间场景有 -dark 版），与实际应用的那张保持一致。 */
@@ -47,7 +48,7 @@ export function BgSheet({
               <img
                 className="bgthumb"
                 loading="lazy"
-                src={`/qp-icons/bg/${sceneBgFile(k, dark)}.jpg?v=${BG_VER}`}
+                src={assetUrl(`/qp-icons/bg/${sceneBgFile(k, dark)}.jpg?v=${BG_VER}`)}
                 alt=""
               />
               <span className="bgname">{SCENE_INFO[k]?.name}</span>

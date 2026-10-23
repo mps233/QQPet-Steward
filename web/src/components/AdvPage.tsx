@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState, type ReactNode } from 'react'
 import { fetchAdventure, type AdvData } from '../api'
+import { assetUrl } from '../lib/connection'
 import { usePoll } from '../lib/usePoll'
 
 /** 图表几何：viewBox 340×126（宽度仍是 340 —— 指针取点按它换算，不能动） */
@@ -218,7 +219,7 @@ export function AdvPage() {
   if (err) {
     return (
       <div className="adv-state">
-        <img src="/qp-icons/official/cap_compass.png" alt="" />
+        <img src={assetUrl('/qp-icons/official/cap_compass.png')} alt="" />
         <p>读取冒险记录失败</p>
         <span>{err}</span>
       </div>
@@ -227,7 +228,7 @@ export function AdvPage() {
   if (!d) {
     return (
       <div className="adv-state">
-        <img src="/qp-icons/official/cap_compass.png" alt="" />
+        <img src={assetUrl('/qp-icons/official/cap_compass.png')} alt="" />
         <p>正在翻开冒险手账…</p>
       </div>
     )
@@ -235,7 +236,7 @@ export function AdvPage() {
   if (!d.ok) {
     return (
       <div className="adv-state">
-        <img src="/qp-icons/official/cap_compass.png" alt="" />
+        <img src={assetUrl('/qp-icons/official/cap_compass.png')} alt="" />
         <p>还没有冒险记录</p>
         <span>出门冒险一次，第一条足迹就会记在这里</span>
       </div>
@@ -346,7 +347,7 @@ export function AdvPage() {
     <div className="adv-page">
       <header className="adv-hero">
         <div className="adv-brand">
-          <img className="adv-logo" src="/qp-icons/official/cap_compass.png" alt="" />
+          <img className="adv-logo" src={assetUrl('/qp-icons/official/cap_compass.png')} alt="" />
           <div className="adv-brand-main">
             <h2 className="adv-title">冒险手账</h2>
             <p className="adv-meta" id="advMeta">
@@ -375,7 +376,7 @@ export function AdvPage() {
 
         <div className="adv-sum">
           <div className="adv-net-row">
-            <img className="adv-coin" src="/qp-icons/official/cap_coin.png" alt="" />
+            <img className="adv-coin" src={assetUrl('/qp-icons/official/cap_coin.png')} alt="" />
             <span className={`adv-net ${d.net > 0 ? 'pos' : d.net < 0 ? 'neg' : 'zero'}`} id="advNet">
               {fmtNet(d.net)}
             </span>
@@ -412,7 +413,7 @@ export function AdvPage() {
                 const ico = GAIN_ICON[g[0]]
                 return (
                   <span className={`adv-gain ${cls}`} key={g[0]}>
-                    {ico ? <img src={ico} alt="" /> : null}
+                    {ico ? <img src={assetUrl(ico)} alt="" /> : null}
                     <span>{g[0]}</span>
                     <b>+{g[2]}</b>
                     <em>×{g[1]}</em>
@@ -658,15 +659,15 @@ export function AdvPage() {
           <div className="adv-card adv-stats">
             <div className="adv-legend">
               <span>
-                <img src="/qp-icons/official/status_energy.png" alt="" />
+                <img src={assetUrl('/qp-icons/official/status_energy.png')} alt="" />
                 体力
               </span>
               <span>
-                <img src="/qp-icons/official/status_clean.png" alt="" />
+                <img src={assetUrl('/qp-icons/official/status_clean.png')} alt="" />
                 清洁
               </span>
               <span>
-                <img src="/qp-icons/official/status_mood.png" alt="" />
+                <img src={assetUrl('/qp-icons/official/status_mood.png')} alt="" />
                 心情
               </span>
             </div>
@@ -775,7 +776,7 @@ export function AdvPage() {
                     ) : null}
                   </div>
                   <span className={`adv-row-val ${cls}`}>
-                    {v != null && v > 0 ? <img src="/qp-icons/official/cap_coin.png" alt="" /> : null}
+                    {v != null && v > 0 ? <img src={assetUrl('/qp-icons/official/cap_coin.png')} alt="" /> : null}
                     {vt}
                   </span>
                 </div>
@@ -783,7 +784,7 @@ export function AdvPage() {
             })
           ) : (
             <div className="adv-list-empty">
-              <img src="/qp-icons/official/cap_compass.png" alt="" />
+              <img src={assetUrl('/qp-icons/official/cap_compass.png')} alt="" />
               这一段还没有可显示的记录
             </div>
           )}

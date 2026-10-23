@@ -1,4 +1,5 @@
 import type { Data } from '../api'
+import { assetUrl } from '../lib/connection'
 import { hms, pad2 } from '../lib/format'
 import { useCountdowns } from '../lib/useCountdowns'
 import { useUptime } from '../lib/useUptime'
@@ -58,7 +59,7 @@ export function Deck({ data }: { data: Data }) {
   const finishing = etaKind && !busyEta && !curTask && remain != null ? etaKind : ''
   const stateKey = busyEta || curTask || finishing
 
-  const icon = running && !qStarting && stateKey ? (ICON[stateKey] ?? ICON_IDLE) : ICON_IDLE
+  const icon = assetUrl(running && !qStarting && stateKey ? (ICON[stateKey] ?? ICON_IDLE) : ICON_IDLE)
   const state = !running ? '未托管' : qStarting ? '启动中' : stateKey ? `${stateKey}中` : '等待中'
   // 日志最后一行（去掉时间戳前缀）：说明"此刻到底在做什么"，比一句"等待下一项"有用
   const lastLine = (data.last_line || '').replace(/^\[[\d:]+\]\s*/, '').slice(0, 60)

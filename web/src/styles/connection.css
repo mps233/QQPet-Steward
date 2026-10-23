@@ -1,0 +1,258 @@
+/* Connection gate + pairing QR. Scoped to the connection page and the
+   settings pairing card so it cannot disturb the verified dashboard layout. */
+
+.connpage {
+  min-height: 100%;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: calc(env(safe-area-inset-top, 0px) + 24px) 16px
+    calc(env(safe-area-inset-bottom, 0px) + 24px);
+  background:
+    radial-gradient(circle at 82% 7%, rgba(255, 183, 77, .22), transparent 34%),
+    linear-gradient(160deg, #fbf2df 0%, #f7e8ce 48%, #f1ddc0 100%);
+  color: #523418;
+}
+
+.conncard {
+  width: min(100%, 430px);
+  box-sizing: border-box;
+  padding: 22px 18px 18px;
+  border: 1px solid rgba(148, 105, 55, .18);
+  border-radius: 22px;
+  background: rgba(255, 253, 248, .94);
+  box-shadow: 0 18px 50px rgba(97, 64, 25, .12);
+}
+
+.connhead { margin-bottom: 18px; }
+.connbadge {
+  display: inline-block;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: #fff0d4;
+  color: #9a5a12;
+  font-size: 11px;
+  letter-spacing: .04em;
+}
+.connhead h1 {
+  margin: 10px 0 7px;
+  color: #3f2a16;
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 27px;
+  font-weight: 500;
+  letter-spacing: .01em;
+}
+.connhead p {
+  margin: 0;
+  color: #806343;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.connchoice {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+  padding: 14px 14px 13px;
+  border: 1px solid #eadbc5;
+  border-radius: 14px;
+  background: #fffdfa;
+  color: inherit;
+  text-align: left;
+  position: relative;
+}
+.connchoice b { display: block; font-size: 15px; color: #3f2a16; }
+.connchoice span {
+  display: block;
+  margin-top: 4px;
+  padding-right: 42px;
+  color: #866a4b;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.connchoice em {
+  position: absolute;
+  right: 12px;
+  top: 13px;
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: #eef7e7;
+  color: #42731b;
+  font-size: 10px;
+  font-style: normal;
+}
+.connchoice:active { background: #fbf5eb; }
+
+.connhelp {
+  margin-top: 14px;
+  padding: 0 3px;
+  color: #806343;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.connhelp summary { cursor: pointer; color: #9a5a12; }
+.connhelp p { margin: 8px 0 0; }
+
+.connform { display: flex; flex-direction: column; gap: 8px; }
+.connform label { margin-top: 4px; color: #5e442b; font-size: 12px; font-weight: 500; }
+.connform input,
+.connform textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 11px 12px;
+  border: 1px solid #e5d7c2;
+  border-radius: 11px;
+  background: #fff;
+  color: #3f2a16;
+  /* >=16px: prevents iOS focus zoom */
+  font: inherit;
+  font-size: 16px;
+  line-height: 1.45;
+}
+.connform textarea { resize: vertical; min-height: 84px; }
+.connform input:focus,
+.connform textarea:focus {
+  outline: none;
+  border-color: #e19b32;
+  box-shadow: 0 0 0 3px rgba(255, 153, 15, .13);
+}
+
+.connprimary {
+  width: 100%;
+  min-height: 44px;
+  margin-top: 4px;
+  border: 0;
+  border-radius: 11px;
+  background: linear-gradient(180deg, #ffbd4f, #f59b18);
+  color: #4c2a00;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 650;
+}
+.connprimary:disabled { opacity: .5; }
+.connprimary:active { opacity: .84; }
+.connlink {
+  min-height: 36px;
+  border: 0;
+  background: transparent;
+  color: #93652d;
+  font: inherit;
+  font-size: 13px;
+}
+
+.connserver {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #f8f2e8;
+  font-size: 12px;
+}
+.connserver span { color: #927657; }
+.connserver b { overflow-wrap: anywhere; color: #4a321b; font-size: 13px; }
+.connserver small { color: #8e7353; }
+
+.connwait { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 20px 0 8px; text-align: center; }
+.connwait b { font-size: 15px; }
+.connwait span:not(.connspinner) { color: #8d7151; font-size: 12px; overflow-wrap: anywhere; }
+.connwaitactions { display: flex; flex-direction: column; width: 100%; margin-top: 8px; }
+.connspinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid #efd9b6;
+  border-top-color: #ec9a25;
+  border-radius: 50%;
+  animation: connspin .8s linear infinite;
+}
+@keyframes connspin { to { transform: rotate(360deg); } }
+
+.connerror {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #fff2ef;
+  color: #a63224;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.connhint { margin-top: 10px; color: #608044; font-size: 12px; }
+
+/* Small online/offline chip for the overview. It is a real button because
+   tapping it opens the connection details when the host is unreachable. */
+.conn-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .58);
+  color: #7a5a28;
+  font: inherit;
+  font-size: 10.5px;
+  line-height: 1;
+  white-space: nowrap;
+}
+.conn-state i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #d08a3a;
+}
+.conn-state.on i { background: #57a33c; }
+.conn-state span { overflow: hidden; text-overflow: ellipsis; }
+
+.conn-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  align-self: flex-start;
+  margin-top: 6px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: rgba(255, 251, 242, .76);
+  color: #75562d;
+  font-size: 10px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.conn-chip i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #d48a36;
+}
+.conn-chip.on i { background: #5aa23e; }
+.conn-chip.off { color: #a0572b; }
+
+/* QR grid: no transforms (text/images stay crisp on iOS). */
+.pairpreview { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 14px 16px 16px; }
+.conn-qr-img {
+  width: min(100%, 278px);
+  aspect-ratio: 1;
+  padding: 10px;
+  box-sizing: content-box;
+  border-radius: 13px;
+  background: #fff;
+  image-rendering: pixelated;
+}
+.paircopy {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 70px;
+  padding: 9px;
+  border: 1px solid #ebdcc7;
+  border-radius: 9px;
+  background: #fbf7f1;
+  color: #765a3b;
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  resize: none;
+  overflow-wrap: anywhere;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .connspinner { animation-duration: .001ms; }
+}

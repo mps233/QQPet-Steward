@@ -1,5 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { changeAccessKey, type AccessInfo } from '../api'
+import {
+  changeAccessKey,
+  createPairingTicket,
+  fetchDevices,
+  revokeDevice,
+  type AccessInfo,
+  type DeviceRecord,
+  type PairingTicket,
+} from '../api'
+import { assetUrl, readConnection } from '../lib/connection'
 import {
   GROUPS,
   LEGACY_GROUP_ALIASES,
@@ -9,6 +18,7 @@ import {
 } from '../lib/settings-schema'
 import { Switch } from './form'
 import { NavHead } from './NavHead'
+import { PairingPreview, RemoteSettingsPanel } from './ConnectionGate'
 
 const strOf = (ed: Record<string, unknown>, k: string): string => {
   const v = ed[k]
@@ -406,6 +416,136 @@ function AccessKeyPanel({ access }: { access?: AccessInfo }) {
   )
 }
 
+const whenText = (iso: string | null | undefined): string => {
+  if (!iso) return '从未连接'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  return d.toLocaleString('zh-CN', {
+    month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+  })
+}
+
+/** Pair this computer's dashboard with an Android remote-control client.
+ *
+ *  The ticket is one-time and short-lived. The QR is rendered locally from the
+ *  same payload as the copyable link, so no third-party QR service sees a
+ *  credential. Revoking a device is immediate for subsequent requests. */
+function RemotePanel() {
+  const [ticket, setTicket] = useState<PairingTicket | null>(null)
+  const [devices, setDevices] = useState<DeviceRecord[]>([])
+  const [state, setState] = useState<'idle' | 'loading' | 'ready'>('idle')
+  const [error, setError] = useState('')
+
+  const loadDevices = useCallback(async () => {
+    try {
+      const r = await fetchDevices()
+      setDevices(r.devices || [])
+    } catch (e) {
+      setError(String(e instanceof Error ? e.message : e))
+    }
+  }, [])
+
+  useEffect(() => { void loadDevices() }, [loadDevices])
+
+  const create = async () => {
+    setState('loading')
+    setError('')
+    try {
+      setTicket(await createPairingTicket())
+      setState('ready')
+    } catch (e) {
+      setError(String(e instanceof Error ? e.message : e))
+      setState('idle')
+    }
+  }
+
+  const revoke = async (id: string) => {
+    try {
+      await revokeDevice(id)
+      setDevices((items) => items.filter((d) => d.id !== id))
+    } catch (e) {
+      setError(String(e instanceof Error ? e.message : e))
+    }
+  }
+
+  return (
+    <>
+      <section className="set-sec">
+        <h3>手机遥控</h3>
+        <div className="set-card">
+          <div className="set-row">
+            <div className="set-row-main">
+              <span className="set-row-label">配对一台新设备</span>
+              <span className="set-row-desc">
+                生成一次性二维码。手机只负责遥控，托管电脑仍需保持开机和联网。
+              </span>
+            </div>
+            <button className="set-primary set-inline" type="button" disabled={state === 'loading'} onClick={() => void create()}>
+              {state === 'loading' ? '生成中…' : ticket ? '重新生成' : '生成二维码'}
+            </button>
+          </div>
+          {ticket ? (
+            <>
+              <PairingPreview
+                payload={ticket.deep_link || ticket.qr_payload}
+                qrUrl={ticket.qr_image}
+              />
+              <p className="set-hint" style={{ margin: '0 16px 12px' }}>
+                5 分钟内有效，只能使用一次。配对完成后即可在「已配对设备」中撤销。
+              </p>
+            </>
+          ) : null}
+        </div>
+      </section>
+
+      <section className="set-sec">
+        <h3>已配对设备</h3>
+        <div className="set-card">
+          {devices.length ? devices.map((d) => (
+            <div className="set-row" key={d.id}>
+              <div className="set-row-main">
+                <span className="set-row-label">{d.name || '未命名设备'}</span>
+                <span className="set-row-desc">{d.platform || '—'} · 最近连接 {whenText(d.last_seen)}</span>
+              </div>
+              <button className="set-clear" type="button" onClick={() => void revoke(d.id)}>
+                撤销
+              </button>
+            </div>
+          )) : (
+            <div className="set-connline">
+              <span>还没有已配对设备</span>
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="set-sec">
+        <h3>连接规则</h3>
+        <div className="set-card">
+          <div className="set-note">
+            <b>适用范围</b>
+            <span>Android 端只连接运行在这台电脑上的托管服务；不要把它当成独立的 OCR 设备。</span>
+          </div>
+          <div className="set-note">
+            <b>安全</b>
+            <span>仅用于可信内网或私有网络。浏览器 Cookie 不会跨域复用；手机使用的是单独的设备令牌。</span>
+          </div>
+          <div className="set-note">
+            <b>离线</b>
+            <span>托管电脑离线时，手机仍会保留上次页面数据，但启动、修改与实时画面会失败。</span>
+          </div>
+        </div>
+      </section>
+
+      {error ? <div className="connerror" role="alert">{error}</div> : null}
+    </>
+  )
+}
+
+function HostRemotePanel() {
+  return <RemotePanel />
+}
+
 /** TG 机器人的**只读状态**（后端 `editable_snapshot()` 里那三个 `tgbot_*` 状态位）。 */
 function TgbotStatus({ editable }: { editable: Record<string, unknown> }) {
   const has = (k: string) => k in editable
@@ -443,7 +583,7 @@ function TgbotStatus({ editable }: { editable: Record<string, unknown> }) {
   )
 }
 
-/** 设置页：一级菜单（3 个分区 / 7 个二级页）→ 二级表单。
+/** 设置页：一级菜单（3 个分区 / 8 个二级页）→ 二级表单。
  *
  *  **grp 由 App 从 URL 派生后传进来**（不再在这里自持 state + replaceState）：
  *  二级必须是历史栈里的**真一层**，侧滑返回才能退回一级菜单 —— 早先用
@@ -556,7 +696,7 @@ export function SettingsPage({
     <>
       <div className="navhead">
         <button className="backbtn" title="返回设置列表" onClick={onBackSub}>
-          <img src="/qp-icons/official/off_l1_back.png" alt="" />
+          <img src={assetUrl('/qp-icons/official/off_l1_back.png')} alt="" />
         </button>
         <span className="navtitle">{g.title}</span>
       </div>
@@ -564,10 +704,14 @@ export function SettingsPage({
         <SetBand
           error={saveError}
           savedAt={savedAt}
-          text={g.id === 'access' ? '访问码只写入、不回显' : '修改会自动保存'}
+          text={g.id === 'access' ? '访问码只写入、不回显'
+            : g.id === 'remote' && readConnection().server ? '手机端连接设置'
+              : '修改会自动保存'}
         />
         {g.id === 'access' ? (
           <AccessKeyPanel access={access} />
+        ) : g.id === 'remote' ? (
+          readConnection().server ? null : <HostRemotePanel />
         ) : (
           g.sections.map((sec) => (
             <section className="set-sec" key={sec.title}>
@@ -590,6 +734,7 @@ export function SettingsPage({
           ))
         )}
       </div>
+      {g.id === 'remote' && readConnection().server ? <RemoteSettingsPanel /> : null}
     </>
   )
 }
