@@ -25,6 +25,7 @@ if str(ROOT) not in sys.path:
 
 # 模块级持有 runs/ 路径常量的模块（import 后逐个 monkeypatch）
 _PATCH_MODULES = (
+    'dashboard',
     'src.progress',
     'src.progress_store',
     'src.queue_status',

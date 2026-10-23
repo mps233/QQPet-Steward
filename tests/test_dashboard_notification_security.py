@@ -161,7 +161,7 @@ def test_cross_origin_write_is_rejected():
 
 
 def test_snapshot_does_not_return_notification_credentials(monkeypatch, tmp_path):
-    monkeypatch.setattr(dashboard, 'BASE', tmp_path)
+    monkeypatch.setattr(dashboard, 'APP_ROOT', tmp_path)
     (tmp_path / 'config.yaml').write_text('notify:\n  telegram_token: private-token\n'
         '  telegram_chat_id: private-chat\n  feishu_secret: private-secret\n'
         '  feishu_access_token: private-access\n  feishu_webhook: private-webhook\n')

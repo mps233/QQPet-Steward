@@ -1,7 +1,7 @@
 """配置加载：config.yaml，以及 adb 路径定位。
 
 路径规划（兼顾 PyInstaller 打包）：
-- APP_ROOT：可写数据根目录。开发时是项目根目录；打包后是 exe 所在目录。
+- APP_ROOT：可写数据根目录；QQPET_DATA_DIR 可覆盖，macOS 打包版默认使用用户应用数据目录。
   config.yaml、runs/（进度、日志）都放在这里。
 - RESOURCE_ROOT：只读资源根目录。打包后是 PyInstaller 解压目录（sys._MEIPASS），
   scrcpy-win64/ 等随包资源从这里读；APP_ROOT 下存在同名资源时优先使用，
@@ -20,13 +20,18 @@ import yaml
 
 
 def _app_root() -> Path:
+    override = os.environ.get("QQPET_DATA_DIR", "").strip()
+    if override:
+        return Path(override).expanduser().resolve()
     if getattr(sys, "frozen", False):  # PyInstaller 打包后
+        if sys.platform == "darwin":
+            return Path.home() / "Library" / "Application Support" / "QQPetCopilot"
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parent.parent
 
 
 APP_ROOT = _app_root()
-RESOURCE_ROOT = Path(getattr(sys, "_MEIPASS", APP_ROOT))
+RESOURCE_ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
 PROJECT_ROOT = APP_ROOT  # 兼容旧引用
 
 CONFIG_FILE = APP_ROOT / "config.yaml"
@@ -481,6 +486,8 @@ def find_adb(configured_path: str = "") -> str:
         # 相对路径优先取 APP_ROOT（用户自定义），其次随包资源
         p = Path(configured_path)
         candidates.append(str(p if p.is_absolute() else resource_path(p)))
+    adb_name = "adb.exe" if os.name == "nt" else "adb"
+    candidates.append(str(resource_path(Path("resources/platform-tools") / adb_name)))
     # 随包 scrcpy 自带的 adb 兜底：配置路径失效时仍可用（如 exe 连同旧 config.yaml
     # 拷到别的电脑——配置里是指向原机器的路径/旧相对路径，本机靠 PATH 兜住没暴露）
     bundled = str(resource_path('resources/scrcpy-win64/adb.exe'))
@@ -528,6 +535,7 @@ def load_config(config_path: str | Path | None = None) -> Config:
         for name in ('config.yaml', 'config.example.yaml'):
             bundled = RESOURCE_ROOT / name
             if bundled.is_file() and bundled.resolve() != path.resolve():
+                path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy(bundled, path)
                 break
     with open(path, encoding="utf-8") as f:

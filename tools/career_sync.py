@@ -17,9 +17,10 @@ BASE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE))
 
 from src.ocr import ocr_fullscreen  # noqa: E402
+from src.config import APP_ROOT  # noqa: E402
 from scenarios.work import WorkScenario  # noqa: E402
 
-PLAN_FILE = BASE / 'runs' / 'career_plan.json'
+PLAN_FILE = APP_ROOT / 'runs' / 'career_plan.json'
 ATTR_RE = re.compile(r'(力量|智力|魅力)\s*([0-9]{1,6})')
 TOWN_FALLBACK = (850, 1238)   # 出门页小镇入口参考坐标（1080 宽）
 LEAVE_FALLBACK = (538, 2078)  # 主页面出门按钮参考坐标

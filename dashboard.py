@@ -31,18 +31,20 @@ from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+from src.config import APP_ROOT, RESOURCE_ROOT
 from src.dashboard_auth import (COOKIE_NAME, LOGIN_HTML, MIN_KEY_LENGTH, authorized,
                                 is_custom_key, load_access_key, same_origin,
                                 save_access_key, session_value, validate_new_key)
 
-BASE = Path(__file__).resolve().parent
+BASE = RESOURCE_ROOT
 
-RUNS = BASE / 'runs'
+RUNS = APP_ROOT / 'runs'
 RUNNER_PID = RUNS / 'runner.pid'      # 调度器自己写的单实例登记（见 src/instance.py）
 
 sys.path.insert(0, str(BASE))          # 让 `import src.instance` 在源码运行/打包都成立
 from src import instance  # noqa: E402  （判活工具：pidfile + os.kill(pid,0)，不依赖 ps）
 from src.jsonio import write_json, write_text_atomic  # noqa: E402  （统一原子写）
+from src import runtime_process  # noqa: E402  （跨平台调度器启动/停止）
 
 try:                                   # 队列状态的"已停止"标记（字段格式见 src/queue_status.py）
     from src.queue_status import mark_stopped as mark_queue_stopped  # noqa: E402
@@ -246,34 +248,45 @@ def _runner_pids() -> list[int]:
     return [r['pid'] for r in instance.find_running(RUNNER_PID)]
 
 
+def _runtime_data_paths() -> runtime_process.UserDataPaths:
+    """Use the active data root, not always the source checkout."""
+    data_root = APP_ROOT
+    frozen = bool(getattr(sys, 'frozen', False))
+    portable = bool(os.environ.get(runtime_process.PORTABLE_ENV))
+    return runtime_process.user_data_paths(
+        data_root, frozen=frozen, portable=portable)
+
+
+
 def scheduler_start() -> dict:
     """从仪表盘启动调度器：独立会话进程，输出追加到 runs/runner_console.log。
 
-    用项目 venv 的 python（保证 uiautomator2/rapidocr 等依赖可用），
+    Python 解释器/冻结版 scheduler 的选择统一由 runtime_process 负责；
     已在运行时不重复启动（防多实例——曾踩过双开尾巴的坑）。
     """
     info = scheduler_info()
     if info['alive']:
         return {'ok': False, 'msg': f"调度器已在运行（PID {info['pid']}），不重复启动"}
-    venv_py = BASE / '.venv' / 'bin' / 'python'
-    python = str(venv_py) if venv_py.exists() else sys.executable
     try:
-        RUNS.mkdir(exist_ok=True)
-        logf = open(RUNS / 'runner_console.log', 'ab')
+        RUNS.mkdir(parents=True, exist_ok=True)
+        # Source mode must use absolute paths: the dashboard and scheduler may
+        # be started with different working directories, and Windows cannot
+        # resolve the POSIX `.venv/bin/python` shim.
+        command = runtime_process.build_scheduler_argv(BASE.resolve())
     except Exception as e:
-        return {'ok': False, 'msg': f'无法打开日志文件: {e}'}
-    logf.write(f'\n===== {datetime.now():%Y-%m-%d %H:%M:%S} '
-               f'由仪表盘启动调度器 =====\n'.encode('utf-8'))
-    logf.flush()
+        return {'ok': False, 'msg': f'无法准备调度器命令: {e}'}
     try:
-        subprocess.Popen([python, str(BASE / 'scenarios' / 'runner.py')],
-                         cwd=str(BASE), stdin=subprocess.DEVNULL,
-                         stdout=logf, stderr=subprocess.STDOUT,
-                         start_new_session=True)
+        runtime_process.spawn_detached_scheduler(
+            command,
+            cwd=APP_ROOT,
+            log_path=RUNS / 'runner_console.log',
+            env=runtime_process.scheduler_environment(
+                _runtime_data_paths(),
+                portable=bool(os.environ.get(runtime_process.PORTABLE_ENV)),
+            ),
+        )
     except Exception as e:
-        logf.close()
         return {'ok': False, 'msg': f'启动失败: {e}'}
-    logf.close()   # 父进程关句柄；子进程持有自己的副本继续写
     deadline = time.time() + 8
     while time.time() < deadline:
         time.sleep(0.5)
@@ -313,7 +326,9 @@ def scheduler_resume() -> dict:
 
 
 def scheduler_stop() -> dict:
-    """停止调度器：先 SIGINT 优雅退出（任务收尾），12 秒不退再 SIGTERM/SIGKILL 兜底。"""
+    """停止调度器：先请求优雅退出，超时再逐级强制；平台差异见
+    ``src/runtime_process.stop_process``（POSIX SIGINT→TERM→KILL，
+    Windows CTRL_BREAK→taskkill /T→/F）。"""
     try:
         PAUSE_SIGNAL.unlink(missing_ok=True)   # 停调度器时清掉暂停信号，避免残留挂住下次启动
     except OSError:
@@ -322,35 +337,9 @@ def scheduler_stop() -> dict:
     if not pids:
         mark_queue_stopped()   # 顺手把可能残留的"进行中"状态标成已停止
         return {'ok': True, 'msg': '调度器本来就没有在运行', 'scheduler': scheduler_info()}
-    for pid in pids:
-        try:
-            os.kill(pid, signal.SIGINT)
-        except Exception:
-            pass
-    deadline = time.time() + 12
-    while time.time() < deadline and _runner_pids():
-        time.sleep(0.5)
+    stopped = [runtime_process.stop_process(pid) for pid in pids]
+    forced = any(item.forced for item in stopped)
     left = _runner_pids()
-    forced = False
-    if left:
-        for pid in left:
-            try:
-                os.kill(pid, signal.SIGTERM)
-            except Exception:
-                pass
-        deadline = time.time() + 4
-        while time.time() < deadline and _runner_pids():
-            time.sleep(0.4)
-        left = _runner_pids()
-    if left:
-        forced = True
-        for pid in left:
-            try:
-                os.kill(pid, signal.SIGKILL)
-            except Exception:
-                pass
-        time.sleep(1.0)
-        left = _runner_pids()
     audit(f"调度器停止（来自仪表盘）: {pids} → 剩余 {left or '无'}"
           f"{'（含强制）' if forced else ''}")
     if left:
@@ -544,7 +533,7 @@ def _task_enabled_map(tasks: dict, friend_care: dict, gift_bag: dict,
 def config_summary() -> dict:
     try:
         import yaml  # venv 里有；缺失时返回空
-        cfg = yaml.safe_load((BASE / 'config.yaml').read_text('utf-8')) or {}
+        cfg = yaml.safe_load((APP_ROOT / 'config.yaml').read_text('utf-8')) or {}
     except Exception:
         return {}
     tasks = cfg.get('tasks') or {}
@@ -956,7 +945,7 @@ def plan_data() -> dict:
     # 隐藏职业哨兵状态（runs/career_unlock.json + config.yaml 的 career 段；展示用）
     try:
         import yaml as _yaml
-        _rawcfg = _yaml.safe_load((BASE / 'config.yaml').read_text('utf-8')) or {}
+        _rawcfg = _yaml.safe_load((APP_ROOT / 'config.yaml').read_text('utf-8')) or {}
         ccfg = _rawcfg.get('career') or {}
     except Exception:
         ccfg = {}
@@ -1042,13 +1031,14 @@ def career_sync() -> dict:
     """运行 tools/career_sync.py 自动识别游戏里的属性（占用设备约 20 秒）。"""
     if _SYNC['busy']:
         return {'ok': False, 'reason': '正在同步中，请稍候'}
-    script = BASE / 'tools' / 'career_sync.py'
-    if not script.is_file():
-        return {'ok': False, 'reason': '未找到 tools/career_sync.py'}
+    try:
+        command = runtime_process.build_career_sync_argv(BASE)
+    except FileNotFoundError as exc:
+        return {'ok': False, 'reason': str(exc)}
     _SYNC['busy'] = True
     try:
-        proc = subprocess.run([sys.executable, str(script)],
-                              capture_output=True, text=True, timeout=150, cwd=str(BASE))
+        proc = subprocess.run(command, capture_output=True, text=True,
+                              timeout=150, cwd=str(APP_ROOT))
     except subprocess.TimeoutExpired:
         return {'ok': False, 'reason': '识别超时（150 秒）'}
     finally:
@@ -1084,7 +1074,7 @@ def capture_phone(width: int = 390, min_interval: float = 5.0):
     adb_path, serial = 'adb', ''
     try:
         import yaml
-        cfg = yaml.safe_load((BASE / 'config.yaml').read_text('utf-8')) or {}
+        cfg = yaml.safe_load((APP_ROOT / 'config.yaml').read_text('utf-8')) or {}
         adb_path = (cfg.get('adb') or {}).get('path') or 'adb'
         serial = (cfg.get('adb') or {}).get('device_serial') or ''
     except Exception:
@@ -1155,7 +1145,7 @@ def editable_snapshot() -> dict:
     """设置卡可编辑字段的当前值（供表单回填）。"""
     try:
         import yaml
-        cfg = yaml.safe_load((BASE / 'config.yaml').read_text('utf-8')) or {}
+        cfg = yaml.safe_load((APP_ROOT / 'config.yaml').read_text('utf-8')) or {}
     except Exception:
         return {}
     try:
@@ -1463,7 +1453,7 @@ def _adb_settings() -> tuple[str, str]:
     """读 config.yaml 的 adb 段 → (配置的 adb 路径, 配置的设备序列号)。"""
     try:
         import yaml
-        cfg = yaml.safe_load((BASE / 'config.yaml').read_text('utf-8')) or {}
+        cfg = yaml.safe_load((APP_ROOT / 'config.yaml').read_text('utf-8')) or {}
     except Exception:
         return '', ''
     adb_cfg = cfg.get('adb') or {}
@@ -1538,7 +1528,7 @@ def _tg_pet_status() -> dict:
 def _tg_today_duration():
     try:
         import yaml
-        sched = (yaml.safe_load((BASE / 'config.yaml').read_text('utf-8')) or {}).get('schedule') or {}
+        sched = (yaml.safe_load((APP_ROOT / 'config.yaml').read_text('utf-8')) or {}).get('schedule') or {}
     except Exception:  # noqa: BLE001
         sched = {}
     p = today_log_path()
@@ -1690,7 +1680,7 @@ def build_data() -> dict:
                     or RUNS / 'dashboard_access.token')
     try:
         import yaml
-        sched_cfg = (yaml.safe_load((BASE / 'config.yaml').read_text('utf-8')) or {}).get('schedule') or {}
+        sched_cfg = (yaml.safe_load((APP_ROOT / 'config.yaml').read_text('utf-8')) or {}).get('schedule') or {}
     except Exception:
         sched_cfg = {}
     return {

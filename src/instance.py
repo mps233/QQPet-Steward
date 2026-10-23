@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -145,6 +146,10 @@ def find_running(path: Path, pattern: str = 'scenarios/runner.py') -> list[dict]
     info = read_pidfile(path)
     if info and info['pid'] != os.getpid():
         found.append({'pid': info['pid'], 'via': 'pidfile', 'started': info.get('started')})
+    # Packaged or explicitly isolated data must not control another checkout's runner.
+    if (getattr(sys, 'frozen', False)
+            or os.environ.get('QQPET_DATA_DIR', '').strip()):
+        return found
     for pid in pgrep_runners(pattern):
         if pid == os.getpid() or any(pid == f['pid'] for f in found):
             continue
