@@ -488,9 +488,11 @@ class MiniTouchSession:
         if adb.serial:
             cmd += ['-s', adb.serial]
         cmd += list(args)
+        options = {}
+        if sys.platform == 'win32':
+            options['creationflags'] = subprocess.CREATE_NO_WINDOW
         proc = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8',
-                              errors='replace', timeout=timeout,
-                              creationflags=subprocess.CREATE_NO_WINDOW)
+                              errors='replace', timeout=timeout, **options)
         if check and proc.returncode != 0:
             raise RuntimeError(f'adb 命令失败: {" ".join(cmd)}: {(proc.stderr or proc.stdout).strip()}')
         return proc

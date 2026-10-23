@@ -5,10 +5,12 @@
 """
 from __future__ import annotations
 
+import re
 import socket
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
 
 from ..progress import log
 
@@ -28,6 +30,44 @@ _TCP_PROBE_TIMEOUT = 3.0
 
 class AdbError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class _DeviceEntry:
+    serial: str
+    state: str
+    transport_id: int | None = None
+    product: str = ""
+    model: str = ""
+
+
+def _parse_device_list(output: str) -> list[_DeviceEntry]:
+    """解析 `adb devices -l`，保留 transport_id/model 供重复序列号消歧。"""
+    entries: list[_DeviceEntry] = []
+    for raw in output.splitlines():
+        line = raw.strip()
+        if not line or line.startswith(("*", "List of devices")):
+            continue
+        match = re.match(r"^(\S+)\s+(\S+)(?:\s+(.*))?$", line)
+        if not match or match.group(1).startswith("("):
+            continue
+        tags: dict[str, str] = {}
+        for part in (match.group(3) or "").split():
+            key, sep, value = part.partition(":")
+            if sep:
+                tags[key] = value
+        try:
+            transport_id = int(tags["transport_id"]) if "transport_id" in tags else None
+        except ValueError:
+            transport_id = None
+        entries.append(_DeviceEntry(
+            serial=match.group(1),
+            state=match.group(2),
+            transport_id=transport_id,
+            product=tags.get("product", ""),
+            model=tags.get("model", ""),
+        ))
+    return entries
 
 
 def _tcp_reachable(host: str, port: int, timeout: float = _TCP_PROBE_TIMEOUT) -> bool:
@@ -74,12 +114,23 @@ class Device:
             )
         return proc
 
+    def _run_server(self, *args: str, check: bool = True) -> subprocess.CompletedProcess:
+        """执行不绑定具体序列号的 adb 命令（server/USB transport 管理）。"""
+        cmd = [self.adb, *args]
+        proc = subprocess.run(cmd, capture_output=True, timeout=30,
+                              creationflags=_NO_WINDOW)
+        if check and proc.returncode != 0:
+            raise AdbError(
+                f"adb 命令失败: {' '.join(cmd)}\n{proc.stderr.decode('utf-8', 'replace')}"
+            )
+        return proc
+
     # ---- 设备状态 ----
 
     def online_devices(self) -> list[str]:
         """返回在线设备序列号列表（不依赖 self.serial）。"""
         proc = subprocess.run(
-            [self.adb, "devices"], capture_output=True, timeout=30, check=True,
+            [self.adb, "devices"], capture_output=True, timeout=10, check=True,
             creationflags=_NO_WINDOW,
         )
         serials = []
@@ -89,6 +140,82 @@ class Device:
                 serials.append(parts[0])
         return serials
 
+    def _device_entries(self) -> list[_DeviceEntry]:
+        proc = self._run_server("devices", "-l")
+        return _parse_device_list(proc.stdout.decode("utf-8", "replace"))
+
+    def _transport_has_android_shell(self, transport_id: int) -> bool:
+        """用 Android 专有属性区分手机与同样暴露 ADB 接口的 MTP/数据卡。"""
+        try:
+            proc = subprocess.run(
+                [
+                    self.adb, "-t", str(transport_id), "shell", "getprop",
+                    "ro.build.version.sdk",
+                ],
+                capture_output=True,
+                timeout=5,
+                creationflags=_NO_WINDOW,
+            )
+        except Exception:  # noqa: BLE001 - 探测失败/超时按非 Android 处理
+            return False
+        return proc.returncode == 0 and proc.stdout.decode(
+            "utf-8", "replace").strip().isdigit()
+
+    def _is_android_entry(self, entry: _DeviceEntry) -> bool:
+        if entry.product or entry.model:
+            return True
+        # 数据卡只暴露 ADB 接口、没有 product/model；先看其串口特征，避免每次探测都等 shell 超时。
+        if entry.serial.lower().startswith(("mdm", "quectel")):
+            return False
+        return entry.transport_id is not None and self._transport_has_android_shell(
+            entry.transport_id)
+
+    def _detach_transport(self, transport_id: int) -> bool:
+        try:
+            proc = self._run_server(
+                "-t", str(transport_id), "usb", "detach", check=False)
+        except Exception as e:  # noqa: BLE001 - 老版本 adb 不支持时交给上层明确报错
+            log(f"断开重复 ADB transport {transport_id} 失败: {e}")
+            return False
+        if proc.returncode != 0:
+            detail = (proc.stdout + proc.stderr).decode("utf-8", "replace").strip()
+            log(f"断开重复 ADB transport {transport_id} 失败: {detail or proc.returncode}")
+            return False
+        return True
+
+    def _repair_duplicate_serial(
+        self, entries: list[_DeviceEntry] | None = None,
+    ) -> None:
+        """同序列号有多条在线 transport 时，保留手机并断开非 Android 接口。
+
+        实际踩坑：OnePlus 手机和 DJIO 的 Quectel 数据卡都上报 `1f584daf`，
+        `adb -s 1f584daf` 会报 "more than one device with serial"，调度器启动即退出。
+        数据卡没有 Android shell；`usb detach` 只重枚举它自己的 ADB 接口，不杀应用、
+        也不会断开手机。
+        """
+        rows = entries if entries is not None else self._device_entries()
+        matches = [
+            row for row in rows
+            if row.serial == self.serial and row.state == "device"
+        ]
+        if len(matches) < 2:
+            return
+
+        android_rows = [row for row in matches if self._is_android_entry(row)]
+        if not android_rows:
+            return
+        android_ids = {row.transport_id for row in android_rows}
+        extras = [
+            row for row in matches
+            if row.transport_id is not None and row.transport_id not in android_ids
+        ]
+        for row in extras:
+            log(
+                f"检测到序列号 {self.serial} 重复：transport {row.transport_id} "
+                f"无 Android shell，断开该数据卡 ADB 接口"
+            )
+            self._detach_transport(row.transport_id)
+
     def ensure_connected(self) -> str:
         """确认 adb server 已启动且有设备在线；未指定序列号时选中第一台。返回序列号。
 
@@ -97,13 +224,24 @@ class Device:
         server 自身网络栈坏了（长期运行常见），重启 server 并恢复其它远程设备后再试
         （见 _recover_unreachable）。
         """
-        self._run("start-server")
+        self._run_server("start-server")
+        if self.serial:
+            self._repair_duplicate_serial()
         devices = self.online_devices()
         if self.serial:
+            if devices.count(self.serial) > 1:
+                # detach 是异步的；给 adb server 一点时间消化，避免刚断开就误报。
+                time.sleep(0.5)
+                devices = self.online_devices()
             if self.serial not in devices:
                 devices = self._recover_unreachable(devices)
             if self.serial not in devices:
                 raise AdbError(f"指定设备 {self.serial} 不在线，当前在线: {devices or '无'}")
+            if devices.count(self.serial) > 1:
+                raise AdbError(
+                    f"序列号 {self.serial} 对应多条在线 ADB transport，"
+                    "且无法自动断开非 Android 接口"
+                )
             return self.serial
         if not devices:
             raise AdbError("没有在线的 adb 设备，请检查 USB 连接与调试授权。")
