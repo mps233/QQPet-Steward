@@ -8,6 +8,7 @@ import { LivePage } from './components/LivePage'
 import { LogPage } from './components/LogPage'
 import { NavHead } from './components/NavHead'
 import { NotifyPage } from './components/NotifyPage'
+import { Onboarding } from './components/Onboarding'
 import { PlanPage } from './components/PlanPage'
 import { SettingsPage } from './components/SettingsPage'
 import { useData } from './lib/useData'
@@ -69,6 +70,9 @@ function DashboardApp({ onLoginRequired }: { onLoginRequired: () => void }) {
   useConnectionState()
   const loginRequested = useRef(false)
   const [busy, setBusy] = useState('')
+  const [guideMode, setGuideMode] = useState<'auto' | 'open' | 'closed'>('auto')
+  const guideOpen = guideMode === 'open'
+    || (guideMode === 'auto' && !!data?.onboarding?.required && !data.scheduler.alive)
   /**
    * 历史栈模型（与 旧版 的 showTab / popstate 一一对应）：
    *   navDepth = 0（总览）/ 1（内页）/ 2（二级：设置 grp、日志子页）
@@ -337,10 +341,12 @@ function DashboardApp({ onLoginRequired }: { onLoginRequired: () => void }) {
   //    background-color（那条路靠 CSS 的 --qp-statusbar，本身已经对）。
   useLayoutEffect(() => {
     const root = document.documentElement
-    root.setAttribute('data-page', page)
+    root.setAttribute('data-page', guideOpen ? 'onboarding' : page)
     const dark = !!window.matchMedia?.('(prefers-color-scheme: dark)').matches
     let want = '#FFFFFF' // 内页顶栏是白的
-    if (page === 'main') {
+    if (guideOpen) {
+      want = dark ? '#27231D' : '#FCF7ED'
+    } else if (page === 'main') {
       const v = getComputedStyle(root).getPropertyValue('--qp-statusbar').trim()
       want = v || (dark ? '#A9722D' : '#D5A758') // CSS 变量读不到时的兜底
     } else if (page === 'plan') {
@@ -364,7 +370,7 @@ function DashboardApp({ onLoginRequired }: { onLoginRequired: () => void }) {
       const isDark = (m.getAttribute('media') || '').includes('dark')
       if (isDark === dark) m.setAttribute('content', want)
     })
-  }, [page, scene.scene, scene.dark])
+  }, [page, scene.scene, scene.dark, guideOpen])
 
   /**
    * 调度器启停。
@@ -484,6 +490,30 @@ function DashboardApp({ onLoginRequired }: { onLoginRequired: () => void }) {
     )
   }
 
+  if (guideOpen) {
+    return (
+      <div className="app">
+        <main>
+          <div className="page-slot page-enter">
+            <Onboarding
+              data={data}
+              onSave={saveOne}
+              onLater={() => {
+                setGuideMode('closed')
+                go('main')
+              }}
+              onDone={() => {
+                setGuideMode('closed')
+                go('main')
+                reload()
+              }}
+            />
+          </div>
+        </main>
+      </div>
+    )
+  }
+
   /** 按**视图**渲染（页面 + 二级键）。抽成函数是为了让"正在退场的那个视图"也能被渲染
    *  —— iOS 式转场需要前后两个视图同时在场（单页滑入那种是旧页瞬间消失，不像原生）。
    *  grp/sub 一律走参数，**不能读闭包里的全局值**：退场的那个视图往往带着不同的二级键
@@ -565,6 +595,7 @@ function DashboardApp({ onLoginRequired }: { onLoginRequired: () => void }) {
             grp={v.grp}
             onOpen={(id) => openSub('grp', id)}
             onBackSub={backSub}
+            onOnboarding={() => setGuideMode('open')}
           />
         </section>
       )

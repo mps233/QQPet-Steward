@@ -9,8 +9,9 @@ import {
 } from '@dnd-kit/core'
 import { restrictToParentElement, restrictToVerticalAxis } from '@dnd-kit/modifiers'
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { applyOptim, effectiveValue, reconcile, rollbackOptim } from '../lib/optimistic'
+import { taskListSnapshot } from '../lib/task-list'
 import {
   TASK_NAME,
   isLoopTask,
@@ -180,7 +181,12 @@ export function TaskList({
   /** 返回 Promise —— 失败时调用方要回滚乐观值（见 handleToggle），不能丢弃 */
   onToggle: (k: string, on: boolean) => Promise<unknown>
 }) {
-  const qt = data.queue.tasks || {}
+  const qt = useMemo(() => taskListSnapshot(
+    data.queue.tasks,
+    data.config?.task_order,
+    data.config?.tasks_enabled,
+    Object.keys(TASK_NAME),
+  ), [data.queue.tasks, data.config])
   const nowDate = (data.now || '').slice(0, 10)
   // hire_friend / friend_care 已分别并入 work / care，但后端 pending 仍按旧键登记；
   // 不映射的话列表里没有对应的行，进行中的那一项永远不会高亮。

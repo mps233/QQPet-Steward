@@ -83,6 +83,7 @@ LOGS = RUNS / 'logs'
 ADV_LIVE_FILE = RUNS / 'adventure_live.jsonl'   # 冒险统一记录（实验 300 把 + 日常实时）
 DEFAULT_PORT = 8787
 _SETTINGS_LOCK = threading.RLock()
+_ONBOARDING_LOCK = threading.RLock()
 _CLIENT_STORE_LOCK = threading.RLock()
 _CLIENT_PROTOCOL_STORE: ClientProtocolStore | None = None
 
@@ -173,6 +174,70 @@ def read_json(name: str) -> dict:
         return json.loads((RUNS / name).read_text('utf-8'))
     except Exception:
         return {}
+
+
+def _has_onboarding_history() -> bool:
+    """Recognize actual use; first-launch config, logs and empty state do not count."""
+    cache = read_json('status_cache.json')
+    accounts = cache.get('accounts') if isinstance(cache, dict) else None
+    if isinstance(accounts, dict):
+        for entry in accounts.values():
+            if isinstance(entry, dict) and any(
+                    entry.get(key) is not None and entry.get(key) != ''
+                    for key in ('pet_name', 'energy', 'clean', 'mood',
+                                'coins', 'soap', 'biscuit')):
+                return True
+
+    for path in RUNS.glob('*_progress.json'):
+        progress = read_json(path.name)
+        if not isinstance(progress, dict):
+            continue
+        if (any(_int_or_0(progress.get(key)) > 0
+                for key in ('learned', 'study_secs', 'work_secs'))
+                or progress.get('done') is True):
+            return True
+        history = progress.get('history')
+        if isinstance(history, dict) and any(_int_or_0(value) > 0
+                                             for value in history.values()):
+            return True
+
+    queue = read_json('queue_status.json')
+    if isinstance(queue, dict) and (queue.get('current') or queue.get('pending')):
+        return True
+    for name in ('session_rewards.jsonl', 'adventure_live.jsonl'):
+        try:
+            with (RUNS / name).open(encoding='utf-8', errors='replace') as handle:
+                for line in handle:
+                    try:
+                        record = json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(record, dict) and any(
+                            key in record for key in ('kind', 'coins', 'settle')):
+                        return True
+        except OSError:
+            pass
+    return False
+
+
+def onboarding_status() -> dict:
+    state = read_json('onboarding.json')
+    completed = (isinstance(state, dict) and state.get('version') == 1
+                 and state.get('completed') is True)
+    return {'version': 1, 'required': not completed and not _has_onboarding_history(),
+            'completed': completed}
+
+
+def complete_onboarding() -> dict:
+    with _ONBOARDING_LOCK:
+        state = read_json('onboarding.json')
+        if not (isinstance(state, dict) and state.get('version') == 1
+                and state.get('completed') is True):
+            write_json(RUNS / 'onboarding.json', {
+                'version': 1, 'completed': True,
+                'completed_at': datetime.now().isoformat(timespec='seconds'),
+            })
+    return {'ok': True, 'onboarding': onboarding_status()}
 
 
 _SECRET_KEY_RE = re.compile(
@@ -1130,7 +1195,8 @@ def list_shots() -> list[dict]:
     return out
 
 
-_shot_cache = {'ts': 0.0, 'data': b'', 'at': ''}
+_shot_cache = {'ts': 0.0, 'data': b'', 'at': '', 'source': None}
+_SHOT_CACHE_LOCK = threading.Lock()
 
 
 def capture_phone(width: int = 390, min_interval: float = 5.0):
@@ -1138,16 +1204,16 @@ def capture_phone(width: int = 390, min_interval: float = 5.0):
 
     返回 (jpeg_bytes, 拍摄时间字符串, 是否来自缓存)。
     """
-    if _shot_cache['data'] and time.time() - _shot_cache['ts'] < min_interval:
-        return _shot_cache['data'], _shot_cache['at'], True
-    adb_path, serial = 'adb', ''
-    try:
-        import yaml
-        cfg = yaml.safe_load((APP_ROOT / 'config.yaml').read_text('utf-8')) or {}
-        adb_path = (cfg.get('adb') or {}).get('path') or 'adb'
-        serial = (cfg.get('adb') or {}).get('device_serial') or ''
-    except Exception:
-        pass
+    configured, serial = _adb_settings()
+    source = (configured, serial)
+    with _SHOT_CACHE_LOCK:
+        if _shot_cache.get('source') != source:
+            _shot_cache.update(ts=0.0, data=b'', at='', source=source)
+        if _shot_cache['data'] and time.time() - _shot_cache['ts'] < min_interval:
+            return _shot_cache['data'], _shot_cache['at'], True
+    adb_path, error = _resolve_adb(configured)
+    if error:
+        raise RuntimeError(error)
     cmd = [adb_path] + (['-s', serial] if serial else []) + ['exec-out', 'screencap', '-p']
     proc = subprocess.run(cmd, capture_output=True, timeout=30)
     if proc.returncode != 0 or not proc.stdout:
@@ -1162,7 +1228,9 @@ def capture_phone(width: int = 390, min_interval: float = 5.0):
     img.convert('RGB').save(buf, 'JPEG', quality=82)
     data = buf.getvalue()
     at = datetime.now().strftime('%H:%M:%S')
-    _shot_cache.update(ts=time.time(), data=data, at=at)
+    with _SHOT_CACHE_LOCK:
+        if _shot_cache.get('source') == source:
+            _shot_cache.update(ts=time.time(), data=data, at=at)
     return data, at, False
 
 
@@ -1765,6 +1833,7 @@ def build_data() -> dict:
         'last_line': log_lines[-1] if log_lines else '',
         'editable': editable_snapshot(),
         'friends': list_friends(),
+        'onboarding': onboarding_status(),
         # 访问权限卡（设置 → 访问码）用；不回传访问码本身
         'access': {'custom': is_custom_key(key_file),
                    'min_length': MIN_KEY_LENGTH},
@@ -2426,6 +2495,23 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 audit(f'客户端配对票据创建(来自 {self.client_address[0]})')
                 self._send_json(200, result)
+            elif u.path == '/api/onboarding':
+                try:
+                    length = int(self.headers.get('Content-Length') or 0)
+                    if length < 0 or length > 4096:
+                        raise ValueError('Invalid onboarding payload')
+                    payload = json.loads(self.rfile.read(length).decode('utf-8') or '{}')
+                except (ValueError, UnicodeDecodeError):
+                    self._send_json(400, {
+                        'ok': False, 'error': 'invalid_onboarding_action',
+                    })
+                    return
+                if not isinstance(payload, dict) or payload.get('action') != 'complete':
+                    self._send_json(400, {
+                        'ok': False, 'error': 'invalid_onboarding_action',
+                    })
+                    return
+                self._send_json(200, complete_onboarding())
             elif u.path == '/api/access-key':
                 length = int(self.headers.get('Content-Length') or 0)
                 payload = json.loads(self.rfile.read(length).decode('utf-8') or '{}')

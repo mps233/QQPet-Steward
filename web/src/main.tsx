@@ -21,6 +21,7 @@ import './styles/settings.css'
 import './styles/logs.css'
 // 冒险记录（游戏风格「冒险手账」，独立命名空间 .adv-*）
 import './styles/adv.css'
+import './styles/onboarding.css'
 
 installStageUnit()
 

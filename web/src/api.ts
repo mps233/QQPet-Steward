@@ -42,6 +42,13 @@ export interface Data {
   last_line?: string
   /** 访问权限状态（设置 → 访问码 用；不含访问码本身） */
   access?: AccessInfo
+  onboarding?: OnboardingStatus
+}
+
+export interface OnboardingStatus {
+  version: number
+  required: boolean
+  completed: boolean
 }
 
 export interface AccessInfo {
@@ -229,6 +236,47 @@ async function requestJSONWithoutAuth<T>(path: string): Promise<T> {
 }
 
 export const fetchData = (): Promise<Data> => getJSON<Data>('/api/data')
+
+export const completeOnboarding = (): Promise<{ ok: boolean; onboarding: OnboardingStatus }> =>
+  requestJSON('/api/onboarding', {
+    method: 'POST',
+    body: JSON.stringify({ action: 'complete' }),
+  })
+
+export interface AdbDevice {
+  serial: string
+  state: string
+  model?: string
+  product?: string
+}
+
+export interface AdbInfo {
+  path: string
+  resolved: string
+  serial: string
+  devices: AdbDevice[]
+  error: string
+}
+
+export const fetchAdb = (): Promise<AdbInfo> => getJSON('/api/adb')
+
+export const connectAdb = (addr: string): Promise<{ ok: boolean; msg: string; addr?: string }> =>
+  requestJSON('/api/adb/connect', { method: 'POST', body: JSON.stringify({ addr }) })
+
+/** A screenshot only reads the device; it never opens QQ or starts a task. */
+export async function fetchDeviceScreenshot(): Promise<{ blob: Blob; at: string }> {
+  const c = readConnection()
+  const r = await fetch(apiUrl(`/api/screenshot?t=${Date.now()}`, c.server), {
+    cache: 'no-store',
+    credentials: c.server ? 'omit' : 'same-origin',
+    headers: c.token ? { Authorization: `Bearer ${c.token}` } : {},
+  })
+  if (!r.ok) {
+    const detail = (await r.text().catch(() => '')).trim().slice(0, 160)
+    throw new Error(detail || `获取画面失败 HTTP ${r.status}`)
+  }
+  return { blob: await r.blob(), at: r.headers.get('X-Shot-At') || '' }
+}
 
 export interface SettingsResult {
   ok: boolean

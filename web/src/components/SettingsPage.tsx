@@ -600,6 +600,7 @@ export function SettingsPage({
   grp,
   onOpen,
   onBackSub,
+  onOnboarding,
 }: {
   editable: Record<string, unknown>
   /** 访问权限状态（设置 → 仪表盘访问码 用） */
@@ -610,6 +611,7 @@ export function SettingsPage({
   grp: string | null
   onOpen: (id: string) => void
   onBackSub: () => void
+  onOnboarding?: () => void
 }) {
   /** 开关的乐观值 + 保存锁（与 NotifyPage 同一套写法）：保存是异步的，
    *  等下一轮 `/api/data` 回来才算数的话，开关会"点一下弹回去"。
@@ -667,6 +669,20 @@ export function SettingsPage({
         <NavHead title="设置" onBack={onExit} />
         <div className="set-page" id="setMenu">
           <SetBand text={`${total} 个设置分组 · 改动会自动保存`} />
+          {onOnboarding ? (
+            <section className="set-sec">
+              <h3>使用帮助</h3>
+              <div className="set-card">
+                <button className="set-menu-row" type="button" onClick={onOnboarding}>
+                  <span className="set-menu-main">
+                    <span className="set-menu-label">新手引导</span>
+                    <span className="set-menu-desc">连接设备、确认游戏主页、选择托管任务</span>
+                  </span>
+                  <span className="set-menu-chev" aria-hidden="true">›</span>
+                </button>
+              </div>
+            </section>
+          ) : null}
           {MENU.map(({ section, items }) => {
             const rows = items.filter((it) => GROUPS[it.id])
             if (!rows.length) return null
