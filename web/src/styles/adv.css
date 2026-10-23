@@ -8,9 +8,26 @@
    裸 `section[data-page="adv"]` 只有 (0,1,1)，压不住。 */
 
 main section[data-page="adv"]:not([data-page="main"]) {
+  /* ⚠️ 径向渐变的纵向尺寸**必须写死 px**，不能用百分比：
+     内页现在 height:auto（见 app.css 那条），页面总高 = 内容高（实测 22558px），
+     写 42% 就变成 9000px 高的巨型光晕，整个列表区都泛黄。
+     光晕只是给页头那一块打光，360px 足够。 */
   background:
-    radial-gradient(120% 42% at 50% 0%, rgba(241, 209, 136, 0.18), rgba(241, 209, 136, 0) 72%),
-    linear-gradient(180deg, #fcf7ed 0%, #fbf2e1 52%, #fcf7ed 100%);
+    radial-gradient(120% 360px at 50% 0%, rgba(241, 209, 136, 0.18), rgba(241, 209, 136, 0) 72%),
+    #fcf7ed;
+}
+
+/* The adventure log is a long page, but the scrollbar track is visual chrome
+   that steals ~15px from every card. Keep .page-slot scrollable and only hide
+   its painted scrollbar on Chromium/WebKit; wheel, trackpad and touch scroll
+   continue to work. */
+html[data-page="adv"] .page-slot.page-enter {
+  scrollbar-width: none;
+}
+html[data-page="adv"] .page-slot.page-enter::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 section[data-page="adv"] .navhead {
@@ -348,27 +365,54 @@ section[data-page="adv"] .navhead .navtitle {
 
 /* ---------- 读数条 ---------- */
 .adv-charts {
-  padding: 10px 10px 4px;
+  padding: 8px 10px 6px;
 }
+/* 读数条：空态只占一行细字（旧版是个大的米黄胶囊，白白吃掉一块高度），
+   点中图表后才浮成一条高亮读数 */
 .adv-tip {
-  margin: 0 2px 8px;
-  min-height: 16px;
-  padding: 8px 10px;
-  border-radius: 12px;
-  background: linear-gradient(180deg, #fff8e8, #fcefd5);
-  box-shadow: inset 0 0 0 1px rgba(235, 208, 158, 0.65);
+  display: flex;
+  align-items: center;
+  min-height: 18px;
+  margin: 0 0 2px;
+  padding: 5px 8px;
+  border-radius: 10px;
+  background: transparent;
   font-size: 11.5px;
-  line-height: 1.55;
+  line-height: 1.5;
   color: #8a6a3b;
   font-variant-numeric: tabular-nums;
+  transition: background-color 0.18s, box-shadow 0.18s;
 }
 .adv-tip.is-live {
-  background: linear-gradient(180deg, #fff2d4, #fbe6bc);
-  box-shadow: inset 0 0 0 1px rgba(228, 186, 110, 0.8);
+  background: linear-gradient(180deg, #fff7e3, #fbeac8);
+  box-shadow: inset 0 0 0 1px rgba(228, 186, 110, 0.7);
   color: #6b4315;
 }
 .adv-tip-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   color: #b09a76;
+}
+/* 小手指图标：纯 CSS 画，不额外引图片 */
+.adv-tip-touch {
+  position: relative;
+  width: 9px;
+  height: 9px;
+  border: 1.3px solid #c3ab84;
+  border-radius: 50%;
+  opacity: 0.85;
+}
+.adv-tip-touch::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 3px;
+  height: 3px;
+  margin: -1.5px 0 0 -1.5px;
+  border-radius: 50%;
+  background: #c3ab84;
 }
 .adv-read {
   display: flex;
@@ -429,23 +473,45 @@ section[data-page="adv"] .navhead .navtitle {
 }
 .adv-chart-block + .adv-chart-block {
   margin-top: 4px;
-  padding-top: 10px;
-  border-top: 1px dashed rgba(228, 198, 140, 0.6);
+  padding-top: 12px;
+  border-top: 1px dashed rgba(228, 198, 140, 0.55);
 }
 .adv-chart-cap {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
-  padding: 0 6px 3px;
+  padding: 0 4px 2px 2px;
   font-size: 11px;
   color: #a98b5e;
 }
+.adv-chart-k {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+/* 图例小色块：与线/点的实际颜色对应，一眼分清两条曲线 */
+.adv-swatch {
+  width: 14px;
+  height: 3px;
+  border-radius: 2px;
+}
+.adv-swatch.cum {
+  background: linear-gradient(90deg, #f0be52, #d88606);
+}
+.adv-swatch.pts {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #1d8fc4;
+  box-shadow: 0 0 0 3px rgba(29, 143, 196, 0.14);
+}
 .adv-chart-cap b {
   margin-left: auto;
-  font-size: 12.5px;
-  font-weight: 700;
+  font-size: 13px;
+  font-weight: 800;
   color: #7a5523;
   font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
 }
 .adv-chart-cap b.pos {
   color: #c97a00;
@@ -454,10 +520,88 @@ section[data-page="adv"] .navhead .navtitle {
   display: block;
   width: 100%;
   height: auto;
-  max-height: 118px;
+  max-height: 142px;
   cursor: crosshair;
   /* 静态声明：等 pointerdown 再加就晚了，iOS 已判定成滚动手势 */
   touch-action: pan-y;
+}
+
+/* SVG 内部元素：用 CSS 统一管颜色，别在 JSX 里散落一堆 hex */
+.adv-chart .adv-grid {
+  stroke: rgba(196, 166, 116, 0.2);
+  stroke-width: 1;
+}
+.adv-chart .adv-base {
+  stroke: rgba(176, 138, 70, 0.5);
+  stroke-width: 1;
+}
+.adv-chart .adv-axis {
+  fill: #b8a17c;
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.adv-chart .adv-cross {
+  stroke: #b08a45;
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  opacity: 0.75;
+}
+/* 点中的那个点：白描边 + 深色填充，压在点云上也看得见 */
+.adv-chart .adv-focus {
+  fill: #e7a21c;
+  stroke: #fff;
+  stroke-width: 1.8;
+}
+.adv-chart .adv-focus.pts {
+  fill: #0f6fa3;
+}
+/* 零收益：一排短竖线，比 300 个重叠圆点干净得多 */
+.adv-chart .adv-zero-tick {
+  fill: #cdb894;
+  opacity: 0.9;
+}
+/* 有收益的点：按档位分级，越大的越显眼；竖杆把点和基线连起来，读得出高度 */
+.adv-chart .adv-dot line.adv-stem {
+  stroke: currentColor;
+  stroke-width: 0.6;
+  opacity: 0.2;
+}
+.adv-chart .adv-dot circle {
+  fill: currentColor;
+}
+.adv-chart .adv-dot .adv-halo {
+  opacity: 0.16;
+}
+.adv-chart .adv-dot.small {
+  color: #4fb3e4;
+}
+.adv-chart .adv-dot.mid {
+  color: #1d8fc4;
+}
+.adv-chart .adv-dot.big {
+  color: #0f6fa3;
+}
+.adv-chart .adv-dot.neg {
+  color: #e05a4a;
+}
+.adv-chart .adv-avg {
+  stroke: #c99433;
+  stroke-width: 1;
+  stroke-dasharray: 5 4;
+  opacity: 0.9;
+}
+/* 均值标签压在白底小胶囊上：否则虚线从字中间穿过去，读不清 */
+.adv-chart .adv-avg-chip rect {
+  fill: #fffaf0;
+  stroke: rgba(201, 148, 51, 0.45);
+  stroke-width: 0.6;
+}
+.adv-chart .adv-avg-chip text {
+  fill: #b8842c;
+  font-size: 6.6px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
 }
 
 /* ---------- 状态轨迹 ---------- */
@@ -691,6 +835,15 @@ section[data-page="adv"] .navhead .navtitle {
   }
   .adv-net {
     font-size: 34px;
+  }
+  /* At 320px the summary line is wider than the card by ~18px. Let the
+     average chip move to a second line instead of clipping the right edge. */
+  .adv-net-row {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+  .adv-avg {
+    margin-left: 38px;
   }
   .adv-row-no {
     width: 34px;

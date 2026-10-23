@@ -2,23 +2,140 @@ import { useCallback, useRef, useState, type ReactNode } from 'react'
 import { fetchAdventure, type AdvData } from '../api'
 import { usePoll } from '../lib/usePoll'
 
-/** 图表几何：viewBox 340×104（宽度仍是 340 —— 指针取点按它换算，不能动） */
+/** 图表几何：viewBox 340×126（宽度仍是 340 —— 指针取点按它换算，不能动） */
 const W = 340
-const H = 104
+const H = 126
 const PAD = 10
-const MID = H / 2
-const AMP = MID - PAD
 
 type ChartKey = 'cum' | 'pts' | 'stats'
 
-/** 横坐标：按索引 1..tx 均匀铺开 */
+/** 收益图绘图区：左侧留纵轴刻度、底部留时间标签 */
+const PL = 28
+const PR = W - 8
+const PT = 10
+const PB = 18
+
+/** 横坐标：按索引 1..tx 均匀铺开（状态轨迹用整宽） */
 const sx = (i: number, tx: number): number =>
   PAD + ((Math.max(1, i) - 1) / Math.max(1, tx - 1)) * (W - 2 * PAD)
-/** 收益类纵坐标（围绕中线上下铺开） */
-const syMoney = (v: number, mx: number): number => MID - (v / mx) * AMP
+/** 收益图横坐标（与左侧刻度栏对齐） */
+const mx = (i: number, tx: number): number =>
+  PL + ((Math.max(1, i) - 1) / Math.max(1, tx - 1)) * (PR - PL)
+/** 累计收益：线性纵轴，0 落在基线上（旧版把 0 放中线，图下半截全是空的） */
+const syLinear = (v: number, lo: number, hi: number): number => {
+  const span = hi - lo || 1
+  return H - PB - ((v - lo) / span) * (H - PT - PB)
+}
+/** 单次收益：开方纵轴——64% 的场次是 0、收益又集中在 20~50，
+ *  线性刻度会把所有点压成贴着零线的一条毛毛虫（旧版就是这样），开方后各档位才分得开 */
+const syScatter = (v: number, lo: number, hi: number): number => {
+  const plotH = H - PT - PB
+  const y0 = H - PB - (lo < 0 ? plotH * 0.28 : 0)
+  if (v >= 0) return y0 - Math.sqrt(Math.min(1, hi > 0 ? v / hi : 0)) * (y0 - PT)
+  return y0 + Math.sqrt(Math.min(1, -v / Math.max(1, -lo))) * (H - PB - y0)
+}
 /** 状态类纵坐标（0~100 铺满） */
 const syState = (v: number): number =>
   H - PAD - (Math.max(0, Math.min(100, v)) / 100) * (H - 2 * PAD)
+
+/** 取「好读」的纵轴上限：1/1.2/1.5/2/2.5/3/4/5/6/8 × 10^n */
+const NICE_STEPS = [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8]
+const niceMax = (v: number): number => {
+  if (!(v > 0)) return 10
+  const e = Math.pow(10, Math.floor(Math.log10(v)))
+  const f = v / e
+  const step = NICE_STEPS.find((n) => f <= n + 1e-9) ?? 10
+  return Math.max(10, step * e)
+}
+const fmtTick = (v: number): string => {
+  const a = Math.abs(v)
+  if (a >= 1000) return `${Math.round((v / 1000) * 10) / 10}k`
+  return String(Math.round(v * 10) / 10)
+}
+/** 散点图的刻度只取「收益档」里的整数（20/25/50/100/200…），免得出现 12.5 这种怪数 */
+const SCATTER_TICKS = [10, 20, 25, 50, 100, 200, 300, 500, 1000, 2000, 5000]
+const scatterTicks = (top: number): number[] => {
+  const ok = SCATTER_TICKS.filter((v) => v <= top * 1.02)
+  if (!ok.length) return [top]
+  // 只要 3 档：50/100/200 这类好读的档位，太密会在 20~25 的密集带上挤成一团
+  const picked = ok.length <= 3 ? ok : [ok[ok.length - 3]!, ok[ok.length - 2]!, ok[ok.length - 1]!]
+  return picked
+}
+/** 相邻档位在开方刻度上可能只差几个像素（20 与 25）：按实际纵坐标间距再筛一遍 */
+const spacedTicks = (ticks: number[], y: (v: number) => number, minGap = 9): number[] => {
+  const kept: number[] = []
+  for (let i = ticks.length - 1; i >= 0; i--) {
+    const v = ticks[i]!
+    const yy = y(v)
+    if (!kept.length || Math.abs(y(kept[kept.length - 1]!) - yy) >= minGap) kept.push(v)
+  }
+  return kept.reverse()
+}
+/** 单调三次插值（Fritsch–Carlson）：曲线平滑但不会在累计值上「越过去再回来」 */
+const monoPath = (points: [number, number][]): string => {
+  if (!points.length) return ''
+  const first = points[0]!
+  if (points.length === 1) return `M ${first[0].toFixed(1)} ${first[1].toFixed(1)}`
+  const n = points.length
+  const dx: number[] = []
+  const dy: number[] = []
+  const slope: number[] = []
+  for (let i = 0; i < n - 1; i++) {
+    const a = points[i]!
+    const b = points[i + 1]!
+    dx.push(Math.max(1e-6, b[0] - a[0]))
+    dy.push(b[1] - a[1])
+    slope.push(dy[i]! / dx[i]!)
+  }
+  const m: number[] = new Array(n)
+  m[0] = slope[0]!
+  m[n - 1] = slope[n - 2]!
+  for (let i = 1; i < n - 1; i++) {
+    const s0 = slope[i - 1]!
+    const s1 = slope[i]!
+    if (s0 * s1 <= 0) m[i] = 0
+    else m[i] = (3 * (dx[i - 1]! + dx[i]!)) / ((2 * dx[i]! + dx[i - 1]!) / s0 + (dx[i]! + 2 * dx[i - 1]!) / s1)
+  }
+  let d = `M ${first[0].toFixed(1)} ${first[1].toFixed(1)}`
+  for (let i = 0; i < n - 1; i++) {
+    const a = points[i]!
+    const b = points[i + 1]!
+    const h = dx[i]!
+    d += ` C ${(a[0] + h / 3).toFixed(1)} ${(a[1] + (m[i]! * h) / 3).toFixed(1)},` +
+      ` ${(b[0] - h / 3).toFixed(1)} ${(b[1] - (m[i + 1]! * h) / 3).toFixed(1)},` +
+      ` ${b[0].toFixed(1)} ${b[1].toFixed(1)}`
+  }
+  return d
+}
+/** 按 x 像素列分箱，只保留每列的最后一个点（累计值单调，末点即该列真值） */
+const binLast = (points: [number, number][]): [number, number][] => {
+  if (points.length <= 2) return points
+  const out: [number, number][] = []
+  let lastX = -Infinity
+  for (const p of points) {
+    if (p[0] - lastX >= 1.6) {
+      out.push(p)
+      lastX = p[0]
+    } else {
+      out[out.length - 1] = p
+    }
+  }
+  // 末点必须是真实终值；若它离上一列太近，就替换掉上一列，别留一截 0 像素宽的竖线
+  const tail = points[points.length - 1]!
+  if (out[out.length - 1] !== tail) {
+    if (out.length > 1 && tail[0] - out[out.length - 2]![0] < 1.6) out[out.length - 1] = tail
+    else out.push(tail)
+  }
+  return out
+}
+/** 首尾时间标签：同一天显示 HH:MM，跨天显示 MM-DD（recent 里是 "MM-DD HH:MM"） */
+const stampPair = (a: string | undefined, b: string | undefined): [string, string] => {
+  const x = a || ''
+  const y = b || ''
+  const same = !!x && !!y && x.slice(0, 5) === y.slice(0, 5)
+  const cut = (s: string) => (same && s.length >= 11 ? s.slice(6, 11) : s.slice(0, 5))
+  return [x ? cut(x) : '起', y ? cut(y) : '今']
+}
 
 const fmtNet = (v: number): string => (v > 0 ? `+${v}` : String(v))
 const fmtAvg = (v: number): string => {
@@ -63,10 +180,12 @@ export function AdvPage() {
       const rect = e.currentTarget.getBoundingClientRect()
       const x = (e.clientX - rect.left) * (W / Math.max(1, rect.width))
       const arr = chart === 'stats' ? (data.stats || []).map((r) => r[0]) : (data.pts || []).map((p) => p[0])
+      // 状态轨迹仍用整宽坐标系；收益两张图的绘图区左侧有刻度栏，取点要按 mx() 换算
+      const pos = chart === 'stats' ? sx : mx
       let best: number | null = null
       let bd = Infinity
       for (const i of arr) {
-        const dd = Math.abs(sx(i, data.n || 100) - x)
+        const dd = Math.abs(pos(i, data.n || 100) - x)
         if (dd < bd) {
           bd = dd
           best = i
@@ -209,6 +328,20 @@ export function AdvPage() {
 
   const winPct = d.n > 0 ? Math.round((d.win / d.n) * 100) : 0
 
+  /** 横轴两端标签：单日看闭区间时间（08:30 → 21:23）；
+   *  「全部」时 recent 只装了最后 800 条、覆盖不到整段，退回用日期区间（10-18 → 10-22） */
+  const xAxis: [string, string] = (() => {
+    const fullView = recent.length >= d.n
+    if (fullView && tm[1]) return stampPair(tm[1], tm[tx])
+    if (d.date === 'all') {
+      const ds = d.dates || []
+      const l = ds.length ? ds[ds.length - 1]!.slice(5) : '起'
+      const rgt = ds.length ? ds[0]!.slice(5) : '今'
+      return [l, rgt]
+    }
+    return [(d.date || '').slice(5), d.updated || '今']
+  })()
+
   return (
     <div className="adv-page">
       <header className="adv-hero">
@@ -303,97 +436,112 @@ export function AdvPage() {
         </div>
         <div className="adv-card adv-charts">
           <div className={'adv-tip' + (sel ? ' is-live' : '')} id="advTip" aria-live="polite">
-            {tip ?? <span className="adv-tip-hint">点按或拖动下方图表，查看当次读数</span>}
+            {tip ?? (
+              <span className="adv-tip-hint">
+                <i className="adv-tip-touch" aria-hidden="true" />
+                点按或拖动图表，查看当次读数
+              </span>
+            )}
           </div>
 
           <div className="adv-chart-block">
             <div className="adv-chart-cap">
-              <span>累计收益</span>
+              <span className="adv-chart-k">
+                <i className="adv-swatch cum" aria-hidden="true" />
+                累计收益
+              </span>
               <b className={d.net > 0 ? 'pos' : ''}>{fmtNet(d.net)}</b>
             </div>
             <svg className="adv-chart" viewBox={`0 0 ${W} ${H}`} aria-label="累计收益曲线" {...bind('cum', d)}>
               <defs>
                 <linearGradient id="advCumFill" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#F2C258" stopOpacity=".42" />
-                  <stop offset="100%" stopColor="#F2C258" stopOpacity="0" />
+                  <stop offset="0%" stopColor="#F2BE4E" stopOpacity=".34" />
+                  <stop offset="62%" stopColor="#F2BE4E" stopOpacity=".1" />
+                  <stop offset="100%" stopColor="#F2BE4E" stopOpacity="0" />
+                </linearGradient>
+                <linearGradient id="advCumLine" x1="0" y1="0" x2="1" y2="0">
+                  <stop offset="0%" stopColor="#F0BE52" />
+                  <stop offset="100%" stopColor="#D88606" />
                 </linearGradient>
               </defs>
-              {[0.2, 0.4, 0.6, 0.8].map((f) => (
-                <line
-                  key={f}
-                  x1={PAD}
-                  x2={W - PAD}
-                  y1={H * f}
-                  y2={H * f}
-                  stroke="rgba(196,166,116,.18)"
-                  strokeWidth="1"
-                />
-              ))}
-              <line
-                x1={PAD}
-                x2={W - PAD}
-                y1={MID}
-                y2={MID}
-                stroke="#DCC7A5"
-                strokeWidth="1"
-                strokeDasharray="4 5"
-              />
               {(() => {
                 const ys = cum.map((p) => p[1])
-                const mx = Math.max(10, ...ys.map((v) => Math.abs(v))) * 1.15
-                const ptsStr = cum
-                  .map((p) => `${sx(p[0], tx).toFixed(1)},${syMoney(p[1], mx).toFixed(1)}`)
-                  .join(' ')
-                const first = cum[0]
-                const last = cum[cum.length - 1]
+                const top = niceMax(Math.max(10, ...ys))
+                const lo = Math.min(0, ...ys) < 0 ? -niceMax(-Math.min(0, ...ys)) : 0
+                const y0 = syLinear(0, lo, top)
+                // 497 个点挤进 300px 会走成锯齿台阶：按像素列取「该列最后一个累计值」，
+                // 末端仍是真实终值，曲线顺滑且不改变读数
+                const ptsC = binLast(cum.map((p) => [mx(p[0], tx), syLinear(p[1], lo, top)] as [number, number]))
+                const first = ptsC[0]
+                const last = ptsC[ptsC.length - 1]
+                const [t0, t1] = xAxis
                 return (
                   <>
-                    {first && last && cum.length > 1 ? (
-                      <polygon
-                        points={`${sx(first[0], tx).toFixed(1)},${MID} ${ptsStr} ${sx(last[0], tx).toFixed(1)},${MID}`}
+                    {spacedTicks(lo < 0 ? [lo, 0, top / 2, top] : [top / 2, top], (v) => syLinear(v, lo, top)).map((v) => (
+                      <g key={v}>
+                        <line className="adv-grid" x1={PL} x2={PR} y1={syLinear(v, lo, top)} y2={syLinear(v, lo, top)} />
+                        <text className="adv-axis" x={PL - 6} y={syLinear(v, lo, top) + 3} textAnchor="end">
+                          {fmtTick(v)}
+                        </text>
+                      </g>
+                    ))}
+                    <line className="adv-base" x1={PL} x2={PR} y1={y0} y2={y0} />
+                    {lo >= 0 ? (
+                      <text className="adv-axis" x={PL - 6} y={y0 + 3} textAnchor="end">
+                        0
+                      </text>
+                    ) : null}
+                    {first && last && ptsC.length > 1 ? (
+                      <path
+                        d={`${monoPath(ptsC)} L ${last[0].toFixed(1)} ${y0.toFixed(1)} L ${first[0].toFixed(1)} ${y0.toFixed(1)} Z`}
                         fill="url(#advCumFill)"
                       />
                     ) : null}
-                    {cum.length > 1 ? (
-                      <polyline
-                        points={ptsStr}
+                    {ptsC.length > 1 ? (
+                      <path
+                        d={monoPath(ptsC)}
                         fill="none"
-                        stroke="#E7A21C"
-                        strokeWidth="2.4"
+                        stroke="url(#advCumLine)"
+                        strokeWidth="2.2"
                         strokeLinecap="round"
                         strokeLinejoin="round"
                       />
+                    ) : last ? (
+                      /* 只有一条记录时画一条水平线，否则整个图只剩一个孤零零的点 */
+                      <line
+                        x1={PL}
+                        x2={PR}
+                        y1={last[1]}
+                        y2={last[1]}
+                        stroke="url(#advCumLine)"
+                        strokeWidth="2.2"
+                        strokeLinecap="round"
+                      />
                     ) : null}
                     {last ? (
-                      <circle
-                        cx={sx(last[0], tx).toFixed(1)}
-                        cy={syMoney(last[1], mx).toFixed(1)}
-                        r="3.2"
-                        fill="#E7A21C"
-                        stroke="#FFF8E8"
-                        strokeWidth="1.6"
-                      />
+                      <>
+                        <circle cx={last[0]} cy={last[1]} r="7" fill="#E7A21C" opacity=".14" />
+                        <circle cx={last[0]} cy={last[1]} r="2.9" fill="#E7A21C" stroke="#FFF9EC" strokeWidth="1.6" />
+                      </>
                     ) : null}
                     {sel?.chart === 'cum' && sel.k in cumMap ? (
                       <>
-                        <line
-                          x1={sx(sel.k, tx).toFixed(1)}
-                          y1={PAD - 4}
-                          x2={sx(sel.k, tx).toFixed(1)}
-                          y2={H - PAD + 4}
-                          stroke="#B08A45"
-                          strokeWidth="1"
-                          strokeDasharray="3 3"
-                        />
+                        <line className="adv-cross" x1={mx(sel.k, tx)} x2={mx(sel.k, tx)} y1={PT - 2} y2={y0 + 2} />
                         <circle
-                          cx={sx(sel.k, tx).toFixed(1)}
-                          cy={syMoney(cumMap[sel.k] ?? 0, mx).toFixed(1)}
-                          r="4"
-                          fill="#E7A21C"
-                          stroke="#fff"
-                          strokeWidth="1.6"
+                          className="adv-focus"
+                          cx={mx(sel.k, tx)}
+                          cy={syLinear(cumMap[sel.k] ?? 0, lo, top)}
+                          r="4.2"
                         />
                       </>
+                    ) : null}
+                    <text className="adv-axis" x={PL} y={H - 4} textAnchor="start">
+                      {t0}
+                    </text>
+                    {tx > 1 ? (
+                      <text className="adv-axis" x={PR} y={H - 4} textAnchor="end">
+                        {t1}
+                      </text>
                     ) : null}
                   </>
                 )
@@ -403,75 +551,89 @@ export function AdvPage() {
 
           <div className="adv-chart-block">
             <div className="adv-chart-cap">
-              <span>单次收益</span>
+              <span className="adv-chart-k">
+                <i className="adv-swatch pts" aria-hidden="true" />
+                单次收益
+              </span>
               <b>平均 {fmtAvg(d.avg)}</b>
             </div>
             <svg className="adv-chart" viewBox={`0 0 ${W} ${H}`} aria-label="单次收益散点" {...bind('pts', d)}>
-              {[0.2, 0.4, 0.6, 0.8].map((f) => (
-                <line
-                  key={f}
-                  x1={PAD}
-                  x2={W - PAD}
-                  y1={H * f}
-                  y2={H * f}
-                  stroke="rgba(196,166,116,.18)"
-                  strokeWidth="1"
-                />
-              ))}
-              <line
-                x1={PAD}
-                x2={W - PAD}
-                y1={MID}
-                y2={MID}
-                stroke="#DCC7A5"
-                strokeWidth="1"
-                strokeDasharray="4 5"
-              />
               {(() => {
                 const ys = pts.map((p) => p[1])
-                const mx = Math.max(10, ...ys.map((v) => Math.abs(v))) * 1.2
-                const avgY = syMoney(d.avg, mx)
+                const top = niceMax(Math.max(10, ...ys))
+                const lo = Math.min(0, ...ys) < 0 ? -niceMax(-Math.min(0, ...ys)) : 0
+                const y0 = syScatter(0, lo, top)
+                const avgY = syScatter(d.avg, lo, top)
+                const zeros = pts.filter((p) => p[1] === 0)
+                const wins = pts.filter((p) => p[1] !== 0)
+                const [t0, t1] = xAxis
                 return (
                   <>
-                    <line
-                      x1={PAD}
-                      y1={avgY.toFixed(1)}
-                      x2={W - PAD}
-                      y2={avgY.toFixed(1)}
-                      stroke="#D9A12B"
-                      strokeWidth="1.2"
-                      strokeDasharray="5 4"
-                    />
-                    {pts.map((p) => (
-                      <circle
-                        key={p[0]}
-                        cx={sx(p[0], tx).toFixed(1)}
-                        cy={syMoney(p[1], mx).toFixed(1)}
-                        r="2.4"
-                        fill={p[1] > 0 ? '#07AAFC' : p[1] < 0 ? '#E05A4A' : '#D8C29A'}
-                        opacity=".85"
+                    {/* 开方刻度：只标收益档里的整数档位（20/50/100/200…），线性刻度会挤在底部 */}
+                    {spacedTicks(lo < 0 ? [lo, 0, ...scatterTicks(top)] : scatterTicks(top), (v) => syScatter(v, lo, top)).map((v) => (
+                      <g key={v}>
+                        <line className="adv-grid" x1={PL} x2={PR} y1={syScatter(v, lo, top)} y2={syScatter(v, lo, top)} />
+                        <text className="adv-axis" x={PL - 6} y={syScatter(v, lo, top) + 3} textAnchor="end">
+                          {fmtTick(v)}
+                        </text>
+                      </g>
+                    ))}
+                    <line className="adv-base" x1={PL} x2={PR} y1={y0} y2={y0} />
+                    {lo >= 0 ? (
+                      <text className="adv-axis" x={PL - 6} y={y0 + 3} textAnchor="end">
+                        0
+                      </text>
+                    ) : null}
+                    {/* 零收益：贴着基线的一排细刻度（318 个重叠圆点只会糊成一条毛毛虫） */}
+                    {zeros.map((p) => (
+                      <rect
+                        key={`z${p[0]}`}
+                        className="adv-zero-tick"
+                        x={mx(p[0], tx) - 0.5}
+                        y={y0 - 0.8}
+                        width="1"
+                        height="1.6"
+                        rx=".5"
                       />
                     ))}
+                    {wins.map((p) => {
+                      const x = mx(p[0], tx)
+                      const y = syScatter(p[1], lo, top)
+                      const cls = p[1] < 0 ? 'neg' : p[1] >= 100 ? 'big' : p[1] >= 50 ? 'mid' : 'small'
+                      return (
+                        <g key={p[0]} className={`adv-dot ${cls}`}>
+                          {/* 只有 50+ 的「大奖」落杆：20/25 两档是常态，几百根杆子会糊成草皮 */}
+                          {cls !== 'small' ? <line className="adv-stem" x1={x} x2={x} y1={y} y2={y0} /> : null}
+                          {cls === 'big' ? <circle className="adv-halo" cx={x} cy={y} r="4.2" /> : null}
+                          <circle cx={x} cy={y} r={cls === 'big' ? 2.8 : cls === 'mid' ? 2.1 : 1.6} />
+                        </g>
+                      )
+                    })}
+                    <line className="adv-avg" x1={PL} x2={PR} y1={avgY} y2={avgY} />
+                    <g className="adv-avg-chip" transform={`translate(${(PR - 27).toFixed(1)}, ${(avgY - 6.5).toFixed(1)})`}>
+                      <rect width="27" height="9.5" rx="4.75" />
+                      <text x="13.5" y="6.8" textAnchor="middle">
+                        均 {fmtAvg(d.avg)}
+                      </text>
+                    </g>
                     {sel?.chart === 'pts' && sel.k in dlMap ? (
                       <>
-                        <line
-                          x1={sx(sel.k, tx).toFixed(1)}
-                          y1={PAD - 4}
-                          x2={sx(sel.k, tx).toFixed(1)}
-                          y2={H - PAD + 4}
-                          stroke="#B08A45"
-                          strokeWidth="1"
-                          strokeDasharray="3 3"
-                        />
+                        <line className="adv-cross" x1={mx(sel.k, tx)} x2={mx(sel.k, tx)} y1={PT - 2} y2={y0 + 2} />
                         <circle
-                          cx={sx(sel.k, tx).toFixed(1)}
-                          cy={syMoney(dlMap[sel.k] ?? 0, mx).toFixed(1)}
-                          r="4"
-                          fill="#07AAFC"
-                          stroke="#fff"
-                          strokeWidth="1.6"
+                          className="adv-focus pts"
+                          cx={mx(sel.k, tx)}
+                          cy={syScatter(dlMap[sel.k] ?? 0, lo, top)}
+                          r="4.2"
                         />
                       </>
+                    ) : null}
+                    <text className="adv-axis" x={PL} y={H - 4} textAnchor="start">
+                      {t0}
+                    </text>
+                    {tx > 1 ? (
+                      <text className="adv-axis" x={PR} y={H - 4} textAnchor="end">
+                        {t1}
+                      </text>
                     ) : null}
                   </>
                 )
@@ -509,16 +671,8 @@ export function AdvPage() {
               </span>
             </div>
             <svg className="adv-chart" viewBox={`0 0 ${W} ${H}`} aria-label="状态轨迹" {...bind('stats', d)}>
-              {[0.25, 0.5, 0.75].map((f) => (
-                <line
-                  key={f}
-                  x1={PAD}
-                  x2={W - PAD}
-                  y1={H * f}
-                  y2={H * f}
-                  stroke="rgba(196,166,116,.18)"
-                  strokeWidth="1"
-                />
+              {[25, 50, 75].map((v) => (
+                <line key={v} className="adv-grid" x1={PAD} x2={W - PAD} y1={syState(v)} y2={syState(v)} />
               ))}
               <line
                 x1={PAD}
