@@ -255,14 +255,37 @@ export default function App() {
       scrollTop: scrollMemo.current[scrollKeyOf(from.page, from.grp, from.sub)] ?? 0,
     })
     setTransiting(true)
-    // animationend is the primary cleanup; this only covers cancelled/disabled animations.
+    // animationend 是主路径，这里的定时器只兜"动画被取消/浏览器没抛事件"。
+    // **时长必须按实际动画算**（原来固定 600ms）：宽屏是 200ms 淡出、手机是 320ms 横滑，
+    // 写死 600 的话万一 animationend 没来，离场页会多停 280~400ms —— 用户看到的就是
+    // "切完页旧页还赖着"（宽屏版尤其明显，因为两侧空白区会把它露出来）。
+    // 真正的时长在下面那个 leaveSlot 的 layoutEffect 里读 computed style 后重设。
     leaveTimer.current = window.setTimeout(finishTransition, 600)
     return () => window.clearTimeout(leaveTimer.current)
   }, [page, grp, sub, finishTransition])
 
   useLayoutEffect(() => {
-    if (leaving && leaveSlot.current) leaveSlot.current.scrollTop = leaving.scrollTop
-  }, [leaving])
+    if (!leaving || !leaveSlot.current) return
+    leaveSlot.current.scrollTop = leaving.scrollTop
+    // 按**实际**动画时长重设兜底定时器（见上面那条注释）。
+    // 动画被禁用（prefers-reduced-motion，或样式没命中）时 animationDuration 是 0s，
+    // 此时下一帧就收尾 —— 绝不能让离场页在屏幕上多停。
+    const el = leaveSlot.current
+    const raw = window.getComputedStyle(el).animationDuration || '0s'
+    // 可能是 "0.2s" / "200ms" / 逗号分隔的多个值，取最大的那个
+    const ms = Math.max(
+      0,
+      ...raw.split(',').map((s) => {
+        const t = s.trim()
+        const n = parseFloat(t)
+        if (!Number.isFinite(n)) return 0
+        return t.endsWith('ms') ? n : n * 1000
+      }),
+    )
+    window.clearTimeout(leaveTimer.current)
+    // +80ms 余量：animationend 正常会先到，这只是迟到的保险
+    leaveTimer.current = window.setTimeout(finishTransition, ms > 0 ? ms + 80 : 0)
+  }, [leaving, finishTransition])
 
   // 自动换背景要跟着「当前任务 + 进行中的活动」走
   // 场景键统一用**任务键**：pending 时后端给的就是键（pending_key），平时

@@ -98,7 +98,10 @@
         homeRect: rect(home), centerRect: rect(q('.v2-center')),
         idRect: rect(q('.idcard')), capsRect: rect(q('.caps')),
         capOverflow: Array.from(sec.querySelectorAll('.caps-row'), (e) => e.scrollWidth - e.clientWidth),
-        panelRect: rect(panel), deckRect: rect(q('.deck')),
+        panelRect: rect(panel), seatRect: rect(q('.v2-seat')),
+        deckRect: rect(q('.deck')),
+        drawerRect: rect(q('.drawer')),
+        listContentH: tasks ? Math.max(...Array.from(tasks.children, (e) => e.getBoundingClientRect().height)) : null,
         funcRect: rect(q('.funcbar')), listRect,
         listLastVisible: !tasks || !last || (
           lastRect[1] >= listRect[1] - 1.5 &&

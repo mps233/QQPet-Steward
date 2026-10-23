@@ -16,6 +16,10 @@ main section[data-page='shot']:not([data-page='main']) {
     radial-gradient(120% 70% at 50% 0%, #FFF9EF 0%, rgba(255, 249, 239, 0) 62%),
     linear-gradient(180deg, #F8EEDC 0%, #F2E1C6 100%);
   padding-bottom: 0;
+  /* ⚠️ 显式 height:100% —— app.css 内页基础规则改成 height:auto 后，
+     这个页面的 .shotbody{flex:1} 需要父级有确定高度才能把舞台撑满一屏
+     （见本文件头第 1 条）。 */
+  height: 100%;
 }
 .shotpage {
   display: flex;
@@ -44,8 +48,15 @@ main section[data-page='shot']:not([data-page='main']) {
   position: relative;
   flex: 1;
   min-height: 0;
+  /* The stage is a flex item with a large-height child. Without an explicit
+     width, Chromium can let the child's scroll width participate in layout
+     (observed at 900px: 765px screen inside a 692px stage). */
+  width: 100%;
+  box-sizing: border-box;
   border-radius: 24px;
+  /* Keep the intentional ambient bleed inside the rounded stage. */
   overflow: hidden;
+  overflow: clip;
   isolation: isolate;
   background: radial-gradient(120% 80% at 50% 0%, #5a443c 0%, #2c201c 55%, #18110f 100%);
   box-shadow:
@@ -85,6 +96,14 @@ main section[data-page='shot']:not([data-page='main']) {
   position: absolute;
   inset: 0;
   z-index: 2;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  /* This is an interaction overlay, not a scroller. `clip` (unlike `hidden`)
+     cannot become a scroll container, so intrinsic image bounds never leak
+     into an inner scrollWidth. .shotstage still provides the rounded clip. */
+  overflow: visible;
+  overflow: clip;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -101,8 +120,14 @@ main section[data-page='shot']:not([data-page='main']) {
   display: block;
   width: auto;
   height: auto;
-  max-width: 100%;
-  max-height: 100%;
+  /* Use the content box explicitly (the parent has 12px padding). Leaving
+     max-* at 100% lets the image ratio participate in scrollWidth on
+     Chromium, even though the visible pixels are centered and inside. */
+  max-width: calc(100% - 24px);
+  max-height: calc(100% - 24px);
+  /* The screenshot is deliberately fit inside the stage; its intrinsic
+     dimensions must not create a scrollable width. */
+  contain: layout paint;
   object-fit: contain;
   border-radius: 16px;
   background: #0b0908;

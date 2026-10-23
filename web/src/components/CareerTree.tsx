@@ -144,6 +144,10 @@ function useCareerMetrics() {
       // 六边形与行高按标定比例联动（原机 69.1/120 = 0.5758）
       const nodeScale = row / m.row
 
+      // 画布宽：属性胶囊 / 层级列 / 标签左边距都按它的百分比算（CSS 里的 --ct-cw）。
+      // **必须写这里**（与三把尺子同源）：CSS 兜底是 100vw，而宽屏下 .ct-page 被
+      // 内页版心限到 --page-max(430)，用 vw 会让属性条比矩阵宽出一大截。
+      el.style.setProperty('--ct-cw', `${w.toFixed(2)}px`)
       el.style.setProperty('--ct-col', `${m.col.toFixed(2)}px`)
       el.style.setProperty('--ct-node', `${(m.node * nodeScale).toFixed(2)}px`)
       el.style.setProperty('--ct-row', `${row.toFixed(2)}px`)

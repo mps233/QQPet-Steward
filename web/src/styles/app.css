@@ -39,6 +39,15 @@
   /* 冒险/职业页明细行的日期列宽（窄屏由 @media(max-width:360px) 覆写）。
      见 .advlist .ai 处的说明 —— 这里是与断点共享的**唯一**定义点。 */
   --adv-date-w:126px;
+  /* 版心宽度（唯一真源）：总览 V2 与**所有内页**共用。
+     宽屏（平板/桌面）不放大控件（--u 恒 1px），只把内容收进这条版心居中 ——
+     否则 1440 宽下设置页的表单行会拉到 1416px、标签与控件相隔 1400px。
+     总览 V2 原来自己写死 430，现在改读这个变量。 */
+  --page-max:430px;
+  /* Desktop web view content width. The phone layout keeps its original
+     360px stage; medium windows use the extra room so the task card is not a
+     wide glass shell around a narrow 207px column. */
+  --desktop-page-max:720px;
   /* 由上面几个值推出后续纵坐标（不要再手写数字，否则改了间距就对不上）：
      胶囊区顶 = 资料卡顶 + 资料卡高 + 间距
      任务面板顶 = 胶囊区顶 + 胶囊行高 + 间距 + 胶囊行高 + 间距 */
@@ -205,6 +214,11 @@ main .page-slot{
   position:absolute;inset:0;            /* ← inset 锁高度，禁用 relative 替代 */
   overflow-y:auto;overflow-x:hidden;
   overscroll-behavior:none;will-change:transform;
+  /* 转场位移基准：**手机 = 整屏滑，宽屏 = 一格版心宽**（见上面转场那段的说明）。
+     这里刻意用 `100vw` 而不是 `100%`：slot 是 `inset:0`，两者数值相同，
+     但 `--slide-w` 会被 keyframes 里的子元素继承，`vw` 不会因元素宽度变化而漂。
+     min() 取小者 —— 手机上 vw ≈ 版心，行为与原来的 100% 一致。 */
+  --slide-w:min(100vw,calc(var(--page-max) * 1.1));
 }
 main section[data-page]{min-height:100%}  /* .home 与内页共用（内页另有背景色覆盖） */
 
@@ -228,8 +242,19 @@ main section[data-page]{min-height:100%}  /* .home 与内页共用（内页另�
 
 /* ---- 页面级转场：iOS 那种（前后两页同时在场，旧页往左让、新页从右推入）----
    不是单页滑入 —— 单页那种旧页会瞬间消失，看着不像原生。
-   四个 keyframes = 进入/离开 × 前进/返回：前进时新页从右进、旧页往左退 30%；
+   四个 keyframes = 进入/离开 × 前进/返回：前进时新页从右进、旧页往左退；
    返回时反过来。缓动 cubic-bezier(.32,.72,0,1) 是 iOS 转场的味道。
+
+   ⚠️ **位移量不能写百分比**（2026-10-20 用户实报"旧页停在左侧空白区好几秒"）：
+   transform 的百分比相对**元素自身宽度**，而 `.page-slot` 是 `inset:0`（= 整个视口）。
+   手机上 30% 是 117px 还看不出来；1440 宽的桌面上就是 **432px** ——
+   旧页那一列（宽 430、居中在 x505）被推到 x73，而新页只有中间 430 宽是有背景的
+   （slot 本身透明），左侧那 432px 正好把旧页露出来，看着像"切完页它还赖在左边"。
+   所以位移改走 `--slide-w`：**跟随版心**而不是视口。
+     · 手机（视口 < 版心）：100% → 仍是整屏滑，与原来一致；
+     · 宽屏：版心的 1.1 倍（≈473px），刚好一格多一点，新旧页始终在同一列附近。
+   另加**离场淡出**：只有位移的话，旧页只要没被新页完全盖住就会露出来（上面就是这个），
+   淡出到 0 之后无论位置如何都不会被看见 —— 这也是原生 iOS push 的观感。
    注意：动画期间容器上有 transform，会让内部的 position:fixed 子孙（#bgSheet、
    #liveToast）暂时相对它定位 —— 只在切页那 320ms 内存在，期间不会去开面板，
    所以没影响；但别把这套挂到常驻容器上。 */
@@ -247,17 +272,48 @@ main section[data-page]{min-height:100%}  /* .home 与内页共用（内页另�
 .page-enter{z-index:2}
 .page-leave{z-index:1;pointer-events:none}
 .page-leave-back{z-index:3}
-@keyframes qp-enter-fwd{from{transform:translateX(100%)}to{transform:translateX(0)}}
-@keyframes qp-leave-fwd{from{transform:translateX(0)}to{transform:translateX(-30%)}}
-@keyframes qp-enter-back{from{transform:translateX(-30%)}to{transform:translateX(0)}}
-@keyframes qp-leave-back{from{transform:translateX(0)}to{transform:translateX(100%)}}
+/* ⚠️ 这里**不要**给 `.page-slot` 铺底色来"盖住"离场页：
+   总览页的房间背景图挂在 `html` 上（`.v2-home` 自己是透明的），
+   一旦给 slot 一层纯色，房间背景会被整片盖掉。
+   离场页之所以会露在两侧空白区，根因是位移量按视口算（见上面那段），
+   解法是"位移跟版心 + 离场淡出"，不是遮挡。 */
+/* 手机：整屏横滑 + 离场淡出（位移用 --slide-w，见 .page-slot 处）。
+   离场必须淡出 —— 否则只要它没被新页完全盖住就会露出来一份残影。 */
+@keyframes qp-enter-fwd{from{transform:translateX(var(--slide-w));opacity:1}to{transform:translateX(0);opacity:1}}
+@keyframes qp-leave-fwd{from{transform:translateX(0);opacity:1}to{transform:translateX(calc(var(--slide-w) * -0.35));opacity:0}}
+@keyframes qp-enter-back{from{transform:translateX(calc(var(--slide-w) * -0.35));opacity:1}to{transform:translateX(0);opacity:1}}
+@keyframes qp-leave-back{from{transform:translateX(0);opacity:1}to{transform:translateX(var(--slide-w));opacity:0}}
 /* Keep both endpoints until cleanup so an outgoing page cannot snap back underneath the overview. */
 .page-enter-fwd{animation:qp-enter-fwd 320ms cubic-bezier(.32,.72,0,1) both}
 .page-leave-fwd{animation:qp-leave-fwd 320ms cubic-bezier(.32,.72,0,1) both}
 .page-enter-back{animation:qp-enter-back 320ms cubic-bezier(.32,.72,0,1) both}
 .page-leave-back{animation:qp-leave-back 320ms cubic-bezier(.32,.72,0,1) both}
+/* ---------- 宽屏（≥640px）：只做淡入淡出，不横滑 ----------
+   原因：内容被 --page-max 收进中间的 430 宽一列，左右都是空背景 ——
+   横滑时旧页会被推到这个空白区、且新页只有中间一列有内容盖不住它，
+   于是"切完页旧页还赖在左边"（2026-10-20 用户实报）。
+   宽屏本来也没有"前后页"的空间感，交叉淡入更接近桌面/原生的观感。
+   同名 @keyframes 在这里重定义 → 后写的胜出（media 命中时生效），
+   `.page-*-fwd/back` 那几条 animation 声明不用改。 */
+@media (min-width:640px){
+  @keyframes qp-enter-fwd{from{opacity:0}to{opacity:1}}
+  @keyframes qp-leave-fwd{from{opacity:1}to{opacity:0}}
+  @keyframes qp-enter-back{from{opacity:0}to{opacity:1}}
+  @keyframes qp-leave-back{from{opacity:1}to{opacity:0}}
+  .page-enter-fwd,.page-leave-fwd,.page-enter-back,.page-leave-back{
+    animation-duration:200ms;
+  }
+}
 @media (prefers-reduced-motion: reduce){
   .page-enter-fwd,.page-leave-fwd,.page-enter-back,.page-leave-back{animation:none}
+  /* 原来只关了页面转场，其余动画/过渡照放 —— 系统里开了"减弱动态效果"的人
+     仍然会看到卡片展开、按钮缩放、toast 滑入。这里一并压掉（不影响功能）。 */
+  *,*::before,*::after{
+    animation-duration:.001ms !important;
+    animation-iteration-count:1 !important;
+    transition-duration:.001ms !important;
+    scroll-behavior:auto !important;
+  }
 }
 
 .home{
@@ -298,15 +354,22 @@ main section[data-page]{min-height:100%}  /* .home 与内页共用（内页另�
 
    ⚠ 不能用的场景（会互相抢事件或热区被裁）：
      ① 祖先有 overflow:hidden 且元素紧贴边缘（热区会被裁掉）；
-     ② 相邻可点元素的间距 < 44px（热区重叠，先点到的赢）——
-        例如 .funcbar 里的 .fab（间距 20u≈22px），那里改用了别的办法；
+     ② 相邻可点元素的间距 < 44px（热区重叠，先点到的赢）；
      ③ 元素本身非 position:relative（会改变包含块）。
+
+   ⚠️ **`.mcb` 已从这份名单里移出**（2026-10-20 实测）：任务行距只有 28u（320 宽）
+   ~34px（390 宽），44px 热区必然上下各压进相邻行一半。实测在两行正中间取点做
+   elementFromPoint，命中的是**下一行**的勾选框 → 想点"这条"实际切了"下一条"，
+   在开关任务的场景里属于写错数据。
+   **改为"撑到 27u"**：19u 的方块在触摸上偏小，27u 既比视觉尺寸大一圈、
+   又严格小于最小行距（320 宽短屏分支行高 28u），不会压进相邻行。
+   改这里必须保证 27u < `.tasklist .mrow` 的实际行高（现为 28u / 34u）。
    已由 tools/layout-check.sh 的探针逐元素量测（见 docs/review/02-p0-触摸与可读性.md）。 */
-.idfold, .idring, .mcb, .sw, .minibtn, .navhead .backbtn{position:relative}
-.idfold::before, .idring::before, .mcb::before,
+.idfold, .idring, .sw, .minibtn, .navhead .backbtn{position:relative}
+.idfold::before, .idring::before,
 .sw::before, .minibtn::before, .navhead .backbtn::before{
   content:'';position:absolute;left:50%;top:50%;
-  transform:translate(-50%,-50%);
+  transform:translate(-50%,-50%);   /* 纯色块，不含文字 —— 不触发 iOS 糊字 */
   width:max(100%,44px);height:max(100%,44px);
   background:transparent;
 }
@@ -441,7 +504,12 @@ main section[data-page]{min-height:100%}  /* .home 与内页共用（内页另�
 #bgSheet.on{display:block}
 #bgSheet .bgmask{position:absolute;inset:0;background:rgba(0,0,0,.42)}
 #bgSheet .bgpanel{
-  position:absolute;left:0;right:0;bottom:0;max-height:76vh;
+  position:absolute;left:0;right:0;bottom:0;
+  /* 宽屏下不要满屏拉开：与内页同一版心居中（否则 1440 宽时缩略图铺满整屏）。 */
+  margin-left:auto;margin-right:auto;
+  max-width:calc(var(--page-max) + 2 * calc(var(--u) * 12));
+  max-height:76vh;
+  max-height:76dvh;   /* vh 在前、dvh 在后（全项目同一约定） */
   display:flex;flex-direction:column;
   padding:calc(var(--u) * 12) calc(var(--u) * 12)
           calc(var(--u) * 12 + env(safe-area-inset-bottom, 0px));
@@ -458,7 +526,14 @@ main section[data-page]{min-height:100%}  /* .home 与内页共用（内页另�
   padding:calc(var(--u) * 2) calc(var(--u) * 4);
 }
 #bgSheet .bggrid{
-  display:grid;grid-template-columns:repeat(3,minmax(0,1fr));
+  /* 列数按可用宽度自适应（原来写死 3 列）：缩略图是 aspect-ratio:15/32 的竖图，
+     固定 3 列在 1440 宽下每张被拉到 465×991 —— 比整个面板还高，一屏只能看一张。
+     按 96u 最小宽度自动增列后：320 宽 3 列、430 宽 4 列、1440 宽 12 列。
+     面板本身仍限宽（见 .bgpanel 的 max-width）。 */
+  /* 最小列宽 88u：320 宽时内容盒 290 → (290-16)/3 = 91px 刚好 3 列（与原来写死的 3 列一致），
+     430 宽 → 4 列；平板/桌面面板限宽后仍是 4 列。
+     取 96u 时 320 会掉到 2 列、每张 141px，比原设计臃肿。 */
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(calc(var(--u) * 88),1fr));
   gap:calc(var(--u) * 8);overflow-y:auto;overscroll-behavior:none;
   /* 选中态是给缩略图**向外**画一圈 box-shadow（见下面的 .bgtile.on），左右各扩 2u。
      容器不给内边距的话，最左列的框会被左边裁掉、最右列的被右边裁掉 ——
@@ -670,7 +745,25 @@ main section[data-page]{min-height:100%}  /* .home 与内页共用（内页另�
      "平整压暗"的观感不一致（用户要求两边材质一样）。右圆钮也没有这层高光。 */
   z-index:0;
 }
-/* 文字层：占满胶囊体区域，水平+垂直居中（底部进度条由 .bar 绝对定位） */
+/* 图标底垫：官方图标直接压在黑色胶囊上，爪子/字母/钻石的透明孔会漏出胶囊底色，
+   而且这三个的透明内容比圆形图标矮，六个图标看着大小不一。统一垫一枚 23dp
+   奶油圆（与页面 --card 同色系），把孔填平、外轮廓拉齐成同一套徽章。
+   23 而不是 22：圆盘与胶囊行高齐平，外圈留给进度环（.cring），
+   环才不会压到罗盘银边/饼干外沿这些铺满圆盘的图标上。
+   只作用于 .caps 里的数据胶囊，别影响缩略图那条同名的 .cap。 */
+.caps .cap::after{
+  content:"";position:absolute;
+  /* top 用 0 而不是 50% + translateY(-50%)：胶囊高也是 23u，两者本来就同高；
+     50% 平移在非整数行高下会被浏览器按半像素取整，圆垫相对图标偏半格
+     （实测 390 宽下圆垫比图标高约 .5px，六个徽章看着都没居中）。 */
+  left:calc(var(--u) * -1);top:0;
+  width:calc(var(--u) * 23);height:calc(var(--u) * 23);
+  border-radius:50%;z-index:1;pointer-events:none;
+  background:radial-gradient(circle closest-side at 50% 42%,
+    #FFFEF9 0%,#FFF9EA 58%,#F8EACA 86%,#F3E2BE 100%);
+  box-shadow:0 calc(var(--u) * .5) calc(var(--u) * 1.1) rgba(16,10,0,.16);
+}
+/* 文字层：占满胶囊体区域，水平+垂直居中（进度环 .cring 绝对定位在图标外圈） */
 .cap .capbody{
   position:relative;z-index:1;
   flex:1;min-width:0;height:100%;
@@ -682,12 +775,14 @@ main section[data-page]{min-height:100%}  /* .home 与内页共用（内页另�
 .cap .cico{
   width:calc(var(--u) * 23);height:calc(var(--u) * 23);
   flex:none;position:relative;z-index:2;object-fit:contain;
-  /* 图标圆心 与 胶囊圆头圆心 对齐：
-       胶囊高 20dp（半径 10），left=0 -> 圆头圆心在 10dp
-       图标直径 23dp -> margin-left = 10 - 23/2 = -1.5dp
-     这样图标正好把胶囊左端的圆头完全盖住。 */
-  margin-left:calc(var(--u) * -1.5);
+  /* 左缘与奶油圆垫（.caps .cap::after，left -1u）对齐：图标、圆垫、进度环
+     三者同一条左边线，圆心自然重合。原先 -1.5u 是为了对齐胶囊圆头圆心，
+     但那会让图标相对圆垫左偏 .5u，徽章的奶油边一圈不等宽。 */
+  margin-left:calc(var(--u) * -1);
 }
+/* PK 字母和钻石的透明内容比圆形图标矮，等比缩一点，才和圆垫留出同样的呼吸位 */
+.caps .cap .cico-pk{transform:scale(.83)}
+.caps .cap .cico-gem{transform:scale(.92)}
 .cap .cval{
   font-weight:680;font-size:calc(var(--u) * 10.5);color:#fff;
   font-variant-numeric:tabular-nums;white-space:nowrap;
@@ -699,63 +794,42 @@ main section[data-page]{min-height:100%}  /* .home 与内页共用（内页另�
   white-space:nowrap;flex:0 1 auto;min-width:0;overflow:hidden;
   text-overflow:ellipsis;max-width:46%;line-height:1;
 }
-/* 胶囊内进度条（官方等级胶囊那条"橙色斜纹"）。
+/* 图标外圈进度环（踩踩 / PK / 冒险 / 学习+打工）。
 
-   **左右内缩必须与 .capbody 的 padding 一致**（left=padding-left=2dp，
-   right=padding-right=4dp）—— 这样进度条的水平中心**恒等于**文字中心，
-   不需要靠调数值去"凑"居中：
-     文字居中基准 = capbody 内容盒 = 23.5dp ~ 62.3dp（胶囊坐标），中心 42.9dp
-     条 = 同样的 23.5 ~ 62.3dp                      中心 42.9dp  ✅ 恒等
-   历史 bug：写的是 left:17dp / right:4dp，与 padding-left(2dp) 不一致，
-   于是条的范围是 38.5~62.3dp、中心 50.4dp —— **比文字中心偏右 7.5dp**，
-   且条只有 23.85dp 宽（比文字窄一截），看起来就是"贴在字下面的一小截、还歪"。
-   改成 2/4 后条宽 38.8dp（加长 63%），成为官方那种贯穿式轨道。
+   位置 = 奶油圆垫（.caps .cap::after，23dp）自己的外沿：left -1u、top 居中，
+   直径同为 23u，再用 radial-gradient 遮罩挖空中间 1.5u 的环带。环画在圆垫
+   **上**（z-index 3），24u 的图标内容（圆垫内径约 10u）不会越过环带内径
+   （10u），所以不会切到罗盘银边/饼干外沿。
 
-   **定位用 left+right（相对 .capbody），不要写固定 width** ——
-   .bar 的包含块是 .capbody，其宽度是**被左侧图标（.cico 23dp +
-   margin-left:-1.5dp）挤过之后**的剩余宽度，且各胶囊不等宽（实测
-   金币 66.3 / 踩踩 66.3 / 冒险 41.9 / 学习打工 74.0dp），写死 width 必然对不上：
-   曾改成 width:45.3dp，结果 left(17)+width(45.3)=62.3dp 超出右缘 17.5dp，
-   进度条直接画到胶囊外面。
+   **为什么不做胶囊内横条**：条的两端永远贴着胶囊的圆弧收口，短胶囊尤其
+   在 100% 时像"顶出去"了（用户两次截图指出）。环挂在图标徽章上，天然
+   不跟胶囊轮廓打架，也让两块文字区回到干净的居中。
 
-   **曾经的误判（记下来避免重犯）**：早期看到 track=33.1px、以为"应该是 62.9px"，
-   就断言比例错了（"9/10 只画出 47%"）。其实 62.9px 是**胶囊**宽不是轨道宽，
-   正确算法 fill/track = 29.8/33.1 = 90.0%，**本来就是对的**。
-   > 判断比例时，分母必须取**同一元素**的实测值，别拿父级的宽度去除。
-
-   轨道色是"深色凹槽"：官方实测 #9A8353（亮度 132）**深于**胶囊底（179），
-   是挖进去的槽；改前用 rgba(255,255,255,.30) 反而比胶囊底亮 +32，像贴白胶带。
-   **胶囊底换成黑色蒙版后同步改**：原来的暖褐凹槽 rgba(90,70,35,.38) 压在黑色胶囊上
-   等于看不见（0.2h/12h 那种近乎空条只剩一个橙点，"槽"整个消失）。
-   现在用**同一支黑色蒙版再叠一层**（rgba(0,0,0,.30)，与 --mask-black 同色相、
-   只加深不引色相）：合成后比胶囊底明显更暗，仍是"挖进去的槽"，
-   橙色填充压在它上面照样跳得出来。
-
-   填充用官方条纹素材：static/qp-icons/official/cap_bar_fg.png
-   （源：cdn_assets 的 pet_level_progress_fg.png，688×32，官方等级进度条前景图）。
-   素材左右边缘色一致可无缝平铺、上下自带渐变，故不需再叠渐变；
-   background-size:auto 100% 保证条高变化时条纹不被拉伸。 */
-.cap .bar{
-  position:absolute;z-index:1;
-  left:calc(var(--u) * 2);    /* = .capbody padding-left，见上：保证与文字同中心 */
-  right:calc(var(--u) * 4);   /* = .capbody padding-right */
-  bottom:calc(var(--u) * 3.5);
-  height:calc(var(--u) * 2.5);
-  margin:0;
-  background:rgba(0,0,0,.30);
-  border-radius:calc(var(--u) * 1.25);
-  overflow:hidden;
+   --p 由 TSX 以内联样式传入（0~100%）。渐变首尾同色（#F0911E），
+   满进度时 0%/100% 接缝不可见；轨道是暖棕半透明，压在奶油圆垫边缘
+   读作一圈浅槽。 */
+.cap .cring{
+  --p:0%;
+  position:absolute;z-index:3;pointer-events:none;
+  left:calc(var(--u) * -1);top:0;
+  width:calc(var(--u) * 23);height:calc(var(--u) * 23);
+  border-radius:50%;
+  background:conic-gradient(
+    #F0911E 0%,
+    #FFE09A calc(var(--p) * .4),
+    #FFB440 calc(var(--p) * .72),
+    #F0911E var(--p),
+    rgba(124,88,46,.22) var(--p));
+  -webkit-mask:radial-gradient(farthest-side,
+    transparent calc(100% - calc(var(--u) * 1.5)),
+    #000 calc(100% - calc(var(--u) * 1.5)));
+  mask:radial-gradient(farthest-side,
+    transparent calc(100% - calc(var(--u) * 1.5)),
+    #000 calc(100% - calc(var(--u) * 1.5)));
 }
-.cap .bar>i{
-  display:block;height:100%;width:0;
-  background-image:url('/qp-icons/official/cap_bar_fg.png');
-  background-repeat:repeat-x;
-  background-size:auto 100%;
-  background-position:left center;
-  border-radius:calc(var(--u) * 1.25);
-}
-/* 长数值单独收小，避免裁字 */
-.cap .cval#coins,.cap .cval#advTxt{font-size:calc(var(--u) * 9)}
+/* 长数值单独收小，避免裁字（冒险计数到三位数时 9u 正好顶出省略号） */
+.cap .cval#coins{font-size:calc(var(--u) * 9)}
+.cap .cval#advTxt{font-size:calc(var(--u) * 8.5)}
 .cap .cval#swTxt,.cap .cval#expTxt,.cap .cval#visitTxt,.cap .cval#pkTxt{font-size:calc(var(--u) * 9)}
 /* 金币的最后更新时刻在 67dp 胶囊里放不下（官方金币胶囊也只放数值），隐藏 */
 .cap .cunit#coinsAt{display:none}
@@ -783,8 +857,11 @@ main section[data-page]{min-height:100%}  /* .home 与内页共用（内页另�
 }
 /* 任务队列面板：占据场景层剩余空间，可滚动 */
 .qpanel{
+  position:relative;
   display:flex;flex-direction:column;
-  background:var(--panel-bg);              /* 材质见 :root 的 --panel-bg/--panel-blur */
+  /* 材质见 :root 的 --panel-bg/--panel-blur；顶部叠一层很淡的高光渐变，
+     让玻璃面有"受光"的方向感，不至于平得像一块色块。 */
+  background:linear-gradient(180deg,rgba(255,255,255,.20),rgba(255,255,255,0) 45%),var(--panel-bg);
   /* 圆角：14 -> 22dp（用户要求"更圆一点"）。选 22 是因为右边那两粒胶囊 .fb-group 是 25dp，
      同屏看着是一套；再大就变成胶囊形了。要调只改这个数（比如 18 更收敛 / 26 更圆）。
      .qpanel 有 overflow:hidden，圆角会直接把里面的任务行裁出来，不用给行另加圆角。 */
@@ -794,7 +871,9 @@ main section[data-page]{min-height:100%}  /* .home 与内页共用（内页另�
      视觉上内容才"住在卡片里"。改圆角时记得一起看这里（经验值 ≈ 圆角的 0.6~0.7 倍）。 */
   padding:calc(var(--u) * 14) calc(var(--u) * 16) calc(var(--u) * 12);
   backdrop-filter:var(--panel-blur);-webkit-backdrop-filter:var(--panel-blur);
-  box-shadow:var(--sh-1);
+  /* 细白边 + 内高光把面板从背景里"拎"出来；只靠半透明底时边缘会糊进房间图。 */
+  border:1px solid rgba(255,255,255,.34);
+  box-shadow:var(--sh-1),inset 0 1px 0 rgba(255,255,255,.55);
   overflow:hidden;
   z-index:2;                 /* 面板在下 */
 }
@@ -953,49 +1032,64 @@ main section[data-page]{min-height:100%}  /* .home 与内页共用（内页另�
 .subh{font-size:11px;color:var(--sub);margin:14px 0 4px;letter-spacing:.03em}
 .err{color:#b45309;font-size:12px}
 
-/* 数值瓦片 */
-.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
-.tile{
-  background:var(--card);border:1px solid var(--line);
-  border-radius:var(--r-lg);padding:10px 8px;text-align:center;
-}
-.tile .v{font-size:19px;font-weight:680;font-variant-numeric:tabular-nums;color:var(--strong)}
-.tile .k{font-size:11px;color:var(--sub);margin-top:2px}
+/* 数值瓦片（.grid / .tile）已随旧原生界面移除 —— 全仓零消费者，
+   连它那几档 @media 断点里对 .grid 的重复声明一起删掉了。
+   将来要恢复瓦片网格，直接写新的类名，别复活这两个（会和 .thumbs 的 grid 混淆）。 */
 
 /* 进度条（通用） */
 .bar{height:4px;background:var(--track);border-radius:2px;overflow:hidden;margin-top:7px}
 .bar>i{display:block;height:100%;background:var(--accent);width:0;border-radius:2px}
-/* 学习/打工胶囊的进度条：**单段**（学习+打工合计已用 / 合计停止点）。
-   原来是"学习橙 + 打工蓝"两段叠加，用户要求这个胶囊只显示总小时数、不再区分两者
-   → 两段合并成一段，直接用 .cap .bar>i 的官方橙色条纹素材（cap_bar_fg.png），
-   不再需要蓝色变体（static/qp-icons/official/cap_bar_fg_blue.png 保留作素材，
-   现已无人引用；若将来又要分段，可直接拿回来用——见 INTEGRATION.md 第六轮）。
-   两个阶段类名（bar-split / swBarSchool / swBarWork）已随之删除，别再生造。 */
+/* 学习/打工胶囊的进度：**单段**（学习+打工合计已用 / 合计停止点）。
+   原先是"学习橙 + 打工蓝"两段叠加，用户要求只显示总小时数、不再区分两者；
+   现在跟另外三颗一样走图标外圈进度环（.cring），胶囊里不再有横条。
+   蓝色变体 static/qp-icons/official/cap_bar_fg_blue.png 保留作素材（现已无人引用）；
+   两个阶段类名（bar-split / swBarSchool / swBarWork）已删除，别再生造。 */
 
 /* ---------- 7. 任务队列 ---------- */
 .qcard{border-radius:var(--r-xl)}
 .qhead{
   display:flex;align-items:center;
-  /* 左右内距 = 任务行的内距，标题左缘与行内文字左缘对齐（不然标题比行名靠左 10u，
-     整块看着是斜的）；与第一行之间留 8u，标题不再"顶着"列表。 */
-  padding:0 calc(var(--u) * 8);
-  min-height:calc(var(--u) * 16);
-  margin-bottom:calc(var(--u) * 8);
+  /* 左右内距 = 分组卡片内任务名的左缘（16u 面板内距 + 5u 卡片内距 + 7u 行内距 = 28u），
+     标题、分组标题、任务名三者一条竖线；与第一组之间留 7u。 */
+  padding:0 calc(var(--u) * 12);
+  min-height:calc(var(--u) * 18);
+  margin-bottom:calc(var(--u) * 7);
 }
-/* 面板标题（原状态行已移除，只留固定标题） */
+/* 面板标题：卡片级标题就该有卡片级的重量。
+   原来用小字 + .2em 字距 + 一条渐隐细线来"弱化"，结果字被拉散、线又像漏画的分隔符，
+   整行既不精致也没有信息层级（用户三次否掉）。现在只靠字号/字重/颜色分层：
+   标题用深棕 650，右侧只留待结算提示，不在文字后面接任何装饰线。 */
 .qtitle{
-  font-size:calc(var(--u) * 11.5);font-weight:600;
-  color:var(--sub);letter-spacing:.08em;
+  display:inline-flex;align-items:center;flex:none;
+  font-size:calc(var(--u) * 13);font-weight:650;
+  color:var(--strong);letter-spacing:.02em;white-space:nowrap;
 }
 /* 标题右侧的收尾队列提示（原为单独一行，现并到标题行） */
 .qpend{
   margin-left:auto;
-  font-size:calc(var(--u) * 10.5);
+  display:flex;align-items:center;
+  font-size:calc(var(--u) * 10);
   color:var(--sub);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-  max-width:60%;
+  max-width:62%;
 }
-.qpend .run{color:var(--accent);font-weight:600}
+.qpend .run{
+  display:inline-flex;align-items:center;gap:calc(var(--u) * 4);
+  padding:calc(var(--u) * 2) calc(var(--u) * 6.5);
+  border-radius:999px;
+  background:rgba(255,153,15,.13);
+  color:#8E5300;font-weight:650;font-size:calc(var(--u) * 9.5);
+}
+.qpend .run::before{
+  content:"";flex:none;
+  width:calc(var(--u) * 4.5);height:calc(var(--u) * 4.5);
+  border-radius:50%;background:var(--accent);
+  animation:qp-live 1.8s ease-in-out infinite;
+}
+@keyframes qp-live{
+  0%,100%{opacity:1}
+  50%{opacity:.35}
+}
 .qgrp{font-size:10.5px;color:var(--sub);letter-spacing:.06em;margin:10px 0 2px}
 /* 任务列表：任务多时**自己滚**，不再撑高 .scene（内层滚动区按既有约定用
    overscroll-behavior:none 防 iOS 回弹）。min-height:0 是让它在 flex 列里
@@ -1032,66 +1126,105 @@ main section[data-page]{min-height:100%}  /* .home 与内页共用（内页另�
 .tasklist::-webkit-scrollbar-track{background:transparent}
 .tasklist::-webkit-scrollbar-thumb{background:rgba(150,110,60,.26);border-radius:999px}
 .tasklist::-webkit-scrollbar-thumb:hover{background:rgba(150,110,60,.42)}
+/* 任务行：不再画整行分隔线。分组是一张内嵌的浅色小卡片，行与行之间只用
+   一条两端缩进、几乎看不见的发丝线分隔；高亮行也不再画边框/左侧竖条。 */
 .tasklist .mrow{
-  display:flex;gap:calc(var(--u) * 6);
-  padding:calc(var(--u) * 7.5) calc(var(--u) * 8);   /* 左右 8u：与标题行同一左缘（标题那侧也跟着调） */
-  align-items:center;border-radius:calc(var(--u) * 10);
-  /* 任务行分隔线：原来是 1px 实线 var(--line)(#EFE3CF) 通到卡片左右两边，压在毛玻璃上
-     又硬又脏（用户："分隔线太丑了"）。改成 **1px 两端渐隐的发丝线**：用背景渐变画
-     （不是 border），两端各留 10% 淡出、颜色压到 13% 透明 —— 跟玻璃面板一个调子。
-     调法：想更弱把 .13 调小（.08 几乎看不见）/ 想更清楚调大（.2 偏明显）；
-     想彻底不要线就说一声，把 background-image 整行去掉即可（靠行距区分）。 */
-  background-image:linear-gradient(90deg,
-      rgba(120,85,30,0) 0%,
-      rgba(120,85,30,.11) 8%,
-      rgba(120,85,30,.11) 92%,
-      rgba(120,85,30,0) 100%);
-  background-size:100% 1px;
-  background-repeat:no-repeat;
-  background-position:left top;
+  position:relative;z-index:0;
+  display:flex;align-items:center;gap:calc(var(--u) * 7);
+  padding:calc(var(--u) * 6.5) calc(var(--u) * 7);
+  border-radius:calc(var(--u) * 10);
 }
-.tasklist .mrow:first-child,.mrow:first-child{border-top:0;background-image:none}
-/* 任务分组标题（日常轮巡 / 任务顺序）：小字 + 一条极淡的发丝线 */
-.tghd{display:flex;align-items:center;gap:calc(var(--u)*6);
-      padding:calc(var(--u)*9) calc(var(--u)*2) calc(var(--u)*3);
-      font-size:calc(var(--u)*9.5);font-weight:600;color:var(--sub)}
-.tghd:first-child{padding-top:calc(var(--u)*2)}
-.tghd i{flex:1;height:1px;background:currentColor;opacity:.16}
-.tghint{font-weight:400;font-size:calc(var(--u)*9);opacity:.72;white-space:nowrap}
+.trows .mrow + .mrow::after{
+  content:"";position:absolute;left:calc(var(--u) * 7);right:calc(var(--u) * 7);top:0;
+  height:1px;pointer-events:none;
+  background:linear-gradient(90deg,
+    rgba(120,85,30,0) 0%,rgba(120,85,30,.09) 14%,
+    rgba(120,85,30,.09) 86%,rgba(120,85,30,0) 100%);
+}
+.trows .mrow.run::after{display:none}
+/* 任务分组：一张轻量内嵌卡片（浅白玻璃 + 14u 圆角），标题在卡片顶部。
+   用"分组卡片"替代原来的横线/竖线分区——结构一眼可见，又不需要任何线条装饰。 */
+.tgroup{
+  padding:calc(var(--u) * 1) calc(var(--u) * 5) calc(var(--u) * 4);
+  border-radius:calc(var(--u) * 14);
+  background:linear-gradient(180deg,rgba(255,255,255,.30),rgba(255,255,255,.16));
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.24);
+}
+.tgroup + .tgroup{margin-top:calc(var(--u) * 9)}
+.tghd{
+  display:flex;align-items:center;gap:calc(var(--u) * 6);
+  padding:calc(var(--u) * 7) calc(var(--u) * 7) calc(var(--u) * 3);
+  font-size:calc(var(--u) * 9);font-weight:650;color:var(--sub);
+  letter-spacing:.09em;
+}
+.tghint{
+  margin-left:auto;font-weight:500;font-size:calc(var(--u) * 8.5);
+  opacity:.5;white-space:nowrap;letter-spacing:.04em;
+}
 /* 拖动中的任务行：抬高 + 阴影、跟手；拖拽期间列表禁掉滚动手势 */
 .mrow.dragging{position:relative;z-index:9;opacity:.94;border-radius:calc(var(--u)*10);
                box-shadow:0 8px 22px rgba(0,0,0,.22)}
 #taskList.dragging-list{touch-action:none;-webkit-user-select:none;user-select:none}
-#torderToast{position:fixed;left:50%;bottom:calc(var(--u)*40);transform:translate(-50%,10px);
+/* 水平居中**不用 transform**：iOS PWA 上带 transform 的元素会被提升成合成层，
+   文字按低分辨率栅格化而发糊（见 FRONTEND_PITFALLS 第三节；#sceneToast / .navtitle /
+   .ct-title / .livetoast 都已改掉，这条是最后一个漏网的）。
+   居中改 left:0/right:0 + margin:auto；入场位移改用 bottom（不建合成层）。 */
+#torderToast{position:fixed;left:0;right:0;margin-left:auto;margin-right:auto;width:max-content;
+  bottom:calc(var(--u)*40);
   background:rgba(0,0,0,.82);color:#fff;font-size:calc(var(--u)*12);
   padding:calc(var(--u)*8) calc(var(--u)*15);border-radius:calc(var(--u)*18);
-  opacity:0;pointer-events:none;transition:opacity .18s,transform .18s;z-index:99}
-#torderToast.on{opacity:1;transform:translate(-50%,0)}
+  opacity:0;pointer-events:none;transition:opacity .18s,bottom .18s;z-index:99}
+#torderToast.on{opacity:1;bottom:calc(var(--u)*50)}
+/* 开关命中区：**只纵向撑满行高**（视觉是 25×15u 的小开关）。
+   为什么不用 44×44：任务行距实测 24.5u（320 宽短屏）/ 26.5u（矮屏）/ 30.5u（基础），
+   44 会上下各压进相邻行一半 —— 在两行之间取点命中的是**下一行**的开关，
+   想点"这条"实际切了"下一条"（开关任务的场景里就是写错数据）。
+   为什么横向也不扩：开关右侧紧邻 `.mdet` 状态文字，扩出去点文字也会触发开关。
+   所以纵向撑满（行高 − 4u），横向保持原宽。高度由 --mcb-hit-h 跟着断点走，
+   三个断点里的取值 = 该断点行高 − 4u（26/22/20 对应行高 30.5/26.5/24.5），
+   中缝固定留 4u，中点稳稳落在"行"上而不是相邻开关。 */
+.tasklist .mcb::before{
+  content:'';position:absolute;left:0;right:0;top:50%;
+  transform:translateY(-50%);   /* 纯色块，不含文字 */
+  height:var(--mcb-hit-h,calc(var(--u) * 26));
+  background:transparent;
+}
 .mcb{
-  width:calc(var(--u) * 19);height:calc(var(--u) * 19);
-  border-radius:calc(var(--u) * 6);background:rgba(0,0,0,.10);
+  width:calc(var(--u) * 25);height:calc(var(--u) * 15);
+  box-sizing:border-box;border-radius:999px;
+  border:1px solid rgba(120,85,30,.16);
+  background:rgba(120,85,30,.09);
+  box-shadow:inset 0 1px 2px rgba(120,85,30,.07);
   flex:none;cursor:pointer;position:relative;user-select:none;
+  transition:background .18s,border-color .18s,box-shadow .18s;
   /* 不用再写 margin-left：行内已有 gap，之前 gap+margins 双份间距白吃 14u 宽度
      （对象名"喵帕斯～"就差这 3u 被省略号截掉） */
 }
-.mcb.on{background:var(--accent)}
-.mcb.on::after{
-  content:"✓";position:absolute;inset:0;display:flex;align-items:center;
-  justify-content:center;color:#fff;font-size:13px;font-weight:700;
+.mcb::after{
+  content:"";position:absolute;left:calc(var(--u) * 1.5);top:50%;
+  width:calc(var(--u) * 11);height:calc(var(--u) * 11);border-radius:50%;
+  background:#FFFDF8;
+  box-shadow:0 1px 2px rgba(90,55,10,.26);
+  transform:translateY(-50%);
+  transition:transform .18s cubic-bezier(.2,.8,.3,1);
 }
+.mcb:active{filter:brightness(.97)}
+/* 选中态不再是"金方块 + 白勾"，而是一枚暖金小开关：轨道铺满渐变金、滑块走到右端。
+   语义上也更准确——这个控件是启用/禁用，不是勾选/多选。 */
+.mcb.on{
+  border-color:rgba(206,139,31,.34);
+  background:linear-gradient(180deg,#FFD88C,#F1AF3F);
+  box-shadow:0 1px 2px rgba(160,95,10,.12),inset 0 1px 0 rgba(255,255,255,.48);
+}
+.mcb.on::after{transform:translate(calc(var(--u) * 9),-50%)}
 /* 任务名：字号/字重跟着 u 走；禁用态只用"灰 + 常规字重"，**不再划删除线**
    （line-through 压在毛玻璃上又脏又像报错，用户实报"排版和样式有点丑"）。 */
-.mname{font-weight:600;font-size:calc(var(--u) * 12.5);color:var(--strong);white-space:nowrap}
-/* 选中/进行中的箭头：跟在任务名后（比名字小一号、橙色），不再占用右侧那一列 */
-.marrow{
-  flex:none;margin-left:calc(var(--u) * 5);
-  color:var(--accent);font-size:calc(var(--u) * 10);line-height:1;
-}
+.mname{font-weight:600;font-size:calc(var(--u) * 12.5);line-height:1.4;color:var(--strong);white-space:nowrap}
 /* 行右侧一簇：对象名 + 状态文字，整体贴右（与勾选框之间留 gap）。
    auto 边距放这里而不是 .mdet，是为了"有对象名"的行也能右对齐 */
 .mright{
   margin-left:auto;display:flex;align-items:center;
-  gap:calc(var(--u) * 6);min-width:0;flex:0 1 auto;
+  gap:calc(var(--u) * 5);min-width:0;flex:0 1 auto;
 }
 /* 任务名的"对象"小字（好友护理 → 喵帕斯～、雇佣好友 → 柠檬..）：
    浅色、小一号、超长省略 */
@@ -1101,48 +1234,75 @@ main section[data-page]{min-height:100%}  /* .home 与内页共用（内页另�
   min-width:calc(var(--u) * 33);   /* 再怎么挤也留 3 个字的位置，别缩成"喵…" */
 }
 .mname.off{color:var(--sub);font-weight:400}
-/* 行右侧状态：只显示**有意义**的几种（执行中 / 等待 HH:MM / 今日完成 / 今日结束 / 已禁用），
-   正常"可执行"不写字，免得每行尾巴都挂个词显得吵。 */
+/* 行右侧状态：做成小气泡。底色是半透明暖白玻璃，靠内高光让边缘"鼓"起来；
+   状态颜色只改字色，气泡本身保持轻，不回到"每条一个彩色胶囊"的老路。 */
 .mdet{
   flex:none;
-  font-size:calc(var(--u) * 10);color:var(--sub);
-  font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap;
+  display:inline-flex;align-items:center;justify-content:center;
+  gap:calc(var(--u) * 4);
+  height:calc(var(--u) * 17);
+  /* 上内距 1u = 把文字光学下移 .5u：这行字的墨迹中心比 line-box 高半像素，
+     纯 flex 居中看着会"浮"一点，补半像素才是真的居中。 */
+  padding:calc(var(--u) * 1) calc(var(--u) * 7.5) 0;
+  border-radius:999px;
+  border:1px solid rgba(255,255,255,.44);
+  background:linear-gradient(180deg,rgba(255,252,246,.78),rgba(255,247,233,.44));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.78),0 1px 2px rgba(90,55,10,.07);
+  color:#7C603C;font-size:calc(var(--u) * 9);font-weight:500;
+  line-height:1;letter-spacing:.01em;
+  font-variant-numeric:tabular-nums;white-space:nowrap;
 }
-.mdet .run{color:var(--accent);font-weight:600}
-.mdet .done{color:var(--ok);font-weight:600}
-.mdet .off-t{color:#b6a488}
-.ttag{
-  font-size:9px;padding:1px 5px;border-radius:4px;
-  border:1px solid var(--line);color:var(--sub);flex:none;margin-left:2px;
+.mdet.run{
+  color:#8E5300;font-weight:650;
+  border-color:rgba(255,220,160,.54);
+  background:linear-gradient(180deg,rgba(255,215,140,.64),rgba(255,188,80,.32));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.62),0 1px 2px rgba(160,95,10,.10);
 }
-/* 行态：活跃行（执行中/进行中）统一淡橙底 + 橙色名字。**上下留 1.5u 间隙**：
-   否则两条相邻的高亮（例如"学习 进行中" + "好友护理 执行中"）橙色底直接贴在一起，
-   看着像一整块（用户实报）。不要再加深浅分级 —— 用户明确说不需要。 */
+.mdet.run::before{
+  content:"";flex:none;
+  width:calc(var(--u) * 4.5);height:calc(var(--u) * 4.5);
+  border-radius:50%;background:var(--accent);
+  animation:qp-live 1.8s ease-in-out infinite;
+}
+/* 完成态是一颗绿色玻璃珠：勾用 SVG 画（字体的 ✓ 在 9px 下既歪又低，
+   怎么调 baseline 都差半像素，换成图形后可以做到几何居中）。 */
+.mdet.done{
+  width:calc(var(--u) * 17);height:calc(var(--u) * 17);
+  padding:0;border-radius:50%;
+  color:#6F8C49;
+  border-color:rgba(255,255,255,.42);
+  background:linear-gradient(180deg,rgba(158,184,116,.32),rgba(158,184,116,.14));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.66),0 1px 2px rgba(90,120,45,.08);
+}
+.mcheck{
+  width:calc(var(--u) * 9);height:calc(var(--u) * 9);
+  display:block;fill:none;stroke:currentColor;
+  stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;
+}
+.mdet.dead-t{
+  color:#967A5B;
+  border-color:rgba(255,255,255,.40);
+  background:linear-gradient(180deg,rgba(214,198,174,.34),rgba(214,198,174,.16));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.55);
+}
+.mdet.off-t{
+  color:#A28D70;
+  border-color:rgba(255,255,255,.34);
+  background:linear-gradient(180deg,rgba(214,198,174,.24),rgba(214,198,174,.10));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.46);
+}
+@media (prefers-reduced-motion:reduce){
+  .qpend .run::before,.mdet.run::before{animation:none}
+}
+/* 执行中/待结算行：只铺一层很淡的暖橙底（无边框、无左侧竖条），
+   任务名转成深金棕。整行是个安静的高亮，不再抢走列表的视觉重心。 */
 .mrow.run{
-  /* 高亮药丸由 **::before 伪元素**画（见下）：不再动盒模型，行高和普通行完全一致。
-     走过的两条弯路（都别再回去）：
-       ① background-size/position 内缩 —— 背景层仍被元素自身的 border-radius 裁切，
-          药丸上下沿撞上"属于整行"的圆角弧，圆角看着很奇怪（用户实报）；
-       ② 上下透明边框 + background-clip:padding-box —— 形状是对了，但浏览器把
-          `calc(var(--u)*2)` 的边框宽度取整成 2px（应为 2.78px），高亮行比普通行矮 1.1u。
-     **不要在这里写 background-image:none**（那会抹掉本行头顶的分隔线）。 */
-  background-color:transparent;
+  background:linear-gradient(90deg,rgba(255,153,15,.16),rgba(255,153,15,.035));
 }
-.tasklist .mrow{position:relative;z-index:0}   /* 给 ::before 定位 + 独立层叠上下文 */
-.mrow.run::before{
-  content:"";position:absolute;z-index:-1;     /* 在行背景之上、文字之下 */
-  left:0;right:0;
-  /* 顶部要多让 1px：本行的分隔线画在行顶部那 1px 里，不让的话上缝只剩 2u-1px，
-     手机 u=1 时就是"上缝 1px / 下缝 2px"——一眼就看出上下不对称（用户三次实报）。
-     让出 1px 后：橙色到上面那条线的**下沿** = 2u、到下一条线的**上沿** = 2u。 */
-  top:calc(var(--u) * 2 + 1px);bottom:calc(var(--u) * 2);
-  background:rgba(255,153,15,.14);
-  border-radius:calc(var(--u) * 8);            /* 自己的圆角，自洽 */
-}
-.mrow.run .mname{color:var(--accent);font-weight:650}
-.mrow.done,.mrow.dead{opacity:.72}
-.mrow.done .mname,.mrow.dead .mname{color:var(--sub);font-weight:400}
-.mrow.off{opacity:.62}
+.mrow.run .mname{color:#8E5300;font-weight:650}
+/* 完成/结束行不再整行降透明度：opacity 会把名字、状态、开关一起压灰，
+   在毛玻璃上显得又脏又糊（实测截图整块发灰）。只把任务名降为次级色即可。 */
+.mrow.done .mname,.mrow.dead .mname{color:var(--sub);font-weight:500}
 .tasklist .row{
   display:flex;justify-content:space-between;align-items:center;
   padding:8px 0;border-top:1px dashed var(--line);font-size:14px;
@@ -1239,9 +1399,19 @@ main section[data-page]{min-height:100%}  /* .home 与内页共用（内页另�
   border-top:1px solid #F0F0F2;vertical-align:top;
 }
 .form .mintbl td:first-child{white-space:nowrap;color:#1C1C1E}
+/* 凭据框（密码/文本，样式写在 JSX 内联里，没有 font-size 声明）——
+   浏览器对 input 的**默认**字号是 13.333px，iOS 聚焦时会因此放大视口。
+   内联样式不含 font-size，所以这里一条选择器就能定住，不用改 TSX。 */
+.form input[type=password]{
+  font-size:max(16px, calc(var(--u) * 14));
+}
 .form select,.form input[type=number],.form input[type=text]{
   border:0;background:transparent;color:#8A8A8E;
-  font-size:calc(var(--u) * 14);text-align:right;
+  /* **不能小于 16px**：iOS Safari 在聚焦字号 <16px 的输入框时会自动放大整个视口，
+     且不会自动缩回来（页面被卡在半放大状态）。原来写 14u=14px —— 每个用户都会踩。
+     viewport 里没写 user-scalable=no（那是可访问性反模式，也不被 iOS 尊重），
+     所以唯一的解法就是把控件字号抬到 16px。视觉上比标签（14px）略大，可接受。 */
+  font-size:max(16px, calc(var(--u) * 14));text-align:right;
   padding:calc(var(--u) * 4) 0;max-width:58%;
 }
 .form input[type=number]{width:calc(var(--u) * 70)}
@@ -1332,7 +1502,8 @@ main section[data-page]{min-height:100%}  /* .home 与内页共用（内页另�
   flex:1;min-width:calc(var(--u) * 110);
   border:1px solid #E8E8EC;border-radius:calc(var(--u) * 9);
   padding:calc(var(--u) * 7) calc(var(--u) * 11);
-  font-size:calc(var(--u) * 13);background:#F7F7F9;color:#1C1C1E;
+  /* ≥16px：iOS 聚焦 <16px 输入框会放大视口（见 .form 控件那条） */
+  font-size:max(16px, calc(var(--u) * 13));background:#F7F7F9;color:#1C1C1E;
   -webkit-appearance:none;
 }
 .logctl input:focus{outline:none;border-color:var(--accent);background:#fff}
@@ -1365,8 +1536,10 @@ pre#logbox{
   /* 白底深字（用户要求）—— 对比度约 15:1；等宽字体便于对齐时间戳 */
   /* 高度按可视区减去页头等固定占用；同样要扣掉顶部安全区（body 的 padding-top
      已经吃掉一块），否则日志框底部会伸到折叠线以下。顺序 vh 在前、dvh 在后。 */
-  height:calc(100vh - 320px - env(safe-area-inset-top, 0px));
-  height:calc(100dvh - 320px - env(safe-area-inset-top, 0px));
+  /* 366 = 320（页头等固定占用，历史调好的值）+ 46（常驻切换条）。
+     原来另有 `#logIndex pre#logbox{-366px}` 一条，但那个 id 不存在 → 从未生效。 */
+  height:calc(100vh - 366px - env(safe-area-inset-top, 0px));
+  height:calc(100dvh - 366px - env(safe-area-inset-top, 0px));
   min-height:calc(var(--u) * 220);
   overflow:auto;background:transparent;color:#1C1C1E;
   font:calc(var(--u) * 12.5)/1.75 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
@@ -1377,20 +1550,25 @@ pre#logbox{
 }
 /* 日志页顶部多了切换条（10u 上边距 + 按钮 ≈ 46px）：日志框高度要把它扣掉，
    否则最下面「异常截图」那张卡被挤到折叠线以下、标题只露半行（实测截图可见）。
-   320px 是切换条之前调好的固定占用，这里 -366px = 320 + 46。 */
-#logIndex pre#logbox{
-  height:calc(100vh - 366px - env(safe-area-inset-top, 0px));
-  height:calc(100dvh - 366px - env(safe-area-inset-top, 0px));
-}
+   320px 是切换条之前调好的固定占用，这里 -366px = 320 + 46。
+   ⚠️ 原来挂在 `#logIndex pre#logbox` 上，但 **`#logIndex` 这个 id 全仓没有消费者**
+   （旧原生界面的遗留）→ 那条从语法到上线从未生效，日志框一直按 -320px 算，
+   于是最下面的「异常截图」卡被挤到折叠线以下。**切换条现在两个子页都常驻**
+   （LogPage 的 #logSubtabs 无条件渲染），所以那个 46px 要一直扣 → 直接写进基规则。 */
 /* 异常截图缩略图 */
 .thumbs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
 .thumbs a{display:block;border:1px solid var(--line);border-radius:var(--r-sm);overflow:hidden;position:relative}
 .thumbs img{width:100%;display:block}
+/* 缩略图底部的时间戳条。⚠️ 类名 `.cap` 与顶部**数据胶囊**同名（历史遗留），
+   而那条 `.cap` 是 flex + 零 padding + height:23u —— 只覆盖一半会残留 flex 对齐，
+   所以这里必须显式改回 block 并清掉 .cap::before 那个胶囊体伪元素。 */
 .thumbs .cap{
+  display:block;
   position:absolute;left:0;right:0;bottom:0;height:auto;
-  background:rgba(33,29,24,.72);color:#fff;font-size:10px;
+  background:rgba(33,29,24,.72);color:#fff;font-size:11px;
   padding:2px 6px;text-align:center;
 }
+.thumbs .cap::before{content:none}
 
 /* ---------- 10.1 日志页·收益记录子页 ---------- */
 /* 切换条（实时日志 / 收益记录）：复用 .logctl 的控件观感，常驻在两个子页上方。
@@ -1447,7 +1625,11 @@ pre#logbox{
 
 /* ---------- 11. 冒险页 ---------- */
 .advchart{
-  width:100%;height:auto;display:block;margin:6px 0 0;
+  /* ⚠️ SVG 的 viewBox 是 340×84，`width:100%` + `height:auto` 会按比例**等比放大**：
+     版心 430 时高 106（正常），但内页一旦变宽（宽屏/横屏）它就跟着涨 ——
+     实测 1440×900 时 1388×342.9，整张图占了 2/5 屏高，波形与刻度全糊。
+     所以给高度上限：版心内仍按比例（min 取小者），超宽时封顶 96u。 */
+  width:100%;height:auto;max-height:calc(var(--u) * 96);display:block;margin:6px 0 0;
   border:1px solid var(--line);border-radius:var(--r-sm);
   background:#FFFDF8;cursor:crosshair;touch-action:pan-y;
 }
@@ -1459,7 +1641,11 @@ pre#logbox{
 }
 .advchips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 .advlist{
-  max-height:44vh;overflow:auto;margin-top:6px;
+  /* vh 在前、dvh 在后（全项目同一约定）：PWA 全屏时 dvh 才是真正的可视高，
+     只写 vh 的话浏览器 UI 收起/展开时列表高度会跳（旧版踩过，见 .home 的注释）。 */
+  max-height:44vh;
+  max-height:44dvh;
+  overflow:auto;margin-top:6px;
   border:1px solid var(--line);border-radius:var(--r-sm);
   background:#FFFDF8;overscroll-behavior:none;
 }
@@ -1530,7 +1716,8 @@ pre#logbox{
 .plinedit label{display:flex;flex-direction:column;gap:3px;font-size:11px;color:var(--sub)}
 .plinedit input{
   border:1px solid var(--line);border-radius:var(--r-sm);padding:6px;
-  font-size:14px;text-align:center;background:#FFFDF8;color:var(--text);width:100%;
+  /* ≥16px：iOS 聚焦 <16px 输入框会放大视口（见 .form 控件那条） */
+  font-size:16px;text-align:center;background:#FFFDF8;color:var(--text);width:100%;
 }
 .planeditrow{
   grid-column:span 3;display:flex;gap:10px;align-items:center;
@@ -1540,73 +1727,112 @@ pre#logbox{
 /* ---------- 13. 页脚 ---------- */
 
 /* ---------- 14. 响应式 ---------- */
-/* 窄屏（≤639px）：侧栏仍保留，收紧尺寸 */
-@media(max-width:639px){
-  /* 这里原来把任务行的内距/勾选框/字号覆盖成一套**写死的 px**（padding:8px 0 等），
-     而手机正好都 ≤639px ⇒ 覆盖永远生效：行内距变成 0、勾选框 18px、字号 13px，
-     跟卡片其它地方那套 --u 尺寸对不上（用户："排版很一般"）。现在尺寸统一走 u
-     （u 本身 = clientWidth/360，窄屏自然变小），这里只留"窄屏才需要"的两条。 */
-  .ttag{display:none}
-}
 /* 小屏（≤360px）：进一步收紧 */
 @media(max-width:360px){
-  .card{padding:10px 11px;border-radius:var(--r-lg)}
   .workline .big{font-size:20px}
-  .tile .v{font-size:17px}
-  .grid{gap:6px}
   /* 顶部三块间距一起收紧（仍保持三处等距）。
      不要再写成 .caps{gap:6px} —— 那只改胶囊两行的间距，
      资料卡→胶囊、胶囊→面板仍是 12，三处又不相等了。 */
   :root{--gap-top:10}
   .cap{padding:0 8px}
-  .cap .cval{font-size:12.5px}
   /* 日期列宽收窄（原因见 .advlist .ai 处）。**改为覆写变量，而不是再写一份
      .advlist .ai{width:...}** —— 后者就是历史上"改基规则没用"那个坑的成因。 */
   :root{--adv-date-w:112px}
   .form select,.form input[type=number],.form input[type=text]{max-width:52%}
   .form input[type=text]{width:126px}
+  /* V1（`?ui=v1` 绝对坐标版）的右列 x 写死 298u、功能栏 294u：
+     320 宽下右缘到 340/344，被 .home 的 overflow:hidden 裁掉一半（实测 rbtn
+     右缘 340 > 320）。V2 走 grid 不受影响。:nth-child(n) 是为了凑够
+     基规则 `.col-r .rbtn:nth-child(N)` 的 (0,3,0) 特异性。 */
+  .col-r .rbtn:nth-child(n){left:auto;right:calc(var(--u) * 18)}
+  .funcbar{left:auto;right:calc(var(--u) * 14)}
 }
-/* 平板/中窗（≥640px）：多列 */
 /* ---------- 短屏适配：任务列表与底栏重合 ----------
-   ⚠️ **判据必须看「宽高比」，不能只看屏高** —— 页面里所有纵向尺寸都是 `N × u`，
-   而 `u = 屏宽/360`，所以"够不够高"实际是比例问题。实测同样 700 高：
+   ⚠️ **判据必须是「视口绝对高度」，不是宽高比**（2026-10-20 逐档实测改）。
+   注释里原来的模型是 `u = 屏宽/360`（旧缩放时代），但 lib/stage.ts 的 computeUnit
+   现在**恒返回 1**，整个舞台是固定像素的（约 360×700），所以"放不放得下"只取决于
+   视口高度。两条 `min-aspect-ratio:360/700` / `360/620` 因此判反了：
 
-       360×700 → 功能栏底比底栏顶高 96px ✓
-       412×700 → 只有 9px（快压住）      430×700 → **低 21px，压住了** ❌
+       390×844 0.46 ✗   430×932 0.46 ✗   ← 竖屏手机该收紧却不收紧
+       320×568 0.56 ✓                     ← 该收紧，命中
+       768×1024 0.75 ✓  1440×900 1.60 ✓  ← 平板/桌面**误命中**：--gap-top 被从 12
+                                            压到 6、V1 的「画面」按钮被藏掉
+                                            （overview-v2.css 曾为此打 !important 补丁）
 
-   换算：不重合需要 `屏高 > 623.8u`，即 **屏高/屏宽 > 1.733**。
-   下面两档因此都用 `min-aspect-ratio`（写成 360/700 这种分数最直观：
-   等价于"在 360 宽的屏上，高度不足 700"）。
+   改成 max-height 后：320×568 / 360×640 / 844×390 命中；390×844 起的竖屏、
+   平板、桌面都不命中 —— 与"舞台真的放不下才收紧"一致。
    第一档**收紧纵向间距**，让内容真的变矮（不是锁高度藏起来）。 */
-@media (min-aspect-ratio:360/700){
+@media (max-height:700px){
   :root{--gap-top:8}   /* 顶部三处间隙一起收（这个变量一改，资料卡→胶囊→面板同步） */
   .qpanel{padding:calc(var(--u) * 10) calc(var(--u) * 16) calc(var(--u) * 8)}
-  .tasklist .mrow{padding:calc(var(--u) * 4.5) calc(var(--u) * 8)}
-  .tghd{padding:calc(var(--u) * 6) calc(var(--u) * 2) calc(var(--u) * 2)}
+  .tasklist .mrow{padding:calc(var(--u) * 4.5) calc(var(--u) * 7)}
+  .tgroup{padding:0 calc(var(--u) * 5) calc(var(--u) * 3)}
+  :root{--mcb-hit-h:calc(var(--u) * 22)}   /* 行高 26.5u → 热区 22，中缝 4u */
+  .tghd{padding:calc(var(--u) * 5) calc(var(--u) * 7) calc(var(--u) * 2)}
 }
-/* 更极端（如 430×700 这种偏扁的屏）：再收一档 + 隐藏功能栏的「画面」按钮。
-   同样按比例判定（等价于"360 宽的屏上高度不足 620"）。 */
-@media (min-aspect-ratio:360/620){
+/* 更极端（屏高 ≤620）：再收一档 + 隐藏功能栏的「画面」按钮。
+   功能栏两段竖排 = 140 + 20 + 70 = 230u，从 top 238.8u 起算 → 底端 468.8u；
+   .deck 顶 = 屏高 − 135。屏高 < 604 就开始压住，取 620 留余量。
+   隐藏后功能栏只剩「启动/停止」一组（140u），底端 378.8u —— 320×568 也放得下。
+   画面功能不受影响：右列第三个圆钮（手机图标）就是进画面的入口。 */
+@media (max-height:620px){
   :root{--gap-top:6}
-  .tasklist .mrow{padding:calc(var(--u) * 3.5) calc(var(--u) * 8)}
+  .tasklist .mrow{padding:calc(var(--u) * 3.5) calc(var(--u) * 7)}
+  :root{--mcb-hit-h:calc(var(--u) * 20)}   /* 行高 24.5u → 热区 20，中缝 4u */
+  /* 320×568 实测 .tasklist 还差 4px 才不内部滚：标题行下缝与两组间距各收一点 */
+  .qhead{margin-bottom:calc(var(--u) * 5)}
+  .tgroup + .tgroup{margin-top:calc(var(--u) * 6)}
   /* .scene 的高度上限与 .tasklist 的内部滚已在基础规则里（含 16u 缝），这里不再重复 */
-
-  /* 功能栏的「画面」按钮会压住底栏 —— 直接隐藏它（用户要求）。
-     判据同样是**比例**：不重合需要 `屏高 > 623.8u`，即 `屏高/屏宽 > 1.733`；
-     换算成 360 宽的屏就是"高度不足 624" → 这里取 620 留一点余量。
-     隐藏后功能栏只剩「启动/停止」一组，高度少 90u、底部上移到约 399u。
-     画面功能不受影响：右列第一个圆钮（指南针旁边那个）就是进画面的入口。 */
   .funcbar .fb-group:nth-child(2){display:none}
 }
-@media(min-width:640px){
-  .grid{grid-template-columns:repeat(6,minmax(0,1fr))}
-  .thumbs{grid-template-columns:repeat(4,minmax(0,1fr))}
+/* 视口窄于版心时，限宽规则会退化成"满宽 + 一圈阴影边框" —— 手机上是多余的边。
+   ⚠️ 这条**必须写在内页基础规则之后**（现在挪到了文件末尾靠后的位置）。
+   原本它写在 1786 行、而内页基础规则在 1940 行，特异性相同、后写的胜出，
+   于是这条被整条压掉 —— 手机上内页一直带着那圈 1px 描边 + 40px 投影，
+   长页面滚过第一屏时那道投影会横在内容中间（用户 2026-10-23 截图实报
+   「背景有截断」的一半原因就是它）。见文件末尾的同名规则。 */
+/* 缩略图按可用宽度自动增列，不再靠 640/920 两档写死列数
+   （那两档原来是三条逐字重复的规则，且 .grid 早已无消费者）。 */
+.thumbs{grid-template-columns:repeat(auto-fill,minmax(calc(var(--u) * 88),1fr))}
+
+/* ---------- 桌面窗口（Tauri 初始 inner size 520×900）----------
+   The app is not a 360px phone when it runs in a resizable desktop window.
+   Keep the phone rules as-is, but at desktop widths give the content a real
+   desktop column instead of showing a 207px content block inside a wide
+   translucent panel. The task card itself stays content-sized.
+
+   The threshold is width-only. There is deliberately no upper bound: once the
+   window is desktop-sized, dragging past 900px must not shrink the column
+   back to the 430px phone width. Height is handled separately below. */
+@media (min-width:480px) {
+  :root{--page-max:var(--desktop-page-max)}
 }
-/* 桌面（≥920px）：加宽版心 */
-@media(min-width:920px){
-  .grid{grid-template-columns:repeat(6,minmax(0,1fr))}
-  .thumbs{grid-template-columns:repeat(4,minmax(0,1fr))}
-  pre#logbox{height:58vh}
+
+/* Short desktop windows: reduce the fixed bottom deck and the drawer's type,
+   so the running status stays inside the window instead of being clipped by
+   the decorative arc. This deliberately keys on height, not width. */
+@media (min-width:480px) and (max-height:800px) {
+  .v2-home .v2-bottom .deck{
+    height:calc(var(--u) * 118);
+    border-radius:50% 50% 0 0 / calc(var(--u) * 38) calc(var(--u) * 38) 0 0;
+  }
+  .v2-bottom .deck .drawer{
+    top:calc(var(--u) * 8);
+    width:calc(var(--u) * 156);
+    max-width:calc(100% - calc(var(--u) * 32));
+  }
+  .v2-bottom .deck .drawer .dico{
+    width:calc(var(--u) * 34);height:calc(var(--u) * 36);
+  }
+  .v2-bottom .deck .drawer .dtitle{
+    font-size:calc(var(--u) * 12.5);
+  }
+  .v2-bottom .deck .drawer .dhint{
+    font-size:calc(var(--u) * 10);
+  }
+  .v2-bottom .deck .drawer .dsub{
+    font-size:calc(var(--u) * 8.5);
+  }
 }
 
 /* ---------- 15. 深色模式 ---------- */
@@ -1688,6 +1914,9 @@ section[data-page="set"]{
      与 .home 同一套写法，顺序同样是 vh 在前、dvh 在后。 */
   min-height:calc(100vh - env(safe-area-inset-top, 0px));
   min-height:calc(100dvh - env(safe-area-inset-top, 0px));
+  /* 显式 height:auto —— 设置页内容会超一屏（二级分组），
+     height:100% 会让底色只画第一屏、滚下去就断层（同日修的内页通用问题）。 */
+  height:auto;
   margin:0;padding:0 0 calc(var(--u) * 20);
   border:0;border-radius:0;box-shadow:none;
 }
@@ -1755,16 +1984,38 @@ section[data-page="set"] > h2{
    `section[data-page="set"]`）。这里一律用后代选择器。 */
 main section[data-page]:not([data-page="main"]){
   background:#F2F2F7;
-  /* 职业树页的 `.ct-page` 用 height:100% 继承这里的高度（内页不能按 100dvh 算，
-     否则会多出状态栏安全区那么多、整页可上下滑）。 */
-  height:100%;
-  /* 高度用 100% 而不是 calc(100dvh - env(safe-area-inset-top))：body 已经有
-     padding-top: safe-area-inset-top 了，再减一次会让内页比可用区矮、底部露出背景
-     （.home 上踩过同样的坑）。父级 .page-slot 是 absolute + inset:0，高度确定，
-     所以 100% 有意义。 */
+  /* ⚠️ **height 必须是 auto、只能给 min-height:100%**（2026-10-23 用户实报
+     「冒险足迹那块背景有一条截断」）。
+     原先写的是 height:100%，于是内页盒子**永远只有一屏高**（实测冒险页
+     section=844px、内容 22558px）—— 底色渐变、圆角、box-shadow 都只画在那
+     844 高的盒子上，往下滚过第一屏后，盒子的底边和投影就横穿在内容中间，
+     看起来就是"背景被截断"（截图那条渐变带的位置正好 = 844 − scrollTop）。
+     高度链本身不受影响：min-height:100% 仍要求父级高度确定（.page-slot 是
+     absolute+inset:0，满足），而内容超长时盒子会跟着长。
+     **例外：职业树 / 实时画面这两个"整屏"页必须保持一屏高**（它们的内部
+     布局依赖 height 100%：.ct-page 的 height:100%、.shotbody 的 flex:1），
+     分别在 career-tree.css / live.css 里显式写回 height:100%。 */
+  height:auto;
   min-height:100%;
-  margin:0;padding:0 0 calc(var(--u) * 24);
-  border:0;border-radius:0;box-shadow:none;
+  /* ⚠️ 左右必须是 auto（居中）。**不能写 `margin:0` 简写** —— 简写会把左右 auto
+     一起重置成 0，于是限宽后的内页全部**贴左**、右边空一大片：
+     用户截图实报职业树「左边一条、右边全空」，就是这个简写覆盖造成的
+     （同一块里 box-shadow:none 也照样把上面的阴影压掉了）。
+     这条属于"同一条规则里后写的简写覆盖前面的长写"，改的时候别顺手合并回去。 */
+  margin:0 auto;
+  padding:0 0 calc(var(--u) * 24);
+  border:0;border-radius:0;
+
+  /* 版心限宽（2026-10-20 加）：宽屏下所有内页与总览 V2 一样收进 --page-max 居中。
+     不加这条时 1440 宽实测：设置页 .fsec 拉到 1416px、标签与控件相隔 1400px、
+     冒险页图表被水平拉伸 4.07 倍、日志页缩略图每张 273×607。
+     --u 恒为 1px（见 lib/stage.ts），所以宽度方向只能靠版心收、不能指望缩放。
+     职业树是例外（矩阵要横滑、一屏 4.3 列），用更宽的 --ct-page-max，
+     见 career-tree.css 末尾那条覆盖。 */
+  max-width:var(--page-max);
+  /* 与 .v2-home 同款包边：两侧留出底色，视觉上是一条"手机列"。
+     限宽不影响高度链（height/min-height 仍是 100%，S0 契约不动）。 */
+  box-shadow:0 0 0 1px rgba(0,0,0,.06),0 8px 40px rgba(0,0,0,.18);
 }
 /* 内页专属规则的特异性坑（**将来加内页规则还会踩到，别删这段**）：内页容器那条
    `main section[data-page]:not([data-page="main"])` 的特异性是 (0,2,2)
@@ -1827,7 +2078,25 @@ main section[data-page]:not([data-page="main"]) > .plannote{
 }
 .fpinput{
   border:0;background:transparent;color:#8A8A8E;
-  font-size:calc(var(--u) * 14);text-align:right;
+  /* ≥16px：iOS 聚焦 <16px 输入框会放大视口（见 .form 控件那条） */
+  font-size:max(16px, calc(var(--u) * 14));text-align:right;
   padding:calc(var(--u) * 4) 0;width:calc(var(--u) * 140);
 }
 .fpinput.hide{display:none}
+
+/* ============================================================
+   内页"手机形态"覆盖（必须放在内页基础规则之后）
+   ------------------------------------------------------------
+   ⚠️ **位置有讲究**：这几条与内页基础规则特异性相同（都是 (0,2,2)），
+   靠"后写的胜出"。历史上它们被写在内页基础规则**之前**（1786 行 vs 1940 行），
+   于是被整条压掉、从未生效 —— 2026-10-23 用户截图实报「冒险足迹那块背景有
+   截断」，量出来一半原因就是手机上还带着那圈 1px 描边 + 40px 投影
+   （盒子只有一屏高，滚过去就露出来）。
+   ============================================================ */
+@media (max-width: 639px) {
+  /* 视口窄于版心时，限宽规则退化成"满宽 + 一圈阴影边框" —— 手机上是多余的边。 */
+  main section[data-page]:not([data-page="main"]) {
+    box-shadow: none;
+    max-width: none;
+  }
+}

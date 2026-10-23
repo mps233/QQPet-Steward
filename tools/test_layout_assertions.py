@@ -57,8 +57,30 @@ class LayoutAssertionsTest(unittest.TestCase):
     def test_panel_overlaps_deck(self):
         self.assertTrue(layout.responsive_failures(dict(BASE, deckRect=[0, 285, 390, 135])))
 
+    def test_desktop_panel_must_not_fill_the_whole_seat(self):
+        report = dict(
+            BASE,
+            size='520x900',
+            vp=[520, 900],
+            seatRect=[74, 156, 368, 593],
+            # The old flex:1 bug produced a 593px panel around 334px of rows.
+            panelRect=[74, 156, 368, 593],
+            drawerRect=[229, 777, 62, 112],
+            deckRect=[0, 765, 520, 135],
+        )
+        self.assertIn('桌面任务面板被 flex 拉满', layout.responsive_failures(report))
+        report.update(
+            panelRect=[74, 156, 368, 334],
+            listRect=[91, 197, 334, 280],
+        )
+        self.assertFalse(layout.responsive_failures(report))
+
     def test_function_bar_overlaps_deck(self):
         self.assertTrue(layout.responsive_failures(dict(BASE, funcRect=[324, 680, 50, 140])))
+
+    def test_drawer_must_leave_bottom_padding(self):
+        report = dict(BASE, drawerRect=[164, 721, 62, 123])
+        self.assertIn('底部状态卡贴近或被底栏裁切', layout.responsive_failures(report))
 
     def test_last_task_is_not_reachable(self):
         self.assertTrue(layout.responsive_failures(dict(BASE, listLastVisible=False)))

@@ -16,6 +16,17 @@
    ========================================================================== */
 
 .ct-page {
+  /* ---------- 画布宽度变量（2026-10-20）----------
+     本文件所有 `N% 画布宽` 的尺寸（属性胶囊、层级列、标签左边距）原来写 `100vw`，
+     但 `100vw` 是**视口**宽，而 .ct-page 已被 app.css 的内页版心限到 --page-max(430)，
+     宽屏下两者差得极远 —— 实测 1440×900：属性条宽 1217px、字号 43.2px，
+     同一屏的矩阵只有 944px 宽。
+
+     改成 `--ct-cw`：由 CareerTree 的 useCareerMetrics 与三把尺子**同源**写入
+     （都来自 el.clientWidth），没跑 JS 时兜底 100vw。
+     ⚠️ 不要改用 `container-type:inline-size` + `cqw`：containment 会让 .ct-page
+     变成 position:fixed 后代的包含块，弹窗遮罩 .ct-mask 就不再相对视口定位了。 */
+  --ct-cw: 100vw;
   /* 官方实测配色（截图像素采样，见规格文档第 1 节） */
   --ct-bg-top: #5d4443;
   --ct-bg-bot: #8a6860;
@@ -155,10 +166,10 @@
   display: inline-flex;
   align-items: center;
   justify-content: flex-start;
-  height: calc(100vw * 0.04167);                /* 胶囊高 15 / 360 */
-  padding: 0 calc(100vw * 0.0180) 0 calc(100vw * 0.0010);
-  gap: calc(100vw * 0.0130);                    /* 图标右缘 → 文字左缘 */
-  border-radius: calc(100vw * 0.02083);         /* 全圆角 = 高/2 */
+  height: calc(var(--ct-cw) * 0.04167);                /* 胶囊高 15 / 360 */
+  padding: 0 calc(var(--ct-cw) * 0.0180) 0 calc(var(--ct-cw) * 0.0010);
+  gap: calc(var(--ct-cw) * 0.0130);                    /* 图标右缘 → 文字左缘 */
+  border-radius: calc(var(--ct-cw) * 0.02083);        /* 全圆角 = 高/2 */
   background: var(--ct-cap-bg);
   white-space: nowrap;
 }
@@ -169,24 +180,24 @@
   left: 0;
   top: 0;
   flex: none;
-  height: calc(100vw * 0.0524);                 /* 约胶囊高的 1.26 倍，上下各探出一点 */
-  width: calc(100vw * 0.0524);
+  height: calc(var(--ct-cw) * 0.0524);                 /* 约胶囊高的 1.26 倍，上下各探出一点 */
+  width: calc(var(--ct-cw) * 0.0524);
   object-fit: contain;
 }
 .ct-attr b {
   font-weight: 600;
   color: #fff;
   /* 字号比上一版小一档：0.0376 → 0.0330（用户要求「字体小一点点」） */
-  font-size: calc(100vw * 0.0300);
+  font-size: calc(var(--ct-cw) * 0.0300);
   line-height: 1;
   letter-spacing: 0;
-  margin-right: calc(100vw * 0.0040);           /* 标签→数字收紧（官方 3.6/360，实测偏松） */
+  margin-right: calc(var(--ct-cw) * 0.0040);          /* 标签→数字收紧（官方 3.6/360，实测偏松） */
 }
 .ct-attr i {
   font-style: normal;
   font-weight: 700;
   color: #fff;
-  font-size: calc(100vw * 0.0300);
+  font-size: calc(var(--ct-cw) * 0.0300);
   line-height: 1;
   letter-spacing: 0;
   font-variant-numeric: tabular-nums;
@@ -207,24 +218,32 @@
    纵向滚动交给外层 .page-slot，这里只管横向。 */
 .ct-body {
   position: relative;
-  flex: 1 0 auto;
   /* **左右并排**：左侧层级标签列是独立的 flex 子项，不在滚动容器里 ——
      这样横滑时标签不动、图标滑到它右侧边界就被**裁切**（官方就是这个效果）。
      早先把标签列 absolute 覆盖在滚动区上 + 加渐变遮罩，结果左边缘出现阴影带。 */
   display: flex;
   align-items: stretch;
-  /* 高度被 ct-page 锁住后，ct-body 必须**可压缩**（flex:1 + min-height:0），
-     否则内容高度 731 会把父级撑破、又出现纵向滚动条。 */
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: hidden;
+  /* ---------- 纵向：**不压缩**，改为由 .ct-page 纵向滚（2026-10-20 改） ----------
+     原来是 `flex:1 1 auto;min-height:0;overflow:hidden` —— 一旦 JS 算出的行高
+     被 55% 下界卡住（横屏 844×390 时 fitRow≈8.5 但 floor=94.6），内容必然比容器高，
+     而 overflow:hidden 直接把它裁掉、外层 .page-slot 又没可滚高度 → 最后几行永远
+     看不到（实测 .ct-grid 底 694.8 / 视口 390）。
+     现在 `flex:1 0 auto`：正常屏幕照样撑满剩余高度；放不下时按内容高撑开，
+     由 .ct-page 的 overflow-y:auto 整体纵向滚 —— 层级标签列与图标仍在一行里，
+     不会出现"标签停住、图标滚走"的错位（那是不把 tiers 放进滚动容器的代价）。
+     ⚠️ 别改回 overflow:hidden；也别给 .ct-scroll 加 overflow-y:auto —— 那会让
+     纵向滚动发生在只含图标的那半边，左侧「见习/初级/…」不跟滚。 */
+  flex: 1 0 auto;
+  overflow: visible;
 }
 /* 横滑容器。**左侧层级列不在这个滚动容器里** —— 它单独绝对定位覆盖在左边，
    这样横滑时「见习/初级/…」不动（官方就是这样）。 */
 .ct-scroll {
   flex: 1 1 auto;
   min-width: 0;
-  min-height: 0;              /* flex 子项里必须，否则内容会把容器撑开不滚 */
+  /* 纵向**不设** min-height:0 也不裁：容器高度已由 .ct-body 跟着内容定死，
+     这里只负责横向滑动（纵向交给 .ct-page）。overflow-y 写 visible 会被规范
+     强制成 auto（另一方向是 auto），所以显式写 hidden 且**保证高度足够**。 */
   overflow-x: auto;
   overflow-y: hidden;
   -webkit-overflow-scrolling: touch;
@@ -454,7 +473,7 @@
 .ct-tiers {
   position: relative;
   flex: none;
-  width: calc(100vw * 0.1111);              /* 官方 40/360：容纳 18~35 的标签 */
+  width: calc(var(--ct-cw) * 0.1111);             /* 官方 40/360：容纳 18~35 的标签 */
   /* 与列头行高一致，否则「见习/初级/…」整列相对图标下错位（原来 0.34 → 偏 11.5pt）。
      改这里必须同步 `.ct-linehead` 的高度与 CareerTree.tsx 的 LINEHEAD_RATIO。 */
   padding-top: calc(var(--ct-row) * 0.254);
@@ -467,9 +486,11 @@
   align-items: center;
   justify-content: flex-start;
   /* 官方实测：层级标签左缘 18~19 CSS（360 画布）→ 5% 屏宽。
-     ⚠️ 必须用 vw：`padding-left: 5%` 的百分比基于**父元素宽**（46.7px），
-     算出来只有 2.3px，标签贴着屏幕左边（用户两次指出）。 */
-  padding-left: 5vw;
+     ⚠️ `padding-left: 5%` 的百分比基于**父元素宽**（.ct-tiers 只有 46.7px），
+     算出来只有 2.3px，标签贴着屏幕左边（用户两次指出）。
+     所以取画布宽（--ct-cw）的 5%。原来写 5vw 是**视口**的 5%，
+     宽屏下 .ct-page 被限到 430，5vw 会跑到 72px 外去。 */
+  padding-left: calc(var(--ct-cw) * 0.05);
   font-size: var(--ct-font-tier);
   color: rgba(255, 255, 255, 0.92);
 }
@@ -493,7 +514,9 @@
 /* 卡片：384dp 宽，圆角 24dp，纯白；高度按内容 */
 .ct-card {
   position: relative;
-  /* 实测：卡宽 288dp = 屏宽 80%，左右各留 36dp */
+  /* 实测：卡宽 288dp = 屏宽 80%，左右各留 36dp。
+     ⚠️ .ct-card 在 .ct-mask(position:fixed) 里，fixed 的包含块是视口，
+     所以这里 100vw 是**对的**，别改成 --ct-cw（那是页面宽，不是视口宽）。 */
   width: min(288px, calc(100vw - 40px));
   border-radius: 18px;
   background: #fff;
@@ -507,7 +530,9 @@
 }
 /* 卡片内容区（可滚动）：顶部留出图标压下来的那段空间 */
 .ct-card-body {
+  /* vh 在前、dvh 在后（全项目同一约定） */
   max-height: calc(100vh - 150px);
+  max-height: calc(100dvh - 150px);
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -760,7 +785,13 @@ body:has(.ct-page) {
   padding-top: 0 !important;
 }
 main section[data-page='plan'] .ct-page {
-  margin: 0;
+  /* 内容列限宽居中。**背景由外层 section 铺满**（见下面那条），
+     这里只管"内容那一列"。
+     ⚠️ 原来写的是 `margin:0` —— 配合 app.css 内页规则上的 max-width，
+     结果整页被压成贴屏幕左边的一条 430 宽窄栏、右边一大片空深棕
+     （用户 2026-10-20 截图实报）。改成 auto 后才是居中的一列。 */
+  max-width: var(--page-max, 430px);
+  margin: 0 auto;
   /* **高度必须继承父级，不能用 100dvh**。
      真机 body 有 padding-top ≈47（状态栏安全区），`100dvh` = 整个视口高，
      两者相加就比可用区高 47px → 整页能上下滑、右侧出滚动条（用户实报）。
@@ -768,7 +799,15 @@ main section[data-page='plan'] .ct-page {
      所以 `height:100%` 正好等于「视口 − 安全区」，不多不少。
      （headless 里 env() 恒为 0，靠 100dvh 根本验不出这个 bug。） */
   height: 100%;
-  overflow: hidden;
+  /* **不能 hidden**：矩阵高度由 JS 按可用高反算（CareerTree.tsx 的 useCareerMetrics），
+     但行高有下界（标定值的 55%）。放不下时（尤其横屏 844×390）溢出部分会被直接
+     裁掉且 .page-slot 没有可滚高度 —— 实测 .ct-grid 底 694.8 / 视口 390，缺 304px
+     且 scrollHeight === clientHeight，最后几行永远看不到、也滚不动。
+     改成 overflow-y:auto 后，极端短屏退化为"这一页自己纵向滚"（正常屏幕
+     不会触发 —— 可用高足够时内容本来就装得下）。横向仍由 .ct-scroll 负责。 */
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 /* 职业树背景：只有这一层铺深棕渐变，`.ct-page` 里面只负责内容列。
    **宽屏下不要解除限宽** —— app.css 那条内页规则给所有内页的
@@ -782,6 +821,11 @@ main section[data-page='plan'] .ct-page {
 main section[data-page='plan']:not([data-page='main']) {
   background: linear-gradient(180deg, #5d4443 0%, #8a6860 100%);
   padding-bottom: 0;
+  /* ⚠️ 显式 height:100% —— app.css 的内页基础规则已改成 height:auto
+     （修「长页面底色只画一屏」的断层），而职业树是**整屏**布局：
+     里面的 .ct-page 靠 height:100% 继承这个高度（见文件上方那段注释）。
+     不写回来，.ct-page 会退化成由内容撑高，矩阵按可用高反算的行高就对不上了。 */
+  height: 100%;
 }
 @media (max-width: 639px) {
   main section[data-page='plan']:not([data-page='main']) {
@@ -791,10 +835,10 @@ main section[data-page='plan']:not([data-page='main']) {
   }
 }
 
-
-/* 窄屏（≤360）收紧列宽，一屏仍放得下 ~3.2 列 */
-/* 极窄屏（<300px）：JS 的 clamp 下界已经兜住（col≥62 / node≥48 / row≥92），
-   这里不需要再覆盖。留这行注释是为了说明"别再写死断点"。 */
+/* 窄屏一律**不写断点**：列步进 / 六边形 / 行步进三把尺子全由 CareerTree.tsx 的
+   careerMetrics() 按 el.clientWidth 线性插值 + clamp 算（下界 col≥62 / node≥58 /
+   row≥92），CSS 里只有兜底值。原先这里留了个空的「窄屏（≤360）收紧列宽」标题，
+   下面一行实现都没有 —— 容易让人以为有断点。真要改，改 JS 的 CLAMP。 */
 
 
 /* 下方数据区永远走浅灰卡（与其它内页一致）：

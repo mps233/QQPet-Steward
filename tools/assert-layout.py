@@ -59,6 +59,19 @@ def responsive_failures(r: dict) -> list[str]:
         for key in ('panelRect', 'funcRect'):
             if overlaps(r.get(key), r.get('deckRect')):
                 notes.append(key + ' 与底栏重叠')
+        panel_rect = r.get('panelRect')
+        seat_rect = r.get('seatRect')
+        # A desktop window has spare width, not spare task rows. The seat may
+        # reserve the column height, but the visible task panel must stay
+        # content-sized; otherwise a short list becomes a tall empty glass card.
+        viewport_w = (r.get('vp') or [0, 0])[0]
+        if (panel_rect and seat_rect and viewport_w >= 480
+                and panel_rect[3] > seat_rect[3] - 40):
+            notes.append('桌面任务面板被 flex 拉满')
+        drawer = r.get('drawerRect')
+        deck = r.get('deckRect')
+        if drawer and deck and drawer[1] + drawer[3] > deck[1] + deck[3] - 4:
+            notes.append('底部状态卡贴近或被底栏裁切')
         panel, tasks = r.get('panelRect'), r.get('listRect')
         if not tasks or tasks[2] < 60 or tasks[3] < 44:
             notes.append('任务列表被挤没或无法操作')

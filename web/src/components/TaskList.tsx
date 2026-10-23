@@ -12,7 +12,6 @@ import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } 
 import { useEffect, useState } from 'react'
 import { applyOptim, effectiveValue, reconcile, rollbackOptim } from '../lib/optimistic'
 import {
-  TASK_GROUP,
   TASK_NAME,
   isLoopTask,
   keyOfTaskName,
@@ -24,7 +23,13 @@ import {
  *  `active` = 这一行就是调度器此刻正在跑的任务 —— 后端 tasks[k].state 只有
  *  disabled/dead/ready/waiting/done，**从不写 run**，所以"执行中"必须靠
  *  queue.current 认，不能靠 state（否则这个分支永远命中不了）。 */
-function statusText(t: QueueTaskState | undefined, nowDate: string, active: boolean) {
+function statusText(
+  t: QueueTaskState | undefined,
+  nowDate: string,
+  active: boolean,
+  pending: boolean,
+) {
+  if (pending) return { cls: 'run', text: '待结算' }
   if (active) return { cls: 'run', text: '执行中' }
   const st = t?.state ?? ''
   if (st === 'disabled') return { cls: 'off-t', text: '已禁用' }
@@ -35,8 +40,8 @@ function statusText(t: QueueTaskState | undefined, nowDate: string, active: bool
     const cross = nx.slice(0, 10) === nowDate ? '' : '明 '
     return { cls: '', text: `等待 ${cross}${nx.slice(11, 16)}` }
   }
-  if (st === 'done') return { cls: 'done', text: '✓ 今日完成' }
-  if (st === 'dead') return { cls: '', text: '今日结束' }
+  if (st === 'done') return { cls: 'done', text: '' }
+  if (st === 'dead') return { cls: 'dead-t', text: '今日结束' }
   return { cls: '', text: '' }
 }
 
@@ -55,7 +60,7 @@ function RowBody({
   /** 正在执行的任务键（含 pending 收尾中的那个） */
   activeKey: string
   nowDate: string
-  /** 点勾选框切换该任务启用状态（写回 `<k>_enabled`） */
+  /** 点开关切换该任务启用状态（写回 `<k>_enabled`） */
   /** 返回 Promise —— 失败时调用方要回滚乐观值（见 handleToggle），不能丢弃 */
   onToggle: (k: string, on: boolean) => Promise<unknown>
   /** 当前是否启用 —— 由 TaskList 算好（含"刚点下去、请求还没回来"的乐观值） */
@@ -63,27 +68,29 @@ function RowBody({
 }) {
   const isPend = !!pendingKey && k === pendingKey
   const isActive = !!activeKey && k === activeKey
-  const det = statusText(t, nowDate, isActive && !isPend)
-  const tag = TASK_GROUP[k] ? <span className="ttag">{TASK_GROUP[k]}</span> : null
+  const det = statusText(t, nowDate, isActive && !isPend, isPend)
 
   return (
     <>
       <span className={'mname' + (on ? '' : ' off')}>{TASK_NAME[k] ?? k}</span>
-      {isPend ? (
-        <span className="marrow" title="进行中（等收尾结算）">
-          ▶
-        </span>
-      ) : null}
-      {tag}
       <span className="mright">
-        {det.text ? (
-          <span className={'mdet' + (det.cls ? ` ${det.cls}` : '')}>{det.text}</span>
+        {det.text || det.cls === 'done' ? (
+          <span
+            className={'mdet' + (det.cls ? ` ${det.cls}` : '')}
+            title={det.cls === 'done' ? '今日完成' : undefined}
+          >
+            {det.cls === 'done' ? (
+              <svg className="mcheck" viewBox="0 0 16 16" aria-hidden="true">
+                <path d="M4.2 8.2 6.9 10.8 11.9 5.2" />
+              </svg>
+            ) : det.text}
+          </span>
         ) : null}
       </span>
       <span
         className={'mcb' + (on ? ' on' : '')}
         data-k={k}
-        // 勾选框：阻止冒泡，免得 dnd-kit 挂在行上的 listeners 把这次按下当成拖拽起手
+        // 开关：阻止冒泡，免得 dnd-kit 挂在行上的 listeners 把这次按下当成拖拽起手
         // （旧版 是在 pointerdown 里 `if(e.target.closest('.mcb')) return` 做同样的事）
         onPointerDown={(e) => e.stopPropagation()}
         onClick={(e) => {
@@ -108,7 +115,7 @@ function rowClass(
 
 /** 「任务顺序」组里的一行：用 dnd-kit 的 useSortable 包一层。
  *  listeners 绑在整行上，但传感器设了 220ms 长按门槛 —— 短按仍然是普通点击
- *  （勾选框/行内按钮照常工作），长按才进入拖拽。这替掉了 旧版 那套手写的
+ *  （开关/行内按钮照常工作），长按才进入拖拽。这替掉了 旧版 那套手写的
  *  pointerdown + 220ms 定时器实现。 */
 function SortableRow(props: {
   k: string
@@ -169,13 +176,18 @@ export function TaskList({
 }: {
   data: Data
   onReorder: (order: string[]) => void
-  /** 点勾选框切启用 —— 对应 旧版 里挂在 #taskList 上的那个 click 委托 */
+  /** 点开关切启用 —— 对应 旧版 里挂在 #taskList 上的那个 click 委托 */
   /** 返回 Promise —— 失败时调用方要回滚乐观值（见 handleToggle），不能丢弃 */
   onToggle: (k: string, on: boolean) => Promise<unknown>
 }) {
   const qt = data.queue.tasks || {}
   const nowDate = (data.now || '').slice(0, 10)
-  const pendingKey = data.queue.pending ? data.queue.pending_key || '' : ''
+  // hire_friend / friend_care 已分别并入 work / care，但后端 pending 仍按旧键登记；
+  // 不映射的话列表里没有对应的行，进行中的那一项永远不会高亮。
+  const rawPendingKey = data.queue.pending ? data.queue.pending_key || '' : ''
+  const pendingKey = rawPendingKey === 'hire_friend' ? 'work'
+    : rawPendingKey === 'friend_care' ? 'care'
+      : rawPendingKey
   // 正在执行的任务行：pending 时后端直接给任务键，平时 queue.current 是中文名要反查
   const activeKey = pendingKey || keyOfTaskName(data.queue.current)
   const keys = Object.keys(qt)
@@ -186,14 +198,14 @@ export function TaskList({
   // 原来只用 PointerSensor —— iOS 上它在滚动容器（.page-slot / .home）里会被浏览器的
   // 手势判定截断，按住不动也收不到 move，拖拽完全没反应（用户实报"拖动逼用没有"）。
   // TouchSensor 走 touchstart/touchmove，不经过那套 pointer 判定；长按 220ms 激活，
-  // 短按仍是普通点击（勾选框照常）。MouseSensor 给桌面用，移动 6px 激活。
+  // 短按仍是普通点击（开关照常）。MouseSensor 给桌面用，移动 6px 激活。
   const sensors = useSensors(
     useSensor(TouchSensor, { activationConstraint: { delay: 220, tolerance: 8 } }),
     useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
   )
 
-  // **乐观更新**：点勾选框立即翻转，不等 6 秒轮询。
-  // 之前点一下要等很久才看到勾变化（用户实报"隔几十秒才出现勾"）——因为界面完全
+  // **乐观更新**：点开关立即翻转，不等 6 秒轮询。
+  // 之前点一下要等很久才看到开关变化（用户实报"隔几十秒才出现勾"）——因为界面完全
   // 依赖 /api/data 轮询回来才知道新状态；后端本身只要 10ms（实测），慢在刷新链路。
   // 这里本地先翻转，等 data 里该任务的状态与之一致后自动清掉覆盖。
   const [optim, setOptim] = useState<Record<string, boolean>>({})
@@ -206,16 +218,16 @@ export function TaskList({
   }, [qt])
   const effectiveOn = (k: string) => effectiveValue(optim, k, serverOn)
   /**
-   * 点勾选框：本地先翻转（乐观），成功由轮询对齐后自动清除；**失败必须回滚**。
+   * 点开关：本地先翻转（乐观），成功由轮询对齐后自动清除；**失败必须回滚**。
    *
    * 历史坑：原实现只在"服务端状态与本地一致"时清除覆盖 —— 保存失败时服务端永远不变，
-   * 于是 optim[k] **永不消解**，勾选状态与真实配置长期不符，直到整页刷新才暴露。
+   * 于是 optim[k] **永不消解**，启用状态与真实配置长期不符，直到整页刷新才暴露。
    * 见 docs/review/05-前端设计系统.md H 节。
    */
   const handleToggle = (k: string, on: boolean): Promise<unknown> => {
     setOptim((p) => applyOptim(p, k, on))
     const rollback = () => setOptim((p) => rollbackOptim(p, k))
-    // 超时兜底：请求悬挂（网络半死）时不能让它一直挂在错误的勾选态上
+    // 超时兜底：请求悬挂（网络半死）时不能让它一直挂在错误的启用态上
     const timer = window.setTimeout(rollback, 8000)
     return Promise.resolve(onToggle(k, on))
       .then(() => window.clearTimeout(timer))   // 成功：交给轮询在"已一致"时清除
@@ -245,33 +257,33 @@ export function TaskList({
       </div>
       <div className="tasklist" id="taskList">
         {loop.length ? (
-          <>
+          <section className="tgroup">
             <div className="tghd">
               <span>日常轮巡</span>
-              <i />
-              <span className="tghint">按间隔巡检 · 顺序固定</span>
+              <span className="tghint">固定顺序</span>
             </div>
-            {loop.map((k) => (
-              <StaticRow
-                key={k}
-                k={k}
-                t={qt[k]}
-                pendingKey={pendingKey}
-                activeKey={activeKey}
-                nowDate={nowDate}
-                onToggle={handleToggle}
-                on={effectiveOn(k)}
-              />
-            ))}
-          </>
+            <div className="trows">
+              {loop.map((k) => (
+                <StaticRow
+                  key={k}
+                  k={k}
+                  t={qt[k]}
+                  pendingKey={pendingKey}
+                  activeKey={activeKey}
+                  nowDate={nowDate}
+                  onToggle={handleToggle}
+                  on={effectiveOn(k)}
+                />
+              ))}
+            </div>
+          </section>
         ) : null}
 
         {rest.length ? (
-          <>
+          <section className="tgroup">
             <div className="tghd">
               <span>任务顺序</span>
-              <i />
-              <span className="tghint">按住拖动排序</span>
+              <span className="tghint">长按拖动</span>
             </div>
             <DndContext
               sensors={sensors}
@@ -280,21 +292,23 @@ export function TaskList({
               onDragEnd={handleDragEnd}
             >
               <SortableContext items={rest} strategy={verticalListSortingStrategy}>
-                {rest.map((k) => (
-                  <SortableRow
-                    key={k}
-                    k={k}
-                    t={qt[k]}
-                    pendingKey={pendingKey}
-                    activeKey={activeKey}
-                    nowDate={nowDate}
-                    onToggle={handleToggle}
-                    on={effectiveOn(k)}
-                  />
-                ))}
+                <div className="trows">
+                  {rest.map((k) => (
+                    <SortableRow
+                      key={k}
+                      k={k}
+                      t={qt[k]}
+                      pendingKey={pendingKey}
+                      activeKey={activeKey}
+                      nowDate={nowDate}
+                      onToggle={handleToggle}
+                      on={effectiveOn(k)}
+                    />
+                  ))}
+                </div>
               </SortableContext>
             </DndContext>
-          </>
+          </section>
         ) : null}
       </div>
     </div>

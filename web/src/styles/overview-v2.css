@@ -271,11 +271,10 @@
 .v2-funcseat .funcbar .fb-group{ flex-direction:column }
 /* 「画面」按钮不许被压扁（实测漏了这条时 width=0，按钮看不见） */
 .v2-funcseat .funcbar .fab{ flex:0 0 auto }
-/* 覆盖 app.css 的 `.funcbar .fb-group:nth-child(2){display:none}` ——
-   那条在 @media(min-aspect-ratio:360/620) 里，意图"扁屏隐藏画面按钮"，
-   但 min-aspect-ratio 表示**宽高比 ≥ 该值**，360/620≈0.58 太小，
-   几乎所有屏幕（含平板 768×1024=0.75）都命中 → 画面按钮莫名消失。 */
-.v2-funcseat .funcbar .fb-group{ display:flex !important }
+/* 「画面」按钮的显隐统一由 app.css 那条 `@media (max-height:620px)` 决定 ——
+   2026-10-20 起判据已从 `min-aspect-ratio`（判反、会误伤平板/桌面）改成视口高度，
+   所以这里**不再需要 !important 补丁**：短屏（≤620 高）照样由基础规则隐藏，
+   其余屏幕正常显示。留这条注释是为了说明"为什么原来有补丁、现在没有"。 */
 
 /* ---------- 复用现有子组件 ----------
    IdCard / Capsules / Deck / FuncBar 的根元素带 `.flt`（position:absolute）。
@@ -347,19 +346,56 @@
   .v2-center{ margin-left:calc(var(--u) * 8); margin-right:calc(var(--u) * 8) }
 }
 
-/* 短屏保留 44px 操作按钮；画面仍可从右侧圆钮进入，不重复占用高度。 */
+/* 短屏保留 44px 操作按钮；画面仍可从右侧圆钮进入，不重复占用高度。
+   `.fb-group:nth-child(2)` 的隐藏由 app.css 的 @media (max-height:620px) 统一负责
+   （两条都已按视口高度判定，作用域一致），这里不再重复声明。 */
 @media(max-height:620px){
   .v2-funcseat{ margin-top:calc(var(--u) * 12) }
   .v2-funcseat .funcbar .fab{ height:calc(var(--u) * 44) }
-  .v2-funcseat .funcbar .fb-group:nth-child(2){ display:none !important }
 }
 
 /* ---------- 平板/宽屏：限宽居中 ----------
    控件保持手机尺寸，只限制版心宽度。 */
 @media(min-width:640px){
   .v2-home{
-    max-width:430px;
+    /* 版心宽度读全局 token（app.css 的 :root），与所有内页**同一条真源** ——
+       原来这里自己写死 430，改版心就得改两处。 */
+    max-width:var(--page-max);
     margin:0 auto;
     box-shadow:0 0 0 1px rgba(0,0,0,.06), 0 8px 40px rgba(0,0,0,.18);
+  }
+}
+
+/* ---------- Desktop window ----------
+   The Tauri shell starts at 520×900 inner size (the real WebView can be
+   narrower after the title bar), but the user can resize it. Above 480px use
+   the available width for the center column and keep the rails at their
+   original physical size. --page-max is the single width source shared with
+   inner pages, so crossing 899/900 does not snap the column back to 430px.
+
+   Do not use 100vw here: .v2-home itself is max-width constrained. */
+@media (min-width:480px) {
+  .v2-home{
+    max-width:var(--page-max);
+    margin:0 auto;
+  }
+  .v2-top .idcard,
+  .v2-top .caps{
+    width:min(100%, calc(var(--u) * 310));
+  }
+  .v2-seat .qpanel{
+    /* Desktop windows have extra width, not extra task rows. Let the panel
+       follow its content; .v2-seat already reserves the remaining vertical
+       space for the background between the card and the bottom deck. */
+    flex:0 1 auto;
+  }
+}
+
+/* Very short desktop windows need the task list to use the reduced vertical
+   budget; otherwise the fixed 140px minimum plus the deck pushes content
+   under the arc. */
+@media (min-width:480px) and (max-height:800px) {
+  .v2-seat{
+    min-height:calc(var(--u) * 96);
   }
 }

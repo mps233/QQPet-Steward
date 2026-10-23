@@ -1,5 +1,9 @@
+import type { CSSProperties } from 'react'
 import type { Data } from '../api'
 import { hrs, pct, wan } from '../lib/format'
+
+/** 图标外圈进度环：--p 是 0~100 的百分比，由 CSS 画成 conic-gradient 圆环。 */
+const ring = (p: number): CSSProperties => ({ '--p': `${p}%` }) as CSSProperties
 
 /** 顶部两颗数据胶囊（官方结构：图标在胶囊外面且比胶囊大，文字在胶囊内居中）。
  *  第一排：金币 / 今日踩踩 / 今日PK；第二排：今日冒险 / 学习+打工合计 / 经验日常。
@@ -41,6 +45,10 @@ export function Capsules({ data }: { data: Data }) {
     ` / 打工 ${pg.work?.learned ?? 0} 次 ${hrs(workSecs)}h`
 
   const expDone = pg.exp_daily?.done
+  const visitP = visit != null ? pct(visit, visitMax) : 0
+  const pkP = pk != null ? pct(pk, pkMax) : 0
+  const advP = pct(adv, advMax)
+  const swP = targetHrs ? pct(totalHrs, targetHrs) : 0
 
   return (
     <div className="flt caps">
@@ -59,25 +67,21 @@ export function Capsules({ data }: { data: Data }) {
 
         <div className="cap" title="今日踩踩">
           <img className="cico" src="/qp-icons/official/cap_paw.png" alt="" />
+          <span className="cring" style={ring(visitP)} aria-hidden="true" />
           <div className="capbody">
             <span className="cval" id="visitTxt">
               {visit != null ? visit : '--'}/{visitMax}
             </span>
-            <div className="bar">
-              <i id="visitBar" style={{ width: `${visit != null ? pct(visit, visitMax) : 0}%` }} />
-            </div>
           </div>
         </div>
 
         <div className="cap" title="今日PK">
-          <img className="cico" src="/qp-icons/official/pk_words.png" alt="" />
+          <img className="cico cico-pk" src="/qp-icons/official/pk_words.png" alt="" />
+          <span className="cring" style={ring(pkP)} aria-hidden="true" />
           <div className="capbody">
             <span className="cval" id="pkTxt">
               {pk != null ? pk : '--'}/{pkMax}
             </span>
-            <div className="bar">
-              <i id="pkBar" style={{ width: `${pk != null ? pct(pk, pkMax) : 0}%` }} />
-            </div>
           </div>
         </div>
       </div>
@@ -85,6 +89,7 @@ export function Capsules({ data }: { data: Data }) {
       <div className="caps-row">
         <div className="cap" title="今日冒险">
           <img className="cico" src="/qp-icons/official/cap_compass.png" alt="" />
+          <span className="cring" style={ring(advP)} aria-hidden="true" />
           <div className="capbody">
             <span className="cval" id="advTxt">
               {adv}/{advMax}
@@ -94,21 +99,16 @@ export function Capsules({ data }: { data: Data }) {
 
         <div className="cap" id="capSw" title={swTip}>
           <img className="cico" src="/qp-icons/official/cap_cookie.png" alt="" />
+          <span className="cring" style={ring(swP)} aria-hidden="true" />
           <div className="capbody">
             <span className="cval" id="swTxt" title={swTip}>
               {totalHrs}h{targetHrs ? `/${targetHrs}h` : ''}
             </span>
-            <div className="bar">
-              <i
-                id="swBarTotal"
-                style={{ width: `${targetHrs ? pct(totalHrs, targetHrs) : 0}%` }}
-              />
-            </div>
           </div>
         </div>
 
         <div className="cap" title="经验日常">
-          <img className="cico" src="/qp-icons/official/cap_diamond.png" alt="" />
+          <img className="cico cico-gem" src="/qp-icons/official/cap_diamond.png" alt="" />
           <div className="capbody">
             <span className="cval" id="expTxt">
               {expDone ? '✓ 完成' : '未完成'}
