@@ -35,6 +35,54 @@ struct StartupStatus {
     message: String,
 }
 
+struct PrimaryWindowIntent {
+    revision: u64,
+    requested: bool,
+    dock_visible: bool,
+}
+
+impl Default for PrimaryWindowIntent {
+    fn default() -> Self {
+        Self {
+            revision: 0,
+            requested: false,
+            dock_visible: true,
+        }
+    }
+}
+
+impl PrimaryWindowIntent {
+    fn open(&mut self) -> u64 {
+        self.revision = self.revision.wrapping_add(1);
+        self.requested = true;
+        self.revision
+    }
+
+    fn close(&mut self) -> u64 {
+        self.revision = self.revision.wrapping_add(1);
+        self.requested = false;
+        self.dock_visible = false;
+        self.revision
+    }
+
+    fn accepts(&self, revision: u64) -> bool {
+        self.requested && self.revision == revision
+    }
+
+    fn may_hide(&self, revision: u64) -> bool {
+        !self.requested && self.revision == revision
+    }
+
+    fn show(&mut self, revision: u64) -> Option<bool> {
+        if !self.accepts(revision) {
+            return None;
+        }
+        let promote = !self.dock_visible;
+        self.dock_visible = true;
+        Some(promote)
+    }
+}
+
 struct ShellState {
     server: String,
     data_root: PathBuf,
@@ -49,6 +97,7 @@ struct ShellState {
     dashboard_origin: Arc<Mutex<Option<tauri::Url>>>,
     dashboard_child: Mutex<Option<u32>>,
     exit_requested: Mutex<bool>,
+    primary_window: Mutex<PrimaryWindowIntent>,
 }
 
 fn find_project_root(candidates: impl IntoIterator<Item = PathBuf>) -> Option<PathBuf> {
@@ -425,11 +474,97 @@ fn find_dashboard(app: &tauri::AppHandle) -> Option<WebviewWindow> {
     app.get_webview_window(DASHBOARD_LABEL)
 }
 
-fn show_launcher(app: &tauri::AppHandle) {
-    if let Some(window) = app.get_webview_window(LAUNCHER_LABEL) {
-        let _ = window.show();
-        let _ = window.set_focus();
+fn set_dock_visible(app: &tauri::AppHandle, visible: bool) {
+    #[cfg(target_os = "macos")]
+    if let Err(error) = app.set_dock_visibility(visible) {
+        eprintln!("[qqpet] 无法切换 Dock 图标：{error}");
     }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (app, visible);
+}
+
+fn begin_primary_request(app: &tauri::AppHandle) -> Option<u64> {
+    let state = app.try_state::<ShellState>()?;
+    let revision = state.primary_window.lock().ok()?.open();
+    Some(revision)
+}
+
+fn present_primary_window(app: &tauri::AppHandle, label: &'static str, revision: u64) {
+    let handle = app.clone();
+    if let Err(error) = app.run_on_main_thread(move || {
+        let Some(window) = handle.get_webview_window(label) else {
+            return;
+        };
+        let Some(state) = handle.try_state::<ShellState>() else {
+            return;
+        };
+        let promote = state
+            .primary_window
+            .lock()
+            .ok()
+            .and_then(|mut intent| intent.show(revision));
+        let Some(promote) = promote else {
+            return;
+        };
+        if promote {
+            set_dock_visible(&handle, true);
+        }
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }) {
+        eprintln!("[qqpet] 无法显示主窗口：{error}");
+    }
+}
+
+fn hide_dock_for_request(app: &tauri::AppHandle, revision: u64) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let may_hide = handle.try_state::<ShellState>().is_some_and(|state| {
+            state
+                .primary_window
+                .lock()
+                .is_ok_and(|intent| intent.may_hide(revision))
+        });
+        let primary_visible = [DASHBOARD_LABEL, LAUNCHER_LABEL].iter().any(|label| {
+            handle
+                .get_webview_window(label)
+                .is_some_and(|window| window.is_visible().unwrap_or(true))
+        });
+        if may_hide && !primary_visible {
+            set_dock_visible(&handle, false);
+        }
+    });
+}
+
+fn hide_primary_windows(app: &tauri::AppHandle) {
+    let revision = app.try_state::<ShellState>().and_then(|state| {
+        state
+            .primary_window
+            .lock()
+            .ok()
+            .map(|mut intent| intent.close())
+    });
+    for label in [DASHBOARD_LABEL, LAUNCHER_LABEL] {
+        if let Some(window) = app.get_webview_window(label) {
+            let _ = window.hide();
+        }
+    }
+    let Some(revision) = revision else {
+        return;
+    };
+    hide_dock_for_request(app, revision);
+    // Tao ignores DockHide for one second after DockShow. Recheck the request
+    // on the main thread so a quick reopen cancels this delayed hide.
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(1100));
+        hide_dock_for_request(&app, revision);
+    });
+}
+
+fn show_launcher(app: &tauri::AppHandle, revision: u64) {
+    present_primary_window(app, LAUNCHER_LABEL, revision);
 }
 
 fn connection_error_script(error: &str) -> String {
@@ -439,8 +574,15 @@ fn connection_error_script(error: &str) -> String {
     )
 }
 
-fn show_connection_error(app: &tauri::AppHandle, error: &str) {
+fn show_connection_error(app: &tauri::AppHandle, error: &str, revision: u64) {
     if let Some(state) = app.try_state::<ShellState>() {
+        if !state
+            .primary_window
+            .lock()
+            .is_ok_and(|intent| intent.accepts(revision))
+        {
+            return;
+        }
         if let Ok(mut pending) = state.connection_error.lock() {
             *pending = Some(error.to_owned());
         }
@@ -454,7 +596,7 @@ fn show_connection_error(app: &tauri::AppHandle, error: &str) {
     if let Some(window) = app.get_webview_window(LAUNCHER_LABEL) {
         let _ = window.eval(connection_error_script(error));
     }
-    show_launcher(app);
+    show_launcher(app, revision);
 }
 
 fn clear_connection_error(app: &tauri::AppHandle) {
@@ -632,7 +774,11 @@ fn toggle_panel(app: &tauri::AppHandle, rect: Option<tauri::Rect>) {
     let _ = panel.set_focus();
 }
 
-async fn open_local_dashboard(app: &tauri::AppHandle, query: Option<&str>) -> Result<(), String> {
+async fn open_local_dashboard(
+    app: &tauri::AppHandle,
+    query: Option<&str>,
+    revision: u64,
+) -> Result<(), String> {
     let state = app
         .try_state::<ShellState>()
         .ok_or_else(|| "应用状态未初始化".to_owned())?;
@@ -645,7 +791,7 @@ async fn open_local_dashboard(app: &tauri::AppHandle, query: Option<&str>) -> Re
         return Err(check.message);
     }
     let session = desktop_session(app, &server).await?;
-    ensure_dashboard(app, &server, true, &session)?;
+    ensure_dashboard(app, &server, revision, &session)?;
     if let Some(query) = query {
         let mut target = base_url(&server)?;
         target.set_query(Some(query));
@@ -663,17 +809,37 @@ async fn open_local_dashboard(app: &tauri::AppHandle, query: Option<&str>) -> Re
 }
 
 fn show_dashboard_from_panel(app: &tauri::AppHandle, query: Option<&str>) {
+    request_dashboard(app, query, false);
+}
+
+fn request_dashboard(app: &tauri::AppHandle, query: Option<&str>, startup_window: bool) {
+    let Some(revision) = begin_primary_request(app) else {
+        return;
+    };
+    if startup_window {
+        show_launcher(app, revision);
+    }
     if let Some(panel) = app.get_webview_window(PANEL_LABEL) {
         let _ = panel.hide();
     }
     let app = app.clone();
     let query = query.map(str::to_owned);
     tauri::async_runtime::spawn(async move {
-        if let Err(error) = open_local_dashboard(&app, query.as_deref()).await {
+        if let Err(error) = open_local_dashboard(&app, query.as_deref(), revision).await {
             eprintln!("[qqpet] {error}");
-            show_connection_error(&app, &error);
+            show_connection_error(&app, &error, revision);
         }
     });
+}
+
+fn reopen_dashboard(app: &tauri::AppHandle) {
+    if find_dashboard(app).is_some() {
+        if let Some(revision) = begin_primary_request(app) {
+            present_primary_window(app, DASHBOARD_LABEL, revision);
+        }
+    } else {
+        request_dashboard(app, None, true);
+    }
 }
 
 fn state_server(app: &tauri::AppHandle) -> Option<String> {
@@ -760,7 +926,7 @@ fn local_control_token(app: &tauri::AppHandle) -> Result<String, String> {
 fn ensure_dashboard(
     app: &tauri::AppHandle,
     server: &str,
-    foreground: bool,
+    revision: u64,
     session: &DesktopSession,
 ) -> Result<(), String> {
     let base = base_url(server)?;
@@ -787,11 +953,7 @@ fn ensure_dashboard(
             }
             return Err(format!("无法刷新仪表盘窗口：{error}"));
         }
-        if foreground {
-            let _ = window.show();
-            let _ = window.unminimize();
-            let _ = window.set_focus();
-        }
+        present_primary_window(app, DASHBOARD_LABEL, revision);
         return Ok(());
     }
 
@@ -831,10 +993,7 @@ fn ensure_dashboard(
     window
         .navigate(base)
         .map_err(|error| format!("无法打开主界面：{error}"))?;
-    if foreground {
-        let _ = window.show();
-        let _ = window.set_focus();
-    }
+    present_primary_window(app, DASHBOARD_LABEL, revision);
     Ok(())
 }
 
@@ -1265,8 +1424,9 @@ fn get_startup_status(state: tauri::State<ShellState>) -> Result<StartupStatus, 
 
 #[tauri::command]
 async fn retry_startup(app: tauri::AppHandle) -> Result<(), String> {
-    if let Err(error) = open_local_dashboard(&app, None).await {
-        show_connection_error(&app, &error);
+    let revision = begin_primary_request(&app).ok_or_else(|| "应用窗口状态不可用".to_owned())?;
+    if let Err(error) = open_local_dashboard(&app, None, revision).await {
+        show_connection_error(&app, &error, revision);
         return Err(error);
     }
     Ok(())
@@ -1275,13 +1435,7 @@ async fn retry_startup(app: tauri::AppHandle) -> Result<(), String> {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Some(window) = find_dashboard(app) {
-                let _ = window.show();
-                let _ = window.unminimize();
-                let _ = window.set_focus();
-            } else {
-                show_launcher(app);
-            }
+            reopen_dashboard(app);
         }))
         .setup(|app| {
             let config_dir = app.path().app_config_dir()?;
@@ -1328,6 +1482,7 @@ fn main() {
                 dashboard_origin: Arc::new(Mutex::new(None)),
                 dashboard_child: Mutex::new(None),
                 exit_requested: Mutex::new(false),
+                primary_window: Mutex::new(PrimaryWindowIntent::default()),
             });
             let toggle = MenuItem::with_id(app, "toggle", "打开状态面板", true, None::<&str>)?;
             let open = MenuItem::with_id(app, "open", "打开主界面", true, None::<&str>)?;
@@ -1358,8 +1513,7 @@ fn main() {
             if let Err(error) = ensure_panel(app.handle()) {
                 eprintln!("[qqpet] {error}");
             }
-            show_launcher(app.handle());
-            show_dashboard_from_panel(app.handle(), None);
+            request_dashboard(app.handle(), None, true);
             Ok(())
         })
         .on_page_load(|webview, payload| {
@@ -1392,11 +1546,12 @@ fn main() {
         })
         .on_window_event(|window, event| match event {
             WindowEvent::CloseRequested { api, .. }
-                if matches!(
-                    window.label(),
-                    DASHBOARD_LABEL | LAUNCHER_LABEL | PANEL_LABEL
-                ) =>
+                if matches!(window.label(), DASHBOARD_LABEL | LAUNCHER_LABEL) =>
             {
+                api.prevent_close();
+                hide_primary_windows(window.app_handle());
+            }
+            WindowEvent::CloseRequested { api, .. } if window.label() == PANEL_LABEL => {
                 api.prevent_close();
                 let _ = window.hide();
             }
@@ -1425,8 +1580,8 @@ fn main() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building QQPet-Steward")
-        .run(|app, event| {
-            if let tauri::RunEvent::ExitRequested { api, .. } = event {
+        .run(|app, event| match event {
+            tauri::RunEvent::ExitRequested { api, .. } => {
                 let explicit = app
                     .try_state::<ShellState>()
                     .and_then(|state| state.exit_requested.lock().ok().map(|flag| *flag))
@@ -1435,6 +1590,9 @@ fn main() {
                     api.prevent_exit();
                 }
             }
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Reopen { .. } => reopen_dashboard(app),
+            _ => {}
         });
 }
 
@@ -1465,6 +1623,52 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn closing_primary_window_cancels_pending_startup_and_error_windows() {
+        let mut intent = PrimaryWindowIntent::default();
+        let startup = intent.open();
+        assert_eq!(intent.show(startup), Some(false));
+        let closed = intent.close();
+        assert!(!intent.accepts(startup));
+        assert_eq!(intent.show(startup), None);
+        assert!(intent.may_hide(closed));
+    }
+
+    #[test]
+    fn reopening_primary_window_cancels_a_delayed_dock_hide() {
+        let mut intent = PrimaryWindowIntent::default();
+        intent.open();
+        let closed = intent.close();
+        let reopened = intent.open();
+        assert!(!intent.may_hide(closed));
+        assert_eq!(intent.show(reopened), Some(true));
+        assert_eq!(intent.show(reopened), Some(false));
+    }
+
+    #[test]
+    fn a_new_open_request_rejects_an_older_queued_window() {
+        let mut intent = PrimaryWindowIntent::default();
+        let old = intent.open();
+        intent.close();
+        let current = intent.open();
+        assert_eq!(intent.show(old), None);
+        assert_eq!(intent.show(current), Some(true));
+    }
+
+    #[test]
+    fn rapid_open_close_cycles_only_allow_the_latest_dock_hide() {
+        let mut intent = PrimaryWindowIntent::default();
+        let first = intent.open();
+        intent.show(first);
+        let old_close = intent.close();
+        let second = intent.open();
+        intent.show(second);
+        let current_close = intent.close();
+        assert!(!intent.may_hide(old_close));
+        assert!(intent.may_hide(current_close));
+        assert_eq!(intent.show(second), None);
     }
 
     #[test]
