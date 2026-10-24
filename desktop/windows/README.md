@@ -30,7 +30,7 @@ py -3.13 -m venv .venv
 
 # Frontend build; dashboard.py serves web\dist directly.
 Push-Location web
-corepack enable
+npm install --global pnpm@10.18.0
 pnpm install --frozen-lockfile
 pnpm run build
 Pop-Location

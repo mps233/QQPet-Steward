@@ -46,7 +46,7 @@ jobs:
         working-directory: web
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
-          npm install --global pnpm@9.15.9
+          npm install --global pnpm@10.18.0
           pnpm install --frozen-lockfile
           pnpm run build
           pnpm test
