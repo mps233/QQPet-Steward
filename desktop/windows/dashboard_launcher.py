@@ -15,12 +15,6 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-# A frozen dashboard starts beside the portable config.  Show config.py the
-# same root before importing dashboard so first-run migration and settings
-# writes cannot accidentally target the read-only bundle.
-user_root = Path(os.environ.get("QQPET_DATA_DIR", str(Path(sys.executable).resolve().parent)))
-os.environ.setdefault("QQPET_DATA_DIR", str(user_root))
-
 
 def _snapshot_module_paths(modules):
     """Capture only path constants, so the launcher can restore them later."""
@@ -39,22 +33,6 @@ def _snapshot_module_paths(modules):
             touched[module] = values
     return touched
 
-import dashboard  # noqa: E402
-import src.progress  # noqa: E402,F401
-import src.queue_status  # noqa: E402,F401
-import src.status_cache  # noqa: E402,F401
-import src.notify  # noqa: E402,F401
-import src.notification_outbox  # noqa: E402,F401
-import src.ad_bonus  # noqa: E402,F401
-import src.coins  # noqa: E402,F401
-import src.fatigue  # noqa: E402,F401
-import src.hire_quota  # noqa: E402,F401
-import src.daily_summary  # noqa: E402,F401
-import src.tg_bot  # noqa: E402,F401
-import src.career_watch  # noqa: E402,F401
-import src.ocr  # noqa: E402,F401
-runtime_config = sys.modules["src.config"]
-
 
 def _rebind_module_paths(module, data_root: Path) -> None:
     """Move path constants that were derived from an app-bundle root."""
@@ -68,7 +46,35 @@ def _rebind_module_paths(module, data_root: Path) -> None:
             setattr(module, attr, data_root / "config.yaml")
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments[:1] == ["--self-test"]:
+        from desktop.windows.runtime_self_test import main as self_test_main
+
+        return self_test_main(arguments, entrypoint="dashboard")
+
+    # Resolve writable paths before imports, but only for normal startup.
+    # Offline verification must never create config/runs beside the real exe.
+    user_root = Path(os.environ.get(
+        "QQPET_DATA_DIR", str(Path(sys.executable).resolve().parent)))
+    os.environ.setdefault("QQPET_DATA_DIR", str(user_root))
+
+    import dashboard
+    import src.progress  # noqa: F401
+    import src.queue_status  # noqa: F401
+    import src.status_cache  # noqa: F401
+    import src.notify  # noqa: F401
+    import src.notification_outbox  # noqa: F401
+    import src.ad_bonus  # noqa: F401
+    import src.coins  # noqa: F401
+    import src.fatigue  # noqa: F401
+    import src.hire_quota  # noqa: F401
+    import src.daily_summary  # noqa: F401
+    import src.tg_bot  # noqa: F401
+    import src.career_watch  # noqa: F401
+    import src.ocr  # noqa: F401
+    runtime_config = sys.modules["src.config"]
+
     resource_root = Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
     # Keep every original path before any mutation. The launcher is a test
     # target and an embeddable entry point; restoring afterwards prevents a

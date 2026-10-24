@@ -1,0 +1,2 @@
+# Build dependency for the Windows x64 portable release.
+PyInstaller==6.22.3

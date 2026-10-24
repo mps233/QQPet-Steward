@@ -1,47 +1,26 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller entry for the Windows hosted dashboard.
-
-The launcher binds this frozen executable to PyInstaller's unpacked resource
-root before importing ``dashboard``.  The scheduler is a sibling executable
-built by QQPetCopilotScheduler.spec.
-"""
+"""Windows dashboard with the same dependency graph as its sibling scheduler."""
+import sys
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_all, collect_data_files
+WINDOWS_DIR = Path(SPECPATH).resolve()
+ROOT = WINDOWS_DIR.parent.parent
+sys.path.insert(0, str(ROOT))
+from desktop.windows.build_portable import entry_scripts, runtime_spec_inputs
 
-ROOT = Path(SPECPATH).resolve().parent.parent.parent
-
-datas = []
-binaries = []
-hiddenimports = []
-
-datas += [
-    (str(ROOT / "config.example.yaml"), "."),
-    (str(ROOT / "web" / "dist"), "web/dist"),
-    (str(ROOT / "static"), "static"),
-]
-if (ROOT / "models" / "rapidocr").is_dir():
-    datas.append((str(ROOT / "models" / "rapidocr"), "models/rapidocr"))
-if (ROOT / "resources").is_dir():
-    datas.append((str(ROOT / "resources"), "resources"))
-
-datas += collect_data_files("uiautomator2")
-rapidocr_datas, rapidocr_binaries, rapidocr_hidden = collect_all("rapidocr")
-datas += [item for item in rapidocr_datas
-          if not str(item[0]).lower().endswith(".onnx")]
-binaries += rapidocr_binaries
-hiddenimports += rapidocr_hidden
+datas, binaries, hiddenimports = runtime_spec_inputs()
 
 a = Analysis(
-    [str(ROOT / "desktop" / "windows" / "dashboard_launcher.py")],
+    [str(WINDOWS_DIR / "dashboard_launcher.py"),
+     str(WINDOWS_DIR / "scheduler_launcher.py")],
     pathex=[str(ROOT)],
     binaries=binaries,
     datas=datas,
-    hiddenimports=hiddenimports + ["dashboard_launcher", "src.runtime_process"],
+    hiddenimports=hiddenimports,
     excludes=[
-        "frida", "frida._frida", "frida.aio", "frida_tools",
-        "prompt_toolkit", "pygments", "websockets", "wcwidth",
-        "PyQt6", "PyQt6.QtCore", "PyQt6.QtGui", "PyQt6.QtWidgets",
+        "PyQt6", "PyQt5", "tkinter", "torch", "paddle", "openvino",
+        "tensorrt", "MNN", "prompt_toolkit", "pygments", "websockets",
+        "matplotlib", "kiwisolver",
     ],
     noarchive=False,
     optimize=0,
@@ -54,14 +33,14 @@ a.binaries = [
 pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
-    a.scripts,
+    entry_scripts(a.scripts, "dashboard_launcher.py"),
     [],
     exclude_binaries=True,
     name="QQPetCopilot",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -70,11 +49,5 @@ exe = EXE(
     entitlements_file=None,
 )
 coll = COLLECT(
-    exe,
-    a.binaries,
-    a.datas,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    name="QQPetCopilot",
+    exe, a.binaries, a.datas, strip=False, upx=False, name="QQPetCopilot",
 )

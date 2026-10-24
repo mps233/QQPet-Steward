@@ -23,9 +23,6 @@ if str(ROOT) not in sys.path:
 # Scenarios and the dashboard both write under the data root.  Set it before any
 # src.* import so frozen builds never inherit PyInstaller's read-only bundle.
 data_root = Path(os.environ.get("QQPET_DATA_DIR", str(Path(sys.executable).resolve().parent)))
-data_root.mkdir(parents=True, exist_ok=True)
-(data_root / "runs").mkdir(parents=True, exist_ok=True)
-os.environ["QQPET_DATA_DIR"] = str(data_root)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -34,6 +31,16 @@ def main(argv: list[str] | None = None) -> int:
     ``argv`` exists for offline tests; the packaged executable calls ``main()``
     with no arguments and preserves the process's original ``sys.argv``.
     """
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments[:1] == ["--self-test"]:
+        from desktop.windows.runtime_self_test import main as self_test_main
+
+        return self_test_main(arguments, entrypoint="scheduler")
+
+    data_root.mkdir(parents=True, exist_ok=True)
+    (data_root / "runs").mkdir(parents=True, exist_ok=True)
+    os.environ["QQPET_DATA_DIR"] = str(data_root)
+
     # Import config only after QQPET_DATA_DIR is set, then redirect roots that
     # runner and scenario imports resolve from. RESOURCE_ROOT stays on
     # PyInstaller's _MEIPASS for bundled models and binaries.

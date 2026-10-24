@@ -1,9 +1,9 @@
-# Windows hosted edition (portable milestone)
+# QQPet-Steward for Windows (portable)
 
-This directory is the **Windows first milestone**: a portable, uninstalled
-directory build.  MSI/installer, uninstall, startup registration, and
-auto-start are the **second milestone** and are intentionally not implemented
-here.
+This is the Windows x64 portable edition. It includes Python, the dashboard,
+scheduler, ADB, OCR models, and device-control resources. Extract the complete
+directory and run `start_portable.bat`; the interface is the local browser
+dashboard. An MSI installer and a native desktop shell are not included.
 
 ## Product shape
 
@@ -26,8 +26,7 @@ available:
 
 ```powershell
 py -3.13 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-dev.txt
-.\.venv\Scripts\python.exe -m pip install pyinstaller
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt -r desktop\windows\requirements-build.txt
 
 # Frontend build; dashboard.py serves web\dist directly.
 Push-Location web
@@ -36,27 +35,27 @@ pnpm install --frozen-lockfile
 pnpm run build
 Pop-Location
 
-# Optional local resources; failures are reported but do not hide missing assets.
-.\.venv\Scripts\python.exe tools\fetch_ocr_models.py
-.\.venv\Scripts\python.exe tools\fetch_minitouch.py --arch x86_64 arm64-v8a
-.\.venv\Scripts\python.exe tools\fetch_scrcpy.py
-
-# Static validation always runs; this command builds only on Windows.
-.\.venv\Scripts\python.exe desktop\windows\build_portable.py --check
+# Download and verify every required resource, then freeze on Windows.
 .\.venv\Scripts\python.exe desktop\windows\build_portable.py
 ```
 
 The default output is:
 
 ```text
-dist\QQPetCopilot-Windows-x64\QQPetCopilot.exe
-dist\QQPetCopilot-Windows-x64\QQPetCopilotScheduler.exe
-dist\QQPetCopilot-Windows-x64.zip
+dist\QQPet-Steward_<version>_windows_x64\QQPetCopilot.exe
+dist\QQPet-Steward_<version>_windows_x64\QQPetCopilotScheduler.exe
+dist\QQPet-Steward_<version>_windows_x64.zip
+dist\QQPet-Steward_<version>_windows_x64.zip.sha256
 ```
 
 Use `--no-fetch` to skip network downloads, `--clean` to remove `build\` and the
 portable output directory before building, and `--no-zip` to keep only the
-directory.
+directory. `--check` performs read-only validation of an already prepared
+checkout. Missing resources and failed downloads block packaging.
+
+The `Build Windows portable` GitHub Actions workflow builds on a Windows x64
+runner, tests the helpers, then runs both frozen executables and local HTTP
+checks before uploading a downloadable artifact.
 
 ## Start and stop
 
@@ -109,9 +108,10 @@ every `runs\...` / `config.yaml` path to that directory.  This keeps
 logs, access tokens, and configuration remain writable and upgrade-safe.
 
 ADB can be discovered from `PATH` or configured in `config.yaml`.  Bundled
-`resources\scrcpy-win64\adb.exe` is preferred when present.  The build script
-copies `resources\` when it exists but does not fabricate or download ADB
-silently; `fetch_scrcpy.py` is the explicit preparation step.
+`resources\platform-tools\adb.exe` inside the frozen resource directory is
+preferred when present. The builder obtains the Windows ADB executable and its
+two DLLs through the existing scrcpy resource downloader; it does not include
+the unused scrcpy video tools in the portable package.
 
 ## Assets and models
 
@@ -120,13 +120,16 @@ The spec bundles:
 * `web\dist\` (the React dashboard);
 * `static\` (PWA icons and room backgrounds);
 * `config.example.yaml`;
-* `models\rapidocr\` when downloaded;
-* optional `resources\` binaries.
+* exactly three verified OCR models under `models\rapidocr\`;
+* ADB and its DLLs, four Android minitouch binaries, two version-matched Frida
+  server archives, and the Frida Java bridge;
+* the public task-image templates used by the scheduler.
 
-`web\dist` is a build output and is not committed.  `models\rapidocr` and
-`resources` are also intentionally outside Git; a package built without them
-can still run the dashboard but OCR or simulator recovery may require a
-network download or a manually supplied resource.
+`web\dist`, downloaded models, and `resources` stay outside Git. The builder
+downloads OCR assets into an isolated build directory and copies only selected
+files. It rejects incomplete resources instead of publishing a reduced package.
+Real `config.yaml`, logs, progress, access codes, and pairing records are never
+build inputs.
 
 ## Why two executables?
 
@@ -144,10 +147,22 @@ passes `extra_args` after the frozen executable unchanged.
 
 ## Verification status
 
-The helper and packaging script are syntax-checked and unit-tested on macOS.
-The actual PyInstaller build, Windows process creation, firewall prompts,
-device connection, and graceful-stop behavior require real Windows
-verification; they are not claimed by the macOS checks.
+The native verifier is intended to run on Windows after the build:
+
+```powershell
+.\.venv\Scripts\python.exe desktop\windows\verify_portable.py `
+  --directory dist\QQPet-Steward_<version>_windows_x64 `
+  --report build\windows-verification.json
+```
+
+It checks AMD64 executables, rejects user data in the package, runs both frozen
+offline self-tests, then starts an isolated local dashboard to check the React
+page, assets, client protocol, authentication, and status response. Its data and
+access code stay in temporary directories, outside the portable output.
+
+This does not run an Android device or exercise emulator recovery, real device
+input, firewall prompts, or all Windows desktop versions. The release binaries
+are not Authenticode-signed; Windows may show an unknown-publisher warning.
 
 The main `dashboard.py` already uses:
 

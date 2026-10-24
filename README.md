@@ -8,21 +8,23 @@
 本版在它的基础上做了 **macOS 适配**，以 React 仪表盘统一 macOS 本机 App 与手机浏览器界面；
 与上游的差异见 [MAC-PORT.md](MAC-PORT.md)。
 
-> 调度器与仪表盘主要在 macOS 上验证，Windows / Linux 未实测。
+> 调度器与仪表盘主要在 macOS 上验证；Windows 便携版通过原生 CI 构建和离线验收，
+> Windows 真实设备操作与 Linux 运行仍需实机验证。
 
 ## 客户端与运行方式
 
 - **Android / 手机 PWA**：现有 React 仪表盘，作为**遥控端**连接 Windows / macOS 上的托管服务；手机不跑 OCR、ADB 或 Python。
 - **同源浏览器**：直接打开 `http://<电脑IP>:8787/` 仍用访问码 + Cookie；根页面壳公开以便远程客户端进入配对门禁，所有数据/文件 API 仍然鉴权。
 - **macOS `.app`**：由 `desktop/macos/` 构建的 `QQPet-Steward.app`，包含 UI、Python、仪表盘后台和调度器；打开后自动启动本机后台并进入界面，无需填写 URL 或另装 Python。App 自动通过 launchd 托管后台，已有源码托管实例会继续被采用；关闭窗口或退出 App 不会主动停止任务。
-- **Windows 便携版**：`desktop/windows/` 的 onedir 打包脚手架，仪表盘与调度器是两个 exe；安装器、开机自启属于下一阶段。
+- **Windows x64 便携版**：完整解压后运行 `start_portable.bat`，使用浏览器仪表盘；包含 Python、ADB、OCR 与后台，仪表盘和调度器是两个 exe。当前不提供 MSI 安装器或原生桌面外壳。
 
 手机首次连接点「打开连接设置」或「扫码配对」：电脑在「设置 → 手机遥控」生成一次性二维码/链接。配对使用一次性票据换取设备 Bearer Token，
 票据 5 分钟有效且只能用一次；设备可在同一页撤销。Cookie 仍用于同源浏览器，不会跨域复用。
 
-macOS 安装包见 [GitHub Releases](https://github.com/mps233/QQPet-Steward/releases/latest)，
-提供 DMG、ZIP 和 SHA-256 校验文件。当前面向 **Apple Silicon / macOS 14 及以上**，
-采用 ad hoc 签名，尚未完成 Apple 公证；首次打开可能需要按 macOS 安全设置中的提示处理。
+安装包见 [GitHub Releases](https://github.com/mps233/QQPet-Steward/releases/latest)，
+提供 macOS DMG/ZIP、Windows x64 便携 ZIP 和 SHA-256 校验文件。
+Mac 版面向 **Apple Silicon / macOS 14 及以上**，采用 ad hoc 签名，尚未完成 Apple 公证；
+Windows 版尚未做 Authenticode 签名。首次打开可能需要按系统安全提示处理。
 
 构建完整 macOS App：
 
@@ -42,7 +44,8 @@ desktop/macos/scripts/build-macos.sh
 `src.runtime_process` 在源码模式选择 `.venv/bin/python` / `.venv\Scripts\python.exe`；
 macOS 冻结版执行随包 `QQPetRuntime scheduler`，Windows 冻结版维持同级 scheduler exe。
 Windows 停止进程使用 `CTRL_BREAK_EVENT → taskkill /T → /F`，POSIX 保持
-`SIGINT → SIGTERM → SIGKILL`。Windows 打包与真实进程行为仍需在 Windows 实机验证。
+`SIGINT → SIGTERM → SIGKILL`。Windows 工作流在原生 runner 验证冻结 exe 和本机服务；
+真实 Android 设备与各类模拟器流程仍需在 Windows 实机验证。
 
 macOS 打包版默认把配置和进度放在 `~/Library/Application Support/QQPetCopilot/`，
 可通过 `QQPET_DATA_DIR` 指定数据根；采用已有后台时沿用它的数据。App 的只读运行资源与用户数据分开，
