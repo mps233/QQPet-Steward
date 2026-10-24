@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import io
 import json
 import os
@@ -220,3 +221,42 @@ def test_ocr_probe_runs_classifier_and_recognizer_when_detection_is_empty():
     assert calls == ["det", "cls", "rec"]
     assert observed["ocrModelsExecuted"] == calls
     assert observed["ocrDetectedLines"] == 0
+
+
+@pytest.mark.parametrize("entrypoint", ["dashboard", "scheduler"])
+def test_normal_launcher_encodes_redirected_logs_as_utf8(monkeypatch, entrypoint):
+    launcher = importlib.import_module(f"desktop.windows.{entrypoint}_launcher")
+    output_bytes, error_bytes = io.BytesIO(), io.BytesIO()
+    output = io.TextIOWrapper(output_bytes, encoding="cp1252")
+    errors = io.TextIOWrapper(error_bytes, encoding="cp1252")
+    message = "\u4eea\u8868\u76d8\u5df2\u542f\u52a8"
+    with pytest.raises(UnicodeEncodeError):
+        output.write(message)
+    with monkeypatch.context() as streams:
+        streams.setattr(sys, "stdout", output)
+        streams.setattr(sys, "stderr", errors)
+        launcher._configure_standard_streams()
+        print(message, flush=True)
+        print(message + "\udcff", file=sys.stderr, flush=True)
+    assert output_bytes.getvalue() == (message + "\n").encode("utf-8")
+    assert error_bytes.getvalue() == (message + "?\n").encode("utf-8")
+
+
+@pytest.mark.parametrize("entrypoint", ["dashboard", "scheduler"])
+def test_normal_launcher_stream_setup_allows_windowed_and_custom_streams(
+    monkeypatch, entrypoint
+):
+    launcher = importlib.import_module(f"desktop.windows.{entrypoint}_launcher")
+    with monkeypatch.context() as streams:
+        streams.setattr(sys, "stdout", None)
+        streams.setattr(sys, "stderr", io.StringIO())
+        launcher._configure_standard_streams()
+
+    class UnsupportedStream:
+        def reconfigure(self, **_options):
+            raise OSError("stream cannot be reconfigured")
+
+    with monkeypatch.context() as streams:
+        streams.setattr(sys, "stdout", UnsupportedStream())
+        streams.setattr(sys, "stderr", None)
+        launcher._configure_standard_streams()

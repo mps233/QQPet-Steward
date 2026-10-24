@@ -46,12 +46,26 @@ def _rebind_module_paths(module, data_root: Path) -> None:
             setattr(module, attr, data_root / "config.yaml")
 
 
+def _configure_standard_streams() -> None:
+    # Frozen Python can ignore PYTHONUTF8 and inherit a Western code page for
+    # redirected logs. Configure live streams before imports print Chinese.
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except (OSError, ValueError, TypeError):
+                pass
+
+
 def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
     if arguments[:1] == ["--self-test"]:
         from desktop.windows.runtime_self_test import main as self_test_main
 
         return self_test_main(arguments, entrypoint="dashboard")
+
+    _configure_standard_streams()
 
     # Resolve writable paths before imports, but only for normal startup.
     # Offline verification must never create config/runs beside the real exe.

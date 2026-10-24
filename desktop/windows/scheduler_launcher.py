@@ -25,6 +25,18 @@ if str(ROOT) not in sys.path:
 data_root = Path(os.environ.get("QQPET_DATA_DIR", str(Path(sys.executable).resolve().parent)))
 
 
+def _configure_standard_streams() -> None:
+    # Frozen Python can ignore PYTHONUTF8 and inherit a Western code page for
+    # redirected logs. Configure live streams before imports print Chinese.
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except (OSError, ValueError, TypeError):
+                pass
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the real scheduler CLI with its original ``__main__`` semantics.
 
@@ -36,6 +48,8 @@ def main(argv: list[str] | None = None) -> int:
         from desktop.windows.runtime_self_test import main as self_test_main
 
         return self_test_main(arguments, entrypoint="scheduler")
+
+    _configure_standard_streams()
 
     data_root.mkdir(parents=True, exist_ok=True)
     (data_root / "runs").mkdir(parents=True, exist_ok=True)
