@@ -27,9 +27,12 @@
         <div class="hero-top">
           <span id="runner-dot" class="runner-dot idle" aria-hidden="true"></span>
           <strong id="runner-state">正在读取托管状态</strong>
+          <span class="runner-uptime" aria-live="off">已运行 <b id="uptime">—</b></span>
+        </div>
+        <div class="activity-row">
+          <p id="activity" class="activity">连接本机仪表盘…</p>
           <span id="remaining" class="remaining"></span>
         </div>
-        <p id="activity" class="activity">连接本机仪表盘…</p>
         <p id="detail" class="detail"></p>
         <div class="mini-stats">
           <span><b id="learn-min">—</b> 学习</span>
@@ -46,7 +49,6 @@
         <div class="summary-grid">
           <span><b id="today-total">—</b><small>分钟合计</small></span>
           <span><b id="queue-pending">—</b><small>待执行</small></span>
-          <span><b id="uptime">—</b><small>已运行</small></span>
         </div>
       </section>
 
