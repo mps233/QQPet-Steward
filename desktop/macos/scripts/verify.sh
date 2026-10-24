@@ -4,7 +4,7 @@ set -euo pipefail
 
 DESKTOP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 ROOT="$(cd "$DESKTOP_DIR/../.." && pwd -P)"
-PYTHON="$ROOT/.venv/bin/python"
+PYTHON="${QQPET_BUILD_PYTHON:-$ROOT/.venv/bin/python}"
 APP="${1:-}"
 
 if [ -z "$APP" ]; then
@@ -37,6 +37,7 @@ BIN="$APP/Contents/MacOS/qqpet-dashboard-desktop"
 [ -x "$BIN" ] || { echo "找不到可执行文件：$BIN" >&2; exit 1; }
 file "$BIN" | rg -q 'Mach-O 64-bit executable arm64|Mach-O 64-bit executable x86_64' \
   || { echo "不是预期的 Mach-O 可执行文件" >&2; exit 1; }
+"$PYTHON" "$DESKTOP_DIR/check_bundle_compatibility.py" --app "$APP"
 codesign --verify --deep --strict "$APP"
 
 RUNTIME="$APP/Contents/Resources/backend/QQPetRuntime"

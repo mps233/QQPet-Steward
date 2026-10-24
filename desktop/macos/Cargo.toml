@@ -1,6 +1,6 @@
 [package]
 name = "qqpet-dashboard-desktop"
-version = "0.1.0"
+version = "0.8.0"
 description = "macOS shell for the QQ Pet dashboard"
 authors = ["QQ Pet Copilot contributors"]
 edition = "2021"

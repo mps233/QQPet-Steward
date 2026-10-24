@@ -4,7 +4,7 @@ set -euo pipefail
 
 DESKTOP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 ROOT="$(cd "$DESKTOP_DIR/../.." && pwd -P)"
-PYTHON="$ROOT/.venv/bin/python"
+PYTHON="${QQPET_BUILD_PYTHON:-$ROOT/.venv/bin/python}"
 OUTPUT_DIR="$DESKTOP_DIR/target/runtime"
 RUNTIME="$OUTPUT_DIR/QQPetRuntime/QQPetRuntime"
 FINGERPRINT_FILE="$OUTPUT_DIR/.runtime-fingerprint"

@@ -5,7 +5,7 @@ set -euo pipefail
 DESKTOP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 ROOT="$(cd "$DESKTOP_DIR/../.." && pwd)"
 WEB_DIR="$ROOT/web"
-PYTHON="$ROOT/.venv/bin/python"
+PYTHON="${QQPET_BUILD_PYTHON:-$ROOT/.venv/bin/python}"
 SOURCE_RUNTIME="$DESKTOP_DIR/target/runtime/QQPetRuntime"
 APP_IDENTIFIER="ai.qqpet.dashboard.desktop"
 APP_NAME="QQPet-Steward.app"

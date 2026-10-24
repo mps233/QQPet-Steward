@@ -20,6 +20,10 @@
 手机首次连接点「打开连接设置」或「扫码配对」：电脑在「设置 → 手机遥控」生成一次性二维码/链接。配对使用一次性票据换取设备 Bearer Token，
 票据 5 分钟有效且只能用一次；设备可在同一页撤销。Cookie 仍用于同源浏览器，不会跨域复用。
 
+macOS 安装包见 [GitHub Releases](https://github.com/mps233/QQPet-Steward/releases/latest)，
+提供 DMG、ZIP 和 SHA-256 校验文件。当前面向 **Apple Silicon / macOS 14 及以上**，
+采用 ad hoc 签名，尚未完成 Apple 公证；首次打开可能需要按 macOS 安全设置中的提示处理。
+
 构建完整 macOS App：
 
 ```bash
