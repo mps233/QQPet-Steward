@@ -227,8 +227,8 @@ def test_ocr_probe_runs_classifier_and_recognizer_when_detection_is_empty():
 def test_normal_launcher_encodes_redirected_logs_as_utf8(monkeypatch, entrypoint):
     launcher = importlib.import_module(f"desktop.windows.{entrypoint}_launcher")
     output_bytes, error_bytes = io.BytesIO(), io.BytesIO()
-    output = io.TextIOWrapper(output_bytes, encoding="cp1252")
-    errors = io.TextIOWrapper(error_bytes, encoding="cp1252")
+    output = io.TextIOWrapper(output_bytes, encoding="cp1252", newline="\n")
+    errors = io.TextIOWrapper(error_bytes, encoding="cp1252", newline="\n")
     message = "\u4eea\u8868\u76d8\u5df2\u542f\u52a8"
     with pytest.raises(UnicodeEncodeError):
         output.write(message)
