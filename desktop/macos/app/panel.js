@@ -22,6 +22,8 @@ const notice = $('#notice');
 const panelCard = $('#panel-card');
 const scrim = $('#scrim');
 let snapshot = null;
+let sampledAt = 0;
+let connected = false;
 let paused = false;
 let busy = false;
 
@@ -48,13 +50,35 @@ const setText = (node, value) => {
   if (node) node.textContent = value == null || value === '' ? '—' : String(value);
 };
 
-const secsText = (value) => {
+const secsText = (value, showHours = false) => {
   const n = Math.max(0, Number(value) || 0);
   const h = Math.floor(n / 3600);
   const m = Math.floor((n % 3600) / 60);
   const s = Math.floor(n % 60);
-  return h ? `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+  return h || showHours ? `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
     : `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+};
+
+const uptimeSeconds = (value) => {
+  const match = /^(?:(\d+)-)?(\d+):([0-5]\d)(?::([0-5]\d))?$/.exec(value || '');
+  if (!match || (match[1] && !match[4])) return null;
+  const hours = match[4] ? Number(match[2]) : 0;
+  const minutes = Number(match[4] ? match[3] : match[2]);
+  const seconds = (Number(match[1] || 0) * 24 + hours) * 3600
+    + minutes * 60 + Number(match[4] || match[3]);
+  return minutes <= 59 && Number.isSafeInteger(seconds) ? seconds : null;
+};
+
+const renderClocks = () => {
+  if (!connected || !snapshot) return;
+  // Use elapsed time so a throttled or hidden panel catches up on its next tick.
+  const elapsed = Math.max(0, Math.floor((Date.now() - sampledAt) / 1000));
+  const scheduler = snapshot.scheduler || {};
+  const remain = Math.max(0, Number(snapshot.work_eta?.remaining || 0) - elapsed);
+  remaining.textContent = scheduler.alive && remain > 0 ? secsText(remain) : '';
+  const base = uptimeSeconds(scheduler.uptime);
+  setText(uptime, !scheduler.alive ? null
+    : base == null ? scheduler.uptime : secsText(base + elapsed, true));
 };
 
 const setConnection = (state, label) => {
@@ -70,16 +94,16 @@ const setBusy = (value) => {
 
 const render = (data) => {
   snapshot = data;
+  sampledAt = Date.now();
+  connected = true;
   const scheduler = data?.scheduler || {};
   const queue = data?.queue || {};
   const today = data?.today_duration || {};
-  const eta = data?.work_eta || {};
   const alive = !!scheduler.alive;
   setConnection('online', '本机在线');
   runnerDot.className = 'runner-dot ' + (!alive ? 'idle' : paused ? 'paused' : 'on');
   runnerState.textContent = !alive ? '托管未启动' : paused ? '托管已暂停' : '托管运行中';
-  const remain = Number(eta.remaining || 0);
-  remaining.textContent = remain > 0 ? secsText(remain) : '';
+  renderClocks();
   activity.textContent = !alive ? '调度器当前未运行'
     : queue.current ? `${queue.current}进行中`
       : queue.next ? `等待下一项：${queue.next}` : '等待下一项任务';
@@ -89,7 +113,6 @@ const render = (data) => {
   setText(effPct, today.eff_pct == null ? null : `${today.eff_pct}%`);
   setText(todayTotal, today.total_min);
   setText(queuePending, queue.pending_count ?? 0);
-  setText(uptime, scheduler.uptime || '—');
   setText(nextTask, queue.next ? `下一项 ${queue.next}` : '');
   toggleRunner.textContent = alive ? '停止托管' : '启动托管';
   toggleRunner.classList.toggle('running', alive);
@@ -100,10 +123,12 @@ const render = (data) => {
 };
 
 const renderOffline = (message) => {
+  connected = false;
   setConnection('offline', '本机离线');
   runnerDot.className = 'runner-dot error';
   runnerState.textContent = '托管服务离线';
   remaining.textContent = '';
+  setText(uptime, null);
   activity.textContent = message || '无法读取本机仪表盘';
   detail.textContent = '请确认后台服务是否仍在运行';
   toggleRunner.disabled = true;
@@ -125,6 +150,11 @@ const refresh = async () => {
   } catch (error) {
     renderOffline(String(error));
   }
+};
+
+const refreshOnShow = () => {
+  renderClocks();
+  void refresh();
 };
 
 const act = async (command, successText) => {
@@ -164,12 +194,21 @@ document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') void call('panel_hide');
 });
 
-window.__qpetRefresh = refresh;
+window.__qpetRefresh = refreshOnShow;
 window.__qpetPlace = place;
 window.addEventListener('resize', place);
 void refresh();
-window.addEventListener('qpet-panel-show', () => void refresh());
+window.addEventListener('qpet-panel-show', refreshOnShow);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') refreshOnShow();
+});
+const clockTimer = window.setInterval(() => {
+  if (document.visibilityState === 'visible') renderClocks();
+}, 1000);
 const timer = window.setInterval(() => {
   if (document.visibilityState === 'visible') void refresh();
 }, 5000);
-window.addEventListener('beforeunload', () => window.clearInterval(timer));
+window.addEventListener('beforeunload', () => {
+  window.clearInterval(timer);
+  window.clearInterval(clockTimer);
+});
