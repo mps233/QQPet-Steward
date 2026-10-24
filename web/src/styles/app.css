@@ -1219,25 +1219,25 @@ main section[data-page]{min-height:100%}  /* .home 与内页共用（内页另�
 .mcb.on::after{transform:translate(calc(var(--u) * 9),-50%)}
 /* 任务名：字号/字重跟着 u 走；禁用态只用"灰 + 常规字重"，**不再划删除线**
    （line-through 压在毛玻璃上又脏又像报错，用户实报"排版和样式有点丑"）。 */
-.mname{font-weight:600;font-size:calc(var(--u) * 12.5);line-height:1.4;color:var(--strong);white-space:nowrap}
+.mname{flex:none;font-weight:600;font-size:calc(var(--u) * 12.5);line-height:1.4;color:var(--strong);white-space:nowrap}
 /* 行右侧一簇：对象名 + 状态文字，整体贴右（与勾选框之间留 gap）。
    auto 边距放这里而不是 .mdet，是为了"有对象名"的行也能右对齐 */
 .mright{
-  margin-left:auto;display:flex;align-items:center;
-  gap:calc(var(--u) * 5);min-width:0;flex:0 1 auto;
+  margin-left:auto;display:flex;align-items:center;justify-content:flex-end;
+  gap:calc(var(--u) * 5);min-width:0;flex:1 1 0;overflow:hidden;
 }
 /* 任务名的"对象"小字（好友护理 → 喵帕斯～、雇佣好友 → 柠檬..）：
    浅色、小一号、超长省略 */
 .msub{
   font-size:calc(var(--u) * 10.5);color:var(--sub);
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-  min-width:calc(var(--u) * 33);   /* 再怎么挤也留 3 个字的位置，别缩成"喵…" */
+  min-width:0;flex:1 1 auto;
 }
 .mname.off{color:var(--sub);font-weight:400}
 /* 行右侧状态：做成小气泡。底色是半透明暖白玻璃，靠内高光让边缘"鼓"起来；
    状态颜色只改字色，气泡本身保持轻，不回到"每条一个彩色胶囊"的老路。 */
 .mdet{
-  flex:none;
+  flex:0 1 auto;min-width:0;max-width:100%;overflow:hidden;
   display:inline-flex;align-items:center;justify-content:center;
   gap:calc(var(--u) * 4);
   height:calc(var(--u) * 17);
@@ -1252,6 +1252,8 @@ main section[data-page]{min-height:100%}  /* .home 与内页共用（内页另�
   line-height:1;letter-spacing:.01em;
   font-variant-numeric:tabular-nums;white-space:nowrap;
 }
+.mrow.has-place .mdet{max-width:55%}
+.mstatus{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mdet.run{
   color:#8E5300;font-weight:650;
   border-color:rgba(255,220,160,.54);
@@ -1267,6 +1269,7 @@ main section[data-page]{min-height:100%}  /* .home 与内页共用（内页另�
 /* 完成态是一颗绿色玻璃珠：勾用 SVG 画（字体的 ✓ 在 9px 下既歪又低，
    怎么调 baseline 都差半像素，换成图形后可以做到几何居中）。 */
 .mdet.done{
+  flex:none;
   width:calc(var(--u) * 17);height:calc(var(--u) * 17);
   padding:0;border-radius:50%;
   color:#6F8C49;

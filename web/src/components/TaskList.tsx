@@ -12,6 +12,7 @@ import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } 
 import { useEffect, useMemo, useState } from 'react'
 import { applyOptim, effectiveValue, reconcile, rollbackOptim } from '../lib/optimistic'
 import { taskListSnapshot } from '../lib/task-list'
+import { schoolCourseName } from '../lib/school-course'
 import {
   TASK_NAME,
   isLoopTask,
@@ -54,6 +55,7 @@ function RowBody({
   nowDate,
   onToggle,
   on,
+  place,
 }: {
   k: string
   t: QueueTaskState | undefined
@@ -66,6 +68,7 @@ function RowBody({
   onToggle: (k: string, on: boolean) => Promise<unknown>
   /** 当前是否启用 —— 由 TaskList 算好（含"刚点下去、请求还没回来"的乐观值） */
   on: boolean
+  place?: string
 }) {
   const isPend = !!pendingKey && k === pendingKey
   const isActive = !!activeKey && k === activeKey
@@ -75,16 +78,17 @@ function RowBody({
     <>
       <span className={'mname' + (on ? '' : ' off')}>{TASK_NAME[k] ?? k}</span>
       <span className="mright">
+        {place ? <span className="msub" title={place}>{place}</span> : null}
         {det.text || det.cls === 'done' ? (
           <span
             className={'mdet' + (det.cls ? ` ${det.cls}` : '')}
-            title={det.cls === 'done' ? '今日完成' : undefined}
+            title={det.cls === 'done' ? '今日完成' : det.text}
           >
             {det.cls === 'done' ? (
               <svg className="mcheck" viewBox="0 0 16 16" aria-hidden="true">
                 <path d="M4.2 8.2 6.9 10.8 11.9 5.2" />
               </svg>
-            ) : det.text}
+            ) : <span className="mstatus">{det.text}</span>}
           </span>
         ) : null}
       </span>
@@ -127,6 +131,7 @@ function SortableRow(props: {
   /** 返回 Promise —— 失败时调用方要回滚乐观值（见 handleToggle），不能丢弃 */
   onToggle: (k: string, on: boolean) => Promise<unknown>
   on: boolean
+  place?: string
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: props.k,
@@ -136,7 +141,9 @@ function SortableRow(props: {
       ref={setNodeRef}
       // 'sortable' 这个 class 是给 CSS 用的（.mrow.sortable{touch-action:none}）——
       // touch-action 必须在触摸开始前就声明好，不能等 onDragStart 再加。
-      className={rowClass(props.k, props.t, props.activeKey) + ' sortable' + (isDragging ? ' dragging' : '')}
+      className={rowClass(props.k, props.t, props.activeKey) + ' sortable'
+        + (props.place ? ' has-place' : '')
+        + (isDragging ? ' dragging' : '')}
       data-k={props.k}
       style={{
         transform: transform ? `translate3d(0, ${Math.round(transform.y)}px, 0)` : undefined,
@@ -199,6 +206,14 @@ export function TaskList({
   const keys = Object.keys(qt)
   const loop = keys.filter(isLoopTask)
   const rest = keys.filter((k) => !isLoopTask(k))
+  const places: Record<string, string> = {
+    school: schoolCourseName(
+      data.progress.school?.school,
+      data.editable?.school_attribute,
+      data.editable?.school_duration,
+    ),
+    work: data.config?.work_location?.trim() || '待设置',
+  }
 
   // **触摸用 TouchSensor、鼠标用 MouseSensor**（dnd-kit 官方推荐的组合）。
   // 原来只用 PointerSensor —— iOS 上它在滚动容器（.page-slot / .home）里会被浏览器的
@@ -309,6 +324,7 @@ export function TaskList({
                       nowDate={nowDate}
                       onToggle={handleToggle}
                       on={effectiveOn(k)}
+                      place={places[k]}
                     />
                   ))}
                 </div>

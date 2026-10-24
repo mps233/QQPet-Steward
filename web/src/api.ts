@@ -129,6 +129,8 @@ export interface TaskProgress {
   date?: string
   learned?: number
   done?: boolean
+  /** 最近从选课面板识别到的学园阶段 */
+  school?: string
   study_secs?: number
   work_secs?: number
   duration?: string
