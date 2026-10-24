@@ -353,10 +353,18 @@ class WorkScenario(DeviceScenario):
         raise RuntimeError(f'多次未能进入打工地点面板: {self.location}')
 
     def panel_location(self, screen=None) -> str | None:
-        """当前面板的地点名：力量/智力/魅力属性面板正下方第一串字符（整屏 OCR）。"""
+        """确认工作面板已打开，再读属性条下方中央的地点标签。"""
         if screen is None:
             screen = self.screen()
-        return parse_panel_location(ocr_fullscreen(screen))
+        results = [row for row in ocr_fullscreen(screen) if row[3] >= OCR_MIN_SCORE]
+        # 地图上也有地点名；必须看到同帧的工作面板，不能依赖已缓存的选择框坐标。
+        # 体力/清洁不足会替换开始按钮，此时仍可用工作详情确认面板，交给后续护理。
+        has_start = find_text(results, '去打工')
+        has_details = find_text(results, '工分') and (
+            find_text(results, '用时') or find_text(results, '雇佣有额外加成'))
+        if not has_start and not has_details:
+            return None
+        return parse_panel_location(results, screen_width=screen.shape[1])
 
     def is_correct_place_panel(self, screen=None) -> bool:
         """判断当前工作面板是不是配置的打工地点（OCR 地点名 == self.location）。"""

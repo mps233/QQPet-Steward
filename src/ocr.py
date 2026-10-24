@@ -326,17 +326,16 @@ def parse_employed_ratio(
 
 def parse_panel_location(
     results: list[tuple[str, int, int, float]],
+    screen_width: int | None = None,
 ) -> str | None:
     """在 OCR 结果中解析当前面板的地点名。
 
-    取"力量/智力/魅力"属性面板所在行正下方第一串字符——那是当前打工地点的名字，
-    用于确认当前工作面板是不是配置的打工地点；同一行内多个 OCR 碎片时取
-    离屏幕中心 x 最近的一个（地点名在面板上横向居中，右侧装饰等误识别
-    碎片通常偏在一边）。小镇地图页下方第一行是地点卡片名（通常与配置不符），
-    据此也能区分"在小镇地图 vs 在打工面板"。
-    跳过不含中文的 OCR 误识别碎片（如属性面板下方的装饰元素）
-    避免把这类短串当地点名导致打工面板确认失败。
-    返回去空格后的文字；属性面板没识别到返回 None。
+    当前地点标签在属性条下方的画面中央；两侧仍会露出其他建筑名，
+    不能把整屏最靠上的中文当地点（云朵梦舍旁的闪耀星屋会先被选中）。
+    只在属性条下方 0.45 倍屏宽、中央左右各 0.2 倍屏宽内选第一行中文，
+    同行取离中央最近的一块，避免选到侧边建筑或更下方的岗位标题。
+    未传屏宽时由属性条中央的智力位置或左右两端估算。缺少可靠标签返回 None；
+    是否真的打开工作面板由调用方另行确认。
     """
     def norm(t: str) -> str:
         return t.replace(' ', '')
@@ -344,28 +343,40 @@ def parse_panel_location(
     def has_cjk(t: str, min_chars: int = 2) -> bool:
         return sum('\u4e00' <= ch <= '\u9fff' for ch in t) >= min_chars
 
-    stats_y = None
+    stats: dict[str, tuple[int, int]] = {}
     for text, x, y, score in results:
         t = norm(text)
-        if '力量' in t or '智力' in t or '魅力' in t:
-            stats_y = y if stats_y is None else max(stats_y, y)
-    if stats_y is None:
+        if score >= 0.5 and t.startswith(('力量', '智力', '魅力')):
+            stats[t[:2]] = (x, y)
+    if not stats:
         return None
+    if screen_width is None:
+        if len(stats) < 2:
+            return None
+        if '智力' in stats:
+            screen_width = stats['智力'][0] * 2
+        else:
+            screen_width = stats['力量'][0] + stats['魅力'][0]
+    if screen_width <= 0:
+        return None
+    center_x = screen_width / 2
+    stats_y = max(y for _, y in stats.values())
 
     candidates: list[tuple[str, int, int, float]] = []
     for text, x, y, score in results:
         t = norm(text)
-        if not t or y <= stats_y or not has_cjk(t):
+        if (score < 0.5 or not has_cjk(t)
+                or not stats_y < y <= stats_y + screen_width * 0.45
+                or abs(x - center_x) > screen_width * 0.2):
             continue
         candidates.append((t, x, y, score))
     if not candidates:
         return None
 
     candidates.sort(key=lambda c: (c[2], c[1]))
-    center_x = max(x for _, x, _, _ in results) / 2
     first_y = candidates[0][2]
     best = min(
-        (c for c in candidates if abs(c[2] - first_y) <= 30),
+        (c for c in candidates if abs(c[2] - first_y) <= screen_width / 36),
         key=lambda c: (abs(c[1] - center_x), c[1]),
     )
     return best[0]
