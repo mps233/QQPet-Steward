@@ -1,6 +1,7 @@
-# macOS 本机应用
+# QQPet-Steward macOS 本机应用
 
-一个 App 包含仪表盘界面、Python 后台和调度器。打开后自动启动并连接随包本机后台，
+QQPet-Steward（QQ宠物托管）将仪表盘界面、Python 后台和调度器打包在一个 App 中。
+打开后自动启动并连接随包本机后台，
 直接进入主界面，无需填写服务器地址、保留源码目录或另外安装 Python。
 菜单栏面板可查看状态、启动/暂停/恢复/停止调度器，也可打开完整主界面。
 界面以 `web/` 为唯一真源，构建时将其产物与后台一起打入 App。
@@ -19,7 +20,7 @@
 
 ## 数据与资源
 
-只读内容存于 `QQ Pet Dashboard.app/Contents/Resources/backend/`：
+只读内容存于 `QQPet-Steward.app/Contents/Resources/backend/`：
 
 - `QQPetRuntime` 与 `_internal/` 内的 Python、项目代码和本机依赖；
 - `web/dist/`、`static/`、默认配置、福袋图片模板；
@@ -78,7 +79,7 @@ runtime 构建脚本将其安装到项目虚拟环境。
 成功后打印固定的项目内产物路径：
 
 ```text
-desktop/macos/target/release/bundle/macos/QQ Pet Dashboard.app
+desktop/macos/target/release/bundle/macos/QQPet-Steward.app
 ```
 
 Python runtime 产物固定为 `desktop/macos/target/runtime/QQPetRuntime/`，
@@ -105,7 +106,7 @@ desktop/macos/scripts/build-runtime.sh
 
 ```bash
 desktop/macos/scripts/verify.sh \
-  "$PWD/desktop/macos/target/release/bundle/macos/QQ Pet Dashboard.app"
+  "$PWD/desktop/macos/target/release/bundle/macos/QQPet-Steward.app"
 ```
 
 校验检查 bundle id、图标、Mach-O 主程序及随包 runtime，再运行

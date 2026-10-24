@@ -5,7 +5,7 @@ set -euo pipefail
 APP="${1:-}"
 
 if [ -z "$APP" ]; then
-  echo "usage: $0 /absolute/path/to/QQ Pet Dashboard.app" >&2
+  echo "usage: $0 /absolute/path/to/QQPet-Steward.app" >&2
   exit 1
 fi
 if [ ! -d "$APP" ]; then
@@ -15,9 +15,14 @@ fi
 
 plutil -lint "$APP/Contents/Info.plist" >/dev/null
 IDENTIFIER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist")"
+BUNDLE_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleName' "$APP/Contents/Info.plist")"
 ICON="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$APP/Contents/Info.plist")"
 if [ "$IDENTIFIER" != "ai.qqpet.dashboard.desktop" ]; then
   echo "bundle identifier 异常：$IDENTIFIER" >&2
+  exit 1
+fi
+if [ "$BUNDLE_NAME" != "QQPet-Steward" ]; then
+  echo "应用名称异常：$BUNDLE_NAME" >&2
   exit 1
 fi
 if [ "$ICON" != "icon.icns" ]; then
@@ -43,6 +48,7 @@ fi
 "$RUNTIME" self-test
 
 echo "bundle verify: ok"
+echo "name: $BUNDLE_NAME"
 echo "identifier: $IDENTIFIER"
 echo "icon: $ICON"
 echo "bundled backend, scheduler, Python and resources: verified"

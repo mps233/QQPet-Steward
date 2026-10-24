@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
-    <title>QQ 宠物托管</title>
+    <title>QQPet-Steward</title>
     <link rel="stylesheet" href="panel.css" />
   </head>
   <body data-ready="false">
@@ -12,10 +12,10 @@
     <main id="panel-card" class="panel" role="dialog" aria-modal="true" aria-labelledby="panel-title">
       <header class="panel-head">
         <div class="brand">
-          <span class="brand-mark" aria-hidden="true">Q</span>
-          <div>
-            <p class="eyebrow">QQ PET · MENU BAR</p>
-            <h1 id="panel-title">QQ 宠物托管</h1>
+          <img class="brand-mark" src="brand-face.png" alt="" aria-hidden="true" />
+          <div class="brand-copy">
+            <h1 id="panel-title" class="brand-title">QQPet-Steward</h1>
+            <p class="brand-subtitle">QQ宠物托管</p>
           </div>
         </div>
         <span id="conn-state" class="conn-state" data-state="loading">
@@ -59,8 +59,17 @@
       <p id="notice" class="notice" role="status" aria-live="polite"></p>
 
       <footer class="panel-foot">
-        <button id="open-settings" class="text-button" type="button">设置</button>
-        <button id="quit-app" class="text-button danger" type="button">退出</button>
+        <button id="open-settings" class="icon-button" type="button" title="设置" aria-label="设置">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="m9.75 3.6.75-1.6h3l.75 1.6 2.1.9 1.65-.6 2.1 2.1-.6 1.65.9 2.1 1.6.75v3l-1.6.75-.9 2.1.6 1.65-2.1 2.1-1.65-.6-2.1.9-.75 1.6h-3l-.75-1.6-2.1-.9-1.65.6-2.1-2.1.6-1.65-.9-2.1-1.6-.75v-3l1.6-.75.9-2.1-.6-1.65L6 3.9l1.65.6Z" />
+            <circle cx="12" cy="12" r="3.2" />
+          </svg>
+        </button>
+        <button id="quit-app" class="icon-button danger" type="button" title="退出 App（托管继续在后台）" aria-label="退出 App">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M12 3v9M6.4 5.6a9 9 0 1 0 11.2 0" />
+          </svg>
+        </button>
       </footer>
     </main>
     <script type="module" src="panel.js"></script>

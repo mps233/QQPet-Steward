@@ -11,7 +11,7 @@ let startupError = '';
 
 function setStatus(phase, message) {
   const titles = {
-    starting: '正在启动 QQ 宠物托管',
+    starting: '正在启动 QQPet-Steward',
     ready: '正在打开主界面',
     error: '启动遇到问题',
   };
@@ -49,7 +49,7 @@ async function retryStartup() {
   const revision = ++startupRevision;
   setStatus('starting', '正在重新启动，请稍候。');
   try {
-    if (!invoke) throw new Error('请通过 macOS 应用打开 QQ 宠物托管。');
+    if (!invoke) throw new Error('请通过 macOS 应用打开 QQPet-Steward。');
     await invoke('retry_startup');
     if (revision !== startupRevision) return;
     setStatus('ready');
@@ -62,7 +62,7 @@ async function boot() {
   const revision = startupRevision;
   if (!startupError) setStatus('starting');
   try {
-    if (!invoke) throw new Error('请通过 macOS 应用打开 QQ 宠物托管。');
+    if (!invoke) throw new Error('请通过 macOS 应用打开 QQPet-Steward。');
     const status = await invoke('get_startup_status');
     if (revision !== startupRevision || startupError) return;
     if (status?.phase === 'error') {

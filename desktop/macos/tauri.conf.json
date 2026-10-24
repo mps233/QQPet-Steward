@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "QQ Pet Dashboard",
+  "productName": "QQPet-Steward",
   "version": "0.1.0",
   "identifier": "ai.qqpet.dashboard.desktop",
   "build": {
@@ -11,7 +11,7 @@
     "windows": [
       {
         "label": "launcher",
-        "title": "QQ Pet Dashboard",
+        "title": "QQPet-Steward",
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
         "url": "index.html",
@@ -49,7 +49,7 @@
       "icons/icon.icns"
     ],
     "category": "Utility",
-    "shortDescription": "QQ Pet Copilot for macOS",
+    "shortDescription": "QQPet-Steward for macOS",
     "longDescription": "An integrated local app with the dashboard, Python runtime, device tools, and scheduler included.",
     "resources": {
       "target/runtime/QQPetRuntime/": "backend/"

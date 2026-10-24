@@ -62,34 +62,42 @@ body[data-ready="true"] {
 
 .panel-head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
 }
 
-.brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.brand { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
 .brand-mark {
-  width: 34px;
-  height: 34px;
-  display: grid;
-  place-items: center;
+  width: 32px;
+  height: 32px;
+  display: block;
   flex: none;
-  border-radius: 10px;
-  background: linear-gradient(155deg, #ffca68, #e58b1d);
-  color: #5c350c;
-  font-size: 20px;
-  font-style: italic;
-  font-weight: 700;
+  object-fit: contain;
+  filter: drop-shadow(0 1px 2px rgba(99, 60, 11, .12));
 }
 
-.eyebrow {
-  margin: 0 0 2px;
-  color: var(--accent-deep);
-  font: 600 9px/1.2 "Avenir Next", sans-serif;
-  letter-spacing: .14em;
+.brand-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
 }
-
-h1 { margin: 0; font-size: 18px; font-weight: 600; line-height: 1.2; }
+.brand-title {
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font: 600 16px/1.25 "Avenir Next", "PingFang SC", sans-serif;
+  letter-spacing: -.025em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.brand-subtitle {
+  margin: 0;
+  color: var(--muted);
+  font: 400 10.5px/1.35 "PingFang SC", "Avenir Next", sans-serif;
+  letter-spacing: .025em;
+}
 
 .conn-state {
   display: inline-flex;
@@ -162,8 +170,29 @@ button:focus-visible { outline: 3px solid rgba(217, 120, 22, .32); outline-offse
 
 .notice { min-height: 16px; margin: 0; color: var(--warn); font: 10.5px/1.4 "Avenir Next", "PingFang SC", sans-serif; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .panel-foot { display: flex; justify-content: space-between; margin-top: auto; padding-top: 2px; }
-.text-button { min-height: 26px; padding: 0 2px; border: 0; background: transparent; color: var(--accent-deep); font-size: 11px; }
-.text-button:hover { text-decoration: underline; text-underline-offset: 3px; }
+.icon-button {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  min-height: 32px;
+  padding: 6px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+}
+.icon-button svg {
+  display: block;
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.icon-button:hover { background: var(--line); color: var(--ink); }
+.icon-button.danger:hover { color: var(--error); }
 
 @keyframes pulse { 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) {

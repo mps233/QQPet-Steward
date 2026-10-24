@@ -71,14 +71,14 @@ async function loadLauncher({ invoke, initialError, native = true } = {}) {
 {
   const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8')
   assert.doesNotMatch(html, /<input\b|<form\b|访问码|配对|远程|服务器|127\.0\.0\.1|https?:\/\//)
-  assert.match(html, /正在启动 QQ 宠物托管/)
+  assert.match(html, /正在启动 QQPet-Steward/)
   assert.match(html, /id="retry"[^>]*disabled>重试启动/)
 }
 
 {
   const launcher = await loadLauncher()
   assert.equal(launcher.elements.get('.status-card').dataset.state, 'starting')
-  assert.equal(launcher.elements.get('#status-title').textContent, '正在启动 QQ 宠物托管')
+  assert.equal(launcher.elements.get('#status-title').textContent, '正在启动 QQPet-Steward')
   assert.equal(launcher.elements.get('#retry').disabled, true)
   assert.deepEqual(launcher.calls.map(([command]) => command), ['get_startup_status'])
 }

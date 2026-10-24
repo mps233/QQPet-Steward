@@ -14,7 +14,7 @@
 
 - **Android / 手机 PWA**：现有 React 仪表盘，作为**遥控端**连接 Windows / macOS 上的托管服务；手机不跑 OCR、ADB 或 Python。
 - **同源浏览器**：直接打开 `http://<电脑IP>:8787/` 仍用访问码 + Cookie；根页面壳公开以便远程客户端进入配对门禁，所有数据/文件 API 仍然鉴权。
-- **macOS `.app`**：`desktop/macos/` 的完整本机应用，包含 UI、Python、仪表盘后台和调度器；打开后自动启动本机后台并进入界面，无需填写 URL 或另装 Python。App 自动通过 launchd 托管后台，已有源码托管实例会继续被采用；关闭窗口或退出 App 不会主动停止任务。
+- **macOS `.app`**：由 `desktop/macos/` 构建的 `QQPet-Steward.app`，包含 UI、Python、仪表盘后台和调度器；打开后自动启动本机后台并进入界面，无需填写 URL 或另装 Python。App 自动通过 launchd 托管后台，已有源码托管实例会继续被采用；关闭窗口或退出 App 不会主动停止任务。
 - **Windows 便携版**：`desktop/windows/` 的 onedir 打包脚手架，仪表盘与调度器是两个 exe；安装器、开机自启属于下一阶段。
 
 手机首次连接点「打开连接设置」或「扫码配对」：电脑在「设置 → 手机遥控」生成一次性二维码/链接。配对使用一次性票据换取设备 Bearer Token，
@@ -26,7 +26,7 @@
 desktop/macos/scripts/build-macos.sh
 ```
 
-产物在 `desktop/macos/target/release/bundle/macos/QQ Pet Dashboard.app`。
+产物在 `desktop/macos/target/release/bundle/macos/QQPet-Steward.app`。
 构建条件、随包资源和离线校验见 [macOS 说明](desktop/macos/README.md)。
 
 构建 Windows portable（在 Windows 上执行）：

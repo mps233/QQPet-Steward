@@ -19,7 +19,7 @@ use tauri::{
 
 const DEFAULT_SERVER: &str = "http://127.0.0.1:8787/";
 const DASHBOARD_LABEL: &str = "dashboard";
-const DASHBOARD_WINDOW_TITLE: &str = "QQ Pet Dashboard";
+const DASHBOARD_WINDOW_TITLE: &str = "QQPet-Steward";
 const LAUNCHER_LABEL: &str = "launcher";
 const PANEL_LABEL: &str = "menu-panel";
 const TRAY_LABEL: &str = "qqpet";
@@ -490,7 +490,7 @@ fn ensure_panel(app: &tauri::AppHandle) -> Result<WebviewWindow, String> {
         return Ok(window);
     }
     let window = WebviewWindowBuilder::new(app, PANEL_LABEL, WebviewUrl::App("panel.html".into()))
-        .title("QQ 宠物托管")
+        .title(DASHBOARD_WINDOW_TITLE)
         .inner_size(1.0, 1.0)
         .resizable(false)
         .maximizable(false)
@@ -821,11 +821,8 @@ fn ensure_dashboard(
         let _ = open_external_url(url.as_str());
         tauri::webview::NewWindowResponse::Deny
     })
-    .on_document_title_changed(|window, title| {
-        let title = title.trim();
-        if !title.is_empty() {
-            let _ = window.set_title(title);
-        }
+    .on_document_title_changed(|window, _title| {
+        let _ = window.set_title(DASHBOARD_WINDOW_TITLE);
     })
     .build()
     .map_err(|error| format!("无法创建仪表盘窗口：{error}"))?;
@@ -1347,7 +1344,7 @@ fn main() {
             let tray = TrayIconBuilder::with_id(TRAY_LABEL)
                 .icon(tray_icon)
                 .icon_as_template(true)
-                .tooltip("QQ 宠物托管")
+                .tooltip(DASHBOARD_WINDOW_TITLE)
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id().as_ref() {
@@ -1427,7 +1424,7 @@ fn main() {
             panel_quit
         ])
         .build(tauri::generate_context!())
-        .expect("error while building QQ Pet Dashboard shell")
+        .expect("error while building QQPet-Steward")
         .run(|app, event| {
             if let tauri::RunEvent::ExitRequested { api, .. } = event {
                 let explicit = app
