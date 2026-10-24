@@ -327,7 +327,9 @@ def test_stop_process_already_dead_does_nothing():
     assert signals == []
 
 
-def test_stop_process_posix_escalates_to_sigkill():
+def test_stop_process_posix_escalates_to_sigkill(monkeypatch):
+    # Windows hosts need a synthetic POSIX constant for this mocked delivery.
+    monkeypatch.setattr(signal, "SIGKILL", 9, raising=False)
     clock = FakeClock()
     state = {"alive": True}
     signals = []
