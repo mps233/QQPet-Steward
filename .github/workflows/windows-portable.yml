@@ -53,7 +53,7 @@ jobs:
       - name: Test Windows packaging and runtime helpers
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
-          .venv/Scripts/python.exe -m pytest -q tests/test_runtime_process.py tests/test_runtime_process_frozen_launcher.py tests/test_windows_runtime_self_test.py tests/test_windows_portable_build.py tests/test_windows_portable_verify.py
+          .venv/Scripts/python.exe -m pytest -q tests/test_runtime_process.py tests/test_runtime_process_frozen_launcher.py tests/test_windows_runtime_self_test.py tests/test_windows_portable_build.py tests/test_windows_portable_verify.py tests/test_dashboard_platform_startup.py
       - name: Build the complete portable package
         run: .venv/Scripts/python.exe desktop/windows/build_portable.py
       - name: Verify frozen executables and local dashboard

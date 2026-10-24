@@ -141,7 +141,8 @@ class FakeProcess:
         self.stopped = True
 
 
-def http_harness(tmp_path, monkeypatch, *, authenticated=True):
+def http_harness(tmp_path, monkeypatch, *, authenticated=True, root_status=200,
+                 connection_error=None, log_text=""):
     process = FakeProcess()
     routes = []
     key = "isolated-test-access-code"
@@ -154,6 +155,11 @@ def http_harness(tmp_path, monkeypatch, *, authenticated=True):
         runs = kwargs["cwd"] / "runs"
         runs.mkdir()
         (runs / "dashboard_access.token").write_text(key, encoding="utf-8")
+        if log_text:
+            kwargs["stdout"].write(log_text.encode("utf-8"))
+            logs = runs / "logs"
+            logs.mkdir()
+            (logs / "dashboard.log").write_text(log_text, encoding="utf-8")
         return process
 
     class Opener:
@@ -161,7 +167,9 @@ def http_harness(tmp_path, monkeypatch, *, authenticated=True):
             path = request.full_url.split(":", 2)[2].partition("/")[2]
             routes.append("/" + path)
             if not path:
-                return FakeResponse(200, b'<div id="root"></div><script src="/assets/app.js"></script>',
+                if connection_error:
+                    raise connection_error
+                return FakeResponse(root_status, b'<div id="root"></div><script src="/assets/app.js"></script>',
                                     "text/html")
             if path == "assets/app.js":
                 return FakeResponse(200, b"react application", "text/javascript")
@@ -200,6 +208,43 @@ def test_http_failure_still_terminates_its_child(tmp_path, monkeypatch):
     process, _routes = http_harness(tmp_path, monkeypatch, authenticated=False)
     with pytest.raises(verify.VerificationError, match="authenticated"):
         verify.check_http(tmp_path / "QQPetCopilot.exe", tmp_path / "http")
+    assert process.terminated == 1
+
+
+def test_http_timeout_reports_last_status_live_process_and_redacted_log_tails(tmp_path, monkeypatch):
+    log = "\n".join([f"line {index}" for index in range(15)] + [
+        "startup access code: isolated-test-access-code",
+        'token="private-token" password=private-password Authorization: Bearer private-bearer',
+    ])
+    process, _routes = http_harness(tmp_path, monkeypatch, root_status=404, log_text=log)
+    with pytest.raises(verify.VerificationError, match="timeout") as failure:
+        verify.check_http(tmp_path / "QQPetCopilot.exe", tmp_path / "http", timeout=0)
+    diagnostics = failure.value.diagnostics
+    assert diagnostics["lastHTTP"] == {"path": "/", "status": 404}
+    assert diagnostics["processRunning"] is True
+    assert diagnostics["processExitCode"] is None
+    assert len(diagnostics["logTails"]["processOutput"]) == 12
+    assert len(diagnostics["logTails"]["dashboardAudit"]) == 12
+    serialized = json.dumps(diagnostics)
+    assert all(secret not in serialized for secret in
+               ("isolated-test-access-code", "private-token", "private-password", "private-bearer"))
+    assert "startup" in serialized and "<redacted>" in serialized
+    assert process.terminated == 1
+
+
+def test_http_connection_timeout_reports_exception_types_without_private_messages(tmp_path, monkeypatch):
+    process, _routes = http_harness(
+        tmp_path, monkeypatch,
+        connection_error=verify.URLError(ConnectionRefusedError("private-connection-message")),
+    )
+    with pytest.raises(verify.VerificationError, match="timeout") as failure:
+        verify.check_http(tmp_path / "QQPetCopilot.exe", tmp_path / "http", timeout=0)
+    diagnostics = failure.value.diagnostics
+    assert diagnostics["lastHTTP"] == {
+        "path": "/", "status": None, "errorType": "URLError", "reasonType": "ConnectionRefusedError",
+    }
+    assert diagnostics["logTails"] == {"processOutput": [], "dashboardAudit": []}
+    assert "private-connection-message" not in json.dumps(diagnostics)
     assert process.terminated == 1
 
 
@@ -271,3 +316,26 @@ def test_verification_is_sequential_cleans_sandboxes_and_rechecks_bundle(
     assert report["checks"][-1]["name"] == "package-still-clean"
     assert all(not path.exists() for path in sandboxes)
     assert "secret" not in json.dumps(report)
+
+
+def test_failed_verification_keeps_http_diagnostics_after_sandbox_cleanup(tmp_path, monkeypatch):
+    directory = tmp_path / "bundle"
+    directory.mkdir()
+    for name in verify.EXECUTABLES:
+        pe_image(directory / name)
+    sandboxes = []
+
+    def fail_http(_executable, sandbox):
+        sandbox.mkdir()
+        sandboxes.append(sandbox)
+        raise verify.VerificationError("HTTP timeout", diagnostics={
+            "lastHTTP": {"path": "/", "status": 404}, "processRunning": True,
+        })
+
+    monkeypatch.setattr(verify.sys, "platform", "win32")
+    monkeypatch.setattr(verify, "check_self_test", lambda *_args: {})
+    monkeypatch.setattr(verify, "check_http", fail_http)
+    report = verify.verify(directory)
+    assert report["ok"] is False
+    assert report["checks"][-1]["diagnostics"]["lastHTTP"]["status"] == 404
+    assert not sandboxes[0].exists()

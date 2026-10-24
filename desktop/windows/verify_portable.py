@@ -23,6 +23,10 @@ EXECUTABLES = ("QQPetCopilot.exe", "QQPetCopilotScheduler.exe")
 class VerificationError(RuntimeError):
     """A release verification failure that is safe to include in the report."""
 
+    def __init__(self, message: str, *, diagnostics: dict | None = None):
+        super().__init__(message)
+        self.diagnostics = diagnostics
+
 
 def check_pe(path: Path) -> dict:
     with path.open("rb") as stream:
@@ -136,6 +140,50 @@ def _stop_process(process) -> None:
             process.wait(timeout=8)
 
 
+def _log_tail(path: Path, secrets: list[str]) -> list[str]:
+    try:
+        with path.open("rb") as stream:
+            stream.seek(0, os.SEEK_END)
+            offset = max(0, stream.tell() - 8192)
+            stream.seek(offset)
+            if offset:
+                stream.readline()
+            text = stream.read().decode("utf-8", errors="replace")
+    except OSError:
+        return []
+    for secret in secrets:
+        text = text.replace(secret, "<redacted>")
+    text = re.sub(r"(?i)\b(?:Bearer|Basic)\s+[^\s'\"<>]+", "<auth-redacted>", text)
+    text = re.sub(
+        r"""(?i)(["']?[\w.-]*(?:token|secret|password|credential|key|access[_ -]?code)"""
+        r"""["']?\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;}]+)""",
+        r"\1<redacted>", text,
+    )
+    return [line[:300] for line in text.splitlines()[-12:]]
+
+
+def _http_diagnostics(process, sandbox: Path, last_http: dict) -> dict:
+    data_root = sandbox / "data"
+    secrets = []
+    for path in (data_root / "runs").glob("*.token"):
+        try:
+            value = path.read_text(encoding="utf-8").strip()
+            if value:
+                secrets.append(value)
+        except (OSError, UnicodeError):
+            pass
+    exit_code = process.poll()
+    return {
+        "lastHTTP": last_http,
+        "processRunning": exit_code is None,
+        "processExitCode": exit_code,
+        "logTails": {
+            "processOutput": _log_tail(sandbox / "dashboard.log", secrets),
+            "dashboardAudit": _log_tail(data_root / "runs" / "logs" / "dashboard.log", secrets),
+        },
+    }
+
+
 def check_http(executable: Path, sandbox: Path, *, timeout: float = 60) -> dict:
     sandbox.mkdir()
     data_root = sandbox / "data"
@@ -153,13 +201,28 @@ def check_http(executable: Path, sandbox: Path, *, timeout: float = 60) -> dict:
             stdin=subprocess.DEVNULL, stdout=output, stderr=output,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
+        last_http = {"path": "/", "status": None}
+
+        def request(path, payload=None):
+            last_http.clear()
+            last_http.update({"path": path, "status": None})
+            try:
+                result = _request(opener, base, path, payload)
+            except (URLError, TimeoutError, OSError) as exc:
+                last_http["errorType"] = type(exc).__name__
+                if isinstance(exc, URLError):
+                    last_http["reasonType"] = type(exc.reason).__name__
+                raise
+            last_http["status"] = result[0]
+            return result
+
         try:
             deadline = time.monotonic() + timeout
             while True:
                 if process.poll() is not None:
                     raise VerificationError("dashboard exited before becoming ready")
                 try:
-                    status, headers, body = _request(opener, base, "/")
+                    status, headers, body = request("/")
                     if status == 200:
                         break
                 except (URLError, TimeoutError, OSError):
@@ -175,17 +238,17 @@ def check_http(executable: Path, sandbox: Path, *, timeout: float = 60) -> dict:
                     or not any(name.endswith(".js") for name in assets)):
                 raise VerificationError("root route did not serve the React application")
             for asset in assets:
-                status, _, content = _request(opener, base, asset)
+                status, _, content = request(asset)
                 if status != 200 or not content:
                     raise VerificationError("React application asset could not be served")
 
-            status, _, body = _request(opener, base, "/api/client/meta")
+            status, _, body = request("/api/client/meta")
             meta = _json(body, "/api/client/meta")
             if (status != 200 or meta.get("ok") is not True
                     or meta.get("protocol_version") != 1
                     or not isinstance(meta.get("capabilities"), list)):
                 raise VerificationError("public client metadata is invalid")
-            status, _, _ = _request(opener, base, "/api/data")
+            status, _, _ = request("/api/data")
             if status != 401:
                 raise VerificationError("dashboard data did not require authentication")
 
@@ -193,10 +256,10 @@ def check_http(executable: Path, sandbox: Path, *, timeout: float = 60) -> dict:
             if not token_file.is_file() or not token_file.read_text(encoding="utf-8").strip():
                 raise VerificationError("dashboard did not create its isolated access code")
             key = token_file.read_text(encoding="utf-8").strip()
-            status, _, body = _request(opener, base, "/api/auth", {"key": key})
+            status, _, body = request("/api/auth", {"key": key})
             if status != 200 or _json(body, "/api/auth").get("ok") is not True:
                 raise VerificationError("dashboard access-code login failed")
-            status, _, body = _request(opener, base, "/api/data")
+            status, _, body = request("/api/data")
             data = _json(body, "/api/data")
             if (status != 200 or not isinstance(data.get("now"), str)
                     or any(not isinstance(data.get(name), dict)
@@ -211,6 +274,12 @@ def check_http(executable: Path, sandbox: Path, *, timeout: float = 60) -> dict:
                 "unauthenticatedDataStatus": 401, "cookieLogin": True,
                 "authenticatedDataStatus": 200, "schedulerStarted": False,
             }
+        except (OSError, ValueError, VerificationError, subprocess.SubprocessError) as exc:
+            error = str(exc) if isinstance(exc, VerificationError) else type(exc).__name__
+            output.flush()
+            raise VerificationError(
+                error, diagnostics=_http_diagnostics(process, sandbox, last_http.copy()),
+            ) from None
         finally:
             _stop_process(process)
 
@@ -225,7 +294,10 @@ def verify(directory: Path) -> dict:
             # Child output and auth responses may contain credentials; keep
             # reports limited to our own messages and non-secret check values.
             error = str(exc) if isinstance(exc, VerificationError) else type(exc).__name__
-            report["checks"].append({"name": name, "ok": False, "error": error})
+            failure = {"name": name, "ok": False, "error": error}
+            if isinstance(exc, VerificationError) and exc.diagnostics is not None:
+                failure["diagnostics"] = exc.diagnostics
+            report["checks"].append(failure)
             return False
         report["checks"].append({"name": name, "ok": True, **details})
         return True

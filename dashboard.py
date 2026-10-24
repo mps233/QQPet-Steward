@@ -2692,7 +2692,10 @@ def main():
         raise KeyboardInterrupt
 
     # 关终端/被 launchd 或 kill 收走时留下死因（SIGTERM/SIGHUP 默认直接死，静默无痕）
-    for _sig in (signal.SIGTERM, signal.SIGHUP):
+    for _name in ('SIGTERM', 'SIGHUP'):
+        _sig = getattr(signal, _name, None)
+        if _sig is None:
+            continue
         try:
             signal.signal(_sig, _on_signal)
         except (ValueError, OSError):
