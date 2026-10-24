@@ -2,6 +2,9 @@
 # Verify the complete bundle using an isolated, offline runtime self-test.
 set -euo pipefail
 
+DESKTOP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+ROOT="$(cd "$DESKTOP_DIR/../.." && pwd -P)"
+PYTHON="$ROOT/.venv/bin/python"
 APP="${1:-}"
 
 if [ -z "$APP" ]; then
@@ -34,6 +37,7 @@ BIN="$APP/Contents/MacOS/qqpet-dashboard-desktop"
 [ -x "$BIN" ] || { echo "找不到可执行文件：$BIN" >&2; exit 1; }
 file "$BIN" | rg -q 'Mach-O 64-bit executable arm64|Mach-O 64-bit executable x86_64' \
   || { echo "不是预期的 Mach-O 可执行文件" >&2; exit 1; }
+codesign --verify --deep --strict "$APP"
 
 RUNTIME="$APP/Contents/Resources/backend/QQPetRuntime"
 if [ ! -x "$RUNTIME" ]; then
@@ -45,6 +49,10 @@ if [[ ! "$BUILD_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]]; then
   echo "随包 runtime 构建指纹无效。" >&2
   exit 1
 fi
+"$PYTHON" "$DESKTOP_DIR/restore_runtime_symlinks.py" \
+  --source "$DESKTOP_DIR/target/runtime/QQPetRuntime" \
+  --destination "$APP/Contents/Resources/backend" \
+  --check
 "$RUNTIME" self-test
 
 echo "bundle verify: ok"

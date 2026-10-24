@@ -80,6 +80,7 @@ a = Analysis(
     excludes=[
         "PyQt6", "PyQt5", "tkinter", "torch", "paddle", "openvino",
         "tensorrt", "MNN", "prompt_toolkit", "pygments", "websockets",
+        "matplotlib", "kiwisolver",
     ],
     noarchive=False,
     optimize=0,

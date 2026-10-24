@@ -22,3 +22,8 @@ objc2 = "0.6"
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
+
+# rust-lang/rust#157750: stripped proc-macro dylibs may not load on macOS 27.
+# Build-time crates are not shipped in the app; keep the release binary profile.
+[profile.release.build-override]
+strip = "none"

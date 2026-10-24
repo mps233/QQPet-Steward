@@ -5,6 +5,8 @@ set -euo pipefail
 DESKTOP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 ROOT="$(cd "$DESKTOP_DIR/../.." && pwd)"
 WEB_DIR="$ROOT/web"
+PYTHON="$ROOT/.venv/bin/python"
+SOURCE_RUNTIME="$DESKTOP_DIR/target/runtime/QQPetRuntime"
 APP_IDENTIFIER="ai.qqpet.dashboard.desktop"
 APP_NAME="QQPet-Steward.app"
 STABLE_BUNDLE_DIR="$DESKTOP_DIR/target/release/bundle/macos"
@@ -14,6 +16,13 @@ case "$BUILD_TARGET_DIR" in
   /*) ;;
   *) BUILD_TARGET_DIR="$PWD/$BUILD_TARGET_DIR" ;;
 esac
+
+# Optimization changes the final resource seal, so notarization must target the
+# optimized app rather than Tauri's intermediate bundle.
+if [ -n "${APPLE_ID:-}${APPLE_API_KEY:-}${APPLE_API_ISSUER:-}" ]; then
+  echo "当前构建会在 Tauri 打包后优化资源；请在最终产物验证后单独公证，勿向中间构建提供公证凭据。" >&2
+  exit 1
+fi
 
 for directory in "$HOME/.local/bin" "$HOME/.local/node/bin" /opt/homebrew/bin /usr/local/bin; do
   if [ -x "$directory/node" ]; then
@@ -72,6 +81,53 @@ if [ "$ACTUAL_IDENTIFIER" != "$APP_IDENTIFIER" ]; then
   exit 1
 fi
 
+"$PYTHON" "$DESKTOP_DIR/restore_runtime_symlinks.py" \
+  --source "$SOURCE_RUNTIME" \
+  --destination "$APP_PATH/Contents/Resources/backend"
+
+SIGNING_IDENTITY="$("$PYTHON" - "$DESKTOP_DIR/tauri.conf.json" <<'PY'
+import json
+import os
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    configuration = json.load(handle)
+configured = configuration.get("bundle", {}).get("macOS", {}).get("signingIdentity")
+print(os.environ.get("APPLE_SIGNING_IDENTITY") or configured or "-")
+PY
+)"
+if [ "$SIGNING_IDENTITY" = "-" ] \
+    && codesign -d --verbose=2 "$APP_PATH" 2>&1 | rg -q '^Authority='; then
+  echo "Tauri 产物已使用证书签名；请设置 APPLE_SIGNING_IDENTITY 或 signingIdentity，避免优化后降为 ad hoc 签名。" >&2
+  exit 1
+fi
+SIGNING_OPTIONS=(--force --sign "$SIGNING_IDENTITY"
+  --preserve-metadata=identifier,entitlements,requirements,flags,runtime)
+if [ "$SIGNING_IDENTITY" != "-" ]; then
+  SIGNING_OPTIONS+=(--timestamp)
+fi
+# PyInstaller signs framework binaries, but their restored bundle directories
+# also need resource seals before the outer app can pass strict verification.
+while IFS= read -r -d '' framework; do
+  codesign "${SIGNING_OPTIONS[@]}" "$framework"
+done < <("$PYTHON" - "$APP_PATH/Contents/Resources/backend" <<'PY'
+import os
+from pathlib import Path
+import sys
+
+frameworks = []
+for folder, directories, _files in os.walk(sys.argv[1], followlinks=False):
+    for name in directories:
+        path = Path(folder) / name
+        if name.endswith(".framework") and not path.is_symlink():
+            frameworks.append(path)
+for path in sorted(frameworks, key=lambda value: len(value.parts), reverse=True):
+    sys.stdout.buffer.write(os.fsencode(path) + b"\0")
+PY
+)
+codesign "${SIGNING_OPTIONS[@]}" "$APP_PATH"
+codesign --verify --deep --strict "$APP_PATH"
+
 if [ "$APP_PATH" != "$STABLE_APP_PATH" ]; then
   mkdir -p "$STABLE_BUNDLE_DIR"
   staged_bundle="$(mktemp -d "$STABLE_BUNDLE_DIR/.qqpet-bundle.XXXXXX")"
@@ -84,4 +140,5 @@ if [ "$APP_PATH" != "$STABLE_APP_PATH" ]; then
   APP_PATH="$STABLE_APP_PATH"
 fi
 
+"$DESKTOP_DIR/scripts/verify.sh" "$APP_PATH"
 echo "$APP_PATH"

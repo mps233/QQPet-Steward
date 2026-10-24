@@ -75,6 +75,15 @@ desktop/macos/scripts/build-macos.sh
 脚本先确认前端产物，再运行 `scripts/build-runtime.sh` 冻结 Python 后台，
 最后使用本地 Tauri CLI 构建完整 App。缺少 PyInstaller 或 Frida 运行依赖时，
 runtime 构建脚本将其安装到项目虚拟环境。
+在 `desktop/macos/` 执行 `npm run build` 也走同一完整构建流程。
+
+Tauri 复制资源后，脚本会恢复 PyInstaller 运行时的相对软链接，避免把同一个
+Python 或图像处理动态库存成多份，并重新签署最终 App。运行时排除项目未使用的
+matplotlib 与 kiwisolver，保留 OCR、ADB 和 Frida 离线资源。
+本地构建默认使用 ad hoc 签名；配置 `APPLE_SIGNING_IDENTITY` 或 Tauri
+`signingIdentity` 时沿用该身份。若 Tauri 产物已有证书签名，优化后重签必须显式配置
+可用签名身份，否则构建会停止，避免降为 ad hoc。公证应针对优化后的最终 App 单独进行，
+构建阶段不接受 `APPLE_ID` / `APPLE_API_KEY` / `APPLE_API_ISSUER` 公证凭据。
 
 成功后打印固定的项目内产物路径：
 
@@ -91,6 +100,8 @@ Rust 默认使用 `desktop/macos/target/` 缓存，也支持调用时设置 `CAR
 首次构建失败时，脚本会用临时 target 重试，将成功的 App 复制回同一产物路径；
 只替换这个构建目标，不安装到 `/Applications`，也不替换其他临时 App。
 构建脚本不安装或卸载 launchd；App 在实际启动时准备自己的托管作业。
+为避开部分 Rust 工具链在 macOS 27 上对 proc-macro 动态库的 strip 对齐问题，
+release 构建不裁剪仅在编译期使用的依赖；最终 App 主程序仍使用 release 配置。
 
 开发验证时，前端更新先重建 `web/dist/`，Python 后台更新需重启对应服务；
 完整 App 的前后端资源随包分发，修改后需重新构建 App。App 会继续采用已运行的
@@ -109,7 +120,7 @@ desktop/macos/scripts/verify.sh \
   "$PWD/desktop/macos/target/release/bundle/macos/QQPet-Steward.app"
 ```
 
-校验检查 bundle id、图标、Mach-O 主程序及随包 runtime，再运行
+校验检查 bundle id、图标、Mach-O 主程序、完整签名及运行时软链接布局，再运行
 `QQPetRuntime self-test`。自检仅使用临时数据根，检查导入、资源、OCR 模型校验和、
 配置写入与冻结版调度器命令，初始化真实 ONNX OCR 引擎并识别一张纯白测试图。
 自检禁用网络，不连接设备、不启动 TG、不读取或修改真实运行进度。
