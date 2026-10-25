@@ -1,4 +1,4 @@
-import { BG_VER, SCENE_INFO, SCENE_ORDER, sceneBgFile } from '../lib/scene'
+import { BG_VER, SCENE_INFO, SCENE_ORDER, sceneBgFile, sceneVideoFile } from '../lib/scene'
 import { assetUrl } from '../lib/connection'
 
 /** 房间背景选择面板（点总览页左上角圆钮打开；点一张即生效）。
@@ -51,6 +51,9 @@ export function BgSheet({
                 src={assetUrl(`/qp-icons/bg/${sceneBgFile(k, dark)}.jpg?v=${BG_VER}`)}
                 alt=""
               />
+              {/* 带视频层的背景（官方叫「灵动背景」）打一个角标：缩略图是静帧，不打标
+                  用户看不出这张会动，而且它在手机上比别的背景多下一份 mp4。 */}
+              {sceneVideoFile(k, dark) ? <span className="bgvideo">动态</span> : null}
               <span className="bgname">{SCENE_INFO[k]?.name}</span>
             </button>
           ))}

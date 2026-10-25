@@ -161,6 +161,35 @@ html{
   overflow:hidden;
   overscroll-behavior:none;
 }
+/* ---------- 动态背景的视频层（「花田诗意」） ----------
+   由 JS（scene.ts 的 syncSceneVideo）在 body 下插/删一个 <video>，只在当前背景带
+   视频时存在。要点：
+
+   - `position:fixed;inset:0` + **负 z-index**：压在 html 背景图**之上**、所有正文之下。
+     负 z-index 的元素必须有自己的层叠上下文，否则会跑到 html 背景后面（那就白做了）；
+     这里 body 的 `background:transparent` 保证它透出来。
+     为什么不能用 `z-index:0`：`.app > main` 里的 `.page-slot` 是 z-index:2/1，
+     视频只要进了正文层叠上下文就会盖住按钮 —— 实测过（点不到任何东西）。
+     `isolation:isolate` 给 body 建层：负 z-index 视频被锁在 body 层内，
+     不会穿透到 html 背景之下。
+   - `object-fit:cover` + `object-position:center top`：与静态图的 `background-size:cover`
+     /`background-position:center top` **必须完全一致**，否则两者切换时画面会跳。
+   - 视频只有 508×1368，静态图 1008×2161：**两者构图必须一致**（静态图就是从同一个视频
+     的第 1 帧裁出来放大的），否则首帧跳变一眼可见。
+   - 内页（`html[data-page]:not([data-page="main"])`）把背景图关成白底，视频也要藏起来。 */
+body{isolation:isolate}
+body > .qp-room-video{
+  position:fixed;inset:0;z-index:-1;
+  width:100%;height:100%;
+  object-fit:cover;object-position:center top;
+  pointer-events:none;
+  /* 视频解码出首帧之前是黑的 —— 用静态图的顶部色垫一层，避免加载期闪黑 */
+  background:transparent;
+}
+html[data-page]:not([data-page="main"]) body > .qp-room-video{display:none}
+@media(prefers-reduced-motion:reduce){
+  body > .qp-room-video{display:none}   /* JS 侧也不再创建，这里是双保险 */
+}
 body{
   margin:0;padding:0;background:transparent;
   /* 顶部安全区：避免内容被状态栏/灵动岛遮挡（PWA 全屏时必需）。
@@ -497,7 +526,7 @@ main section[data-page]{min-height:100%}  /* .home 与内页共用（内页另�
 #sceneToast.on{opacity:1}
 
 /* 房间背景选择面板（#bgSheet，点左上角黄衣圆钮打开）
-   21 张 = 自动 + 5 套官方房间场景 + 15 款官方「装扮→背景」家居背景；
+   22 张 = 自动 + 5 套官方房间场景 + 16 款官方「装扮→背景」家居背景（含动态的「花田诗意」）；
    缩略图直接复用页面背景图（同一 URL，浏览器只下载一次，开面板不会额外占带宽）。
    面板贴底、暖色卡片底（跟资料卡/任务面板一套色），最高 76vh 内部滚动。 */
 #bgSheet{position:fixed;inset:0;z-index:30;display:none}
@@ -553,6 +582,16 @@ main section[data-page]{min-height:100%}  /* .home 与内页共用（内页另�
   display:flex;align-items:center;justify-content:center;
   background:linear-gradient(160deg,#F7E4BC,#E9C98D);color:var(--text);
   font-size:calc(var(--u) * 13);font-weight:600;
+}
+/* 「动态」角标：压在缩略图右上角。缩略图是 15/32 的竖图，用 absolute 定位到图内，
+   所以 .bgtile 要 relative —— 定位基准是整张 tile，角标靠 `top:3u + right:3u` 贴图角。 */
+#bgSheet .bgtile{position:relative}
+#bgSheet .bgvideo{
+  position:absolute;right:calc(var(--u) * 5);top:calc(var(--u) * 5);
+  padding:calc(var(--u) * 1) calc(var(--u) * 5);border-radius:999px;
+  font-size:calc(var(--u) * 9);font-weight:650;line-height:1.5;
+  color:#fff;background:linear-gradient(135deg,#7BCBFF,#5AA6F5);
+  box-shadow:0 1px 4px rgba(20,60,120,.35);pointer-events:none;
 }
 #bgSheet .bgname{
   max-width:100%;font-size:calc(var(--u) * 10.5);color:var(--text);
@@ -1861,7 +1900,7 @@ pre#logbox{
 }
 
 /* 房间背景由 JS 按 `html[data-scene]` 内联写到 html 上（见 setSceneAttr）：
-   键 = SCENE_INFO 的键（5 套场景 room-* + 15 款官方家居背景 home-*）。
+   键 = SCENE_INFO 的键（5 套场景 room-* + 16 款官方家居背景 home-*）。
    注意：**必须写在 html 上** —— 背景图作用在 html 元素，而 CSS 变量只向下继承，
    写在 body 上的覆写对父级 html 无效（曾踩坑：data-scene 变了但背景不动）。
    下面这 4 条只是"JS 还没跑"的首帧兜底（早期版本靠它们切换）；

@@ -2183,6 +2183,62 @@ class Handler(BaseHTTPRequestHandler):
         except BrokenPipeError:
             pass
 
+    def _send_media(self, ctype: str, body: bytes, cache: str = 'no-store') -> None:
+        """发送媒体，支持单个 bytes=start-end / start- / -suffix 范围。
+
+        未知单位、畸形、逆序及多段请求忽略 Range，返回完整的 200 响应。
+        有效但不可满足的范围返回 416；空媒体按 RFC 9110 14.2 忽略 Range，
+        避免生成不存在的字节区间。206 的长度和 Content-Range 都对应实际片段。
+        """
+        total = len(body)
+        rng = str(self.headers.get('Range') or '').strip()
+        start, end, partial, unsatisfiable = 0, total - 1, False, False
+        unit, separator, spec = rng.partition('=')
+        if total and separator and unit.lower() == 'bytes':
+            match = re.fullmatch(r'([0-9]*)-([0-9]*)', spec.strip())
+            if match and any(match.groups()):
+                first, last = match.groups()
+                left, right = first.lstrip('0') or '0', last.lstrip('0') or '0'
+                ordered = not first or not last or (len(left), left) <= (len(right), right)
+                if ordered:
+                    def bounded_number(digits: str) -> int:
+                        # Range 数值可能长于 Python 的 int 转换上限；只需区分是否超过总长。
+                        digits = digits.lstrip('0') or '0'
+                        return total if len(digits) > len(str(total)) else min(int(digits), total)
+
+                    if first:
+                        start = bounded_number(first)
+                        end = min(bounded_number(last), total - 1) if last else total - 1
+                        unsatisfiable = start >= total
+                    else:
+                        suffix = bounded_number(last)
+                        start = total - suffix
+                        unsatisfiable = suffix == 0
+                    partial = not unsatisfiable
+        if unsatisfiable:
+            self.send_response(416)
+            self.send_header('Content-Range', f'bytes */{total}')
+            payload = b''
+        elif partial:
+            self.send_response(206)
+            self.send_header('Content-Range', f'bytes {start}-{end}/{total}')
+            payload = body[start:end + 1]
+        else:
+            self.send_response(200)
+            payload = body
+        self.send_header('Content-Type', ctype)
+        self.send_header('Cache-Control', cache)
+        self.send_header('Accept-Ranges', 'bytes')
+        self.send_header('Content-Length', str(len(payload)))
+        for key, value in self._cors_headers():
+            if value:
+                self.send_header(key, value)
+        self.end_headers()
+        try:
+            self.wfile.write(payload)
+        except BrokenPipeError:
+            pass
+
     def do_DELETE(self):
         u = urlparse(self.path)
         if not same_origin(self.headers):
@@ -2274,11 +2330,20 @@ class Handler(BaseHTTPRequestHandler):
                 #   的 parts 里同样含 'qp-icons'，会放行穿越，实测返回 200）
                 fp = (BASE / 'static' / path.lstrip('/')).resolve()
                 root = (BASE / 'static' / 'qp-icons').resolve()
-                # 白名单扩展名（背景是 .jpg；仍不接受任意后缀，避免误发其它文件）
+                # 白名单扩展名（背景是 .jpg；仍不接受任意后缀，避免误发其它文件）。
+                # .mp4 = 「花田诗意」动态背景的视频层（见 web/src/lib/scene.ts 的 video 字段）。
                 CTYPE = {'.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
-                         '.webp': 'image/webp', '.svg': 'image/svg+xml'}
-                if fp.exists() and fp.suffix.lower() in CTYPE and fp.is_relative_to(root):
-                    self._send(200, CTYPE[fp.suffix.lower()], fp.read_bytes(), 'max-age=3600')
+                         '.webp': 'image/webp', '.svg': 'image/svg+xml',
+                         '.mp4': 'video/mp4'}
+                suffix = fp.suffix.lower()
+                if fp.exists() and suffix in CTYPE and fp.is_relative_to(root):
+                    # 视频必须支持 Range 请求：iOS Safari 对 <video> 强制走 206，
+                    # 服务器不认 Range 只回 200 全量时，Safari 直接**不播**
+                    # （Chrome/桌面端能播，所以这个坑只在真机上暴露）。
+                    if suffix == '.mp4':
+                        self._send_media(CTYPE[suffix], fp.read_bytes(), 'max-age=3600')
+                    else:
+                        self._send(200, CTYPE[suffix], fp.read_bytes(), 'max-age=3600')
                 else:
                     self._send(404, 'text/plain', b'not found')
             elif path in ('/icon-192.png', '/icon-512.png', '/apple-touch-icon.png'):
