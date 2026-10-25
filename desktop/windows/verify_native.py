@@ -356,6 +356,79 @@ def _dashboard_page(browser, server: str):
                  and urlsplit(page.url).netloc == target.netloc), None)
 
 
+def _normalized_url(value) -> str:
+    try:
+        parts = urlsplit(str(value))
+        host = parts.hostname or ""
+        if ":" in host:
+            host = f"[{host}]"
+        if parts.port:
+            host += f":{parts.port}"
+        return f"{parts.scheme}://{host}{parts.path}" if host else f"{parts.scheme}:{parts.path}"
+    except ValueError:
+        return "(invalid URL)"
+
+
+def _safe_text(value, secrets, limit=1000) -> str:
+    text = str(value or "")
+    for secret in secrets:
+        text = text.replace(secret, "<redacted>")
+    text = re.sub(r"(?i)\b(?:Bearer|Basic)\s+[^\s'\"<>]+", "<auth-redacted>", text)
+    text = re.sub(
+        r"""(?i)(["']?[\w.-]*(?:token|secret|password|credential|key|access[_ -]?code)"""
+        r"""["']?\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;}]+)""",
+        r"\1<redacted>", text,
+    )
+    return text[:limit]
+
+
+def _targets(payload, secrets) -> list[dict]:
+    if not isinstance(payload, list):
+        return []
+    return [{
+        "url": _safe_text(_normalized_url(item.get("url", "")), secrets, 400),
+        "title": _safe_text(item.get("title", ""), secrets, 200),
+        "type": _safe_text(item.get("type", ""), secrets, 40),
+    } for item in payload[:12] if isinstance(item, dict)]
+
+
+def _page_observations(browser, secrets) -> list[dict]:
+    observations = []
+    for index, context in enumerate(browser.contexts):
+        for page in context.pages:
+            item = {"context": index, "url": _safe_text(_normalized_url(page.url), secrets, 400)}
+            parsed = urlsplit(page.url)
+            if (parsed.hostname in {"localhost", "tauri.localhost"}
+                    and parsed.path in {"", "/", "/index.html"}):
+                try:
+                    state = page.evaluate("""() => ({
+                        connectionError: window.__qpetConnectionError || '',
+                        bodyText: document.body?.innerText || ''
+                    })""")
+                    item["connectionError"] = _safe_text(state.get("connectionError"), secrets)
+                    item["bodyText"] = _safe_text(state.get("bodyText"), secrets, 1500)
+                except Exception as exc:
+                    item["observationError"] = type(exc).__name__
+            observations.append(item)
+            if len(observations) >= 12:
+                return observations
+    return observations
+
+
+def _wait_dashboard_page(browser, server, observations, secrets, *, timeout=45):
+    session = browser.new_browser_cdp_session()
+
+    def probe():
+        # A real RPC pumps Playwright's sync event dispatcher; sleeping while
+        # reading only cached contexts/pages can miss a newly created target.
+        response = session.send("Target.getTargets")
+        observations["targets"] = _targets(response.get("targetInfos"), secrets)
+        observations["pages"] = _page_observations(browser, secrets)
+        return _dashboard_page(browser, server)
+
+    return _wait(probe, timeout, "WebView2 did not navigate to the local dashboard")
+
+
 def _fingerprint(bundled: Path) -> str:
     value = (bundled / ".build-fingerprint").read_text(encoding="ascii").strip()
     if not re.fullmatch(r"[0-9a-fA-F]{64}", value):
@@ -389,6 +462,7 @@ def check_app(executable: Path, sandbox: Path, desktop, playwright_factory,
     while debug == port:
         debug = _port()
     server = f"http://127.0.0.1:{port}/"
+    debug_url = f"http://127.0.0.1:{debug}"
     env = portable.child_environment(data)
     bundled = executable.parent / "backend"
     runtime_store = sandbox / "runtime-cache"
@@ -411,6 +485,8 @@ def check_app(executable: Path, sandbox: Path, desktop, playwright_factory,
     last_http = {}
     policy = ExitStack()
     policy_evidence = {}
+    browser_observations = {}
+    secrets = []
 
     def http_status(base, path):
         last_http.clear()
@@ -454,14 +530,16 @@ def check_app(executable: Path, sandbox: Path, desktop, playwright_factory,
                 raise portable.VerificationError("native app backend did not require authentication")
             checks.append({"name": stage, "ok": True, "backendOwned": True,
                            "defaultMode": True, "webviewEnvironment": policy_evidence, **cache})
+            for path in runs.glob("*.token"):
+                value = path.read_text(encoding="utf-8").strip()
+                if value:
+                    secrets.append(value)
             stage = "embedded-webview"
-            debug_url = f"http://127.0.0.1:{debug}"
             _wait(lambda: http_status(debug_url, "/json/version") == 200, 45,
                   "WebView2 did not expose its test-only CDP endpoint")
             with playwright_factory() as playwright:
                 browser = playwright.chromium.connect_over_cdp(debug_url, timeout=20000)
-                page = _wait(lambda: _dashboard_page(browser, server), 45,
-                             "WebView2 did not navigate to the local dashboard")
+                page = _wait_dashboard_page(browser, server, browser_observations, secrets)
                 page.wait_for_selector("#taskList [data-k]", state="visible", timeout=45000)
                 window = _wait(main_window, 15, "the app did not show a single native main window")
                 classes = [child["class"] for child in desktop.windows(parent=window["hwnd"])]
@@ -528,7 +606,6 @@ def check_app(executable: Path, sandbox: Path, desktop, playwright_factory,
                 checks.append({"name": stage, "ok": True, "newBrowserWindows": 0})
         return checks
     except Exception as exc:
-        secrets = []
         for path in runs.glob("*.token"):
             try:
                 value = path.read_text(encoding="utf-8").strip()
@@ -542,12 +619,37 @@ def check_app(executable: Path, sandbox: Path, desktop, playwright_factory,
             "backendPIDRecorded": _pid_file(pid_path) is not None,
             "lastHTTP": last_http,
             "webviewEnvironment": policy_evidence,
+            "browser": browser_observations,
             "logTails": {
                 "gui": portable._log_tail(sandbox / "gui.log", secrets),
                 "backend": portable._log_tail(runs / "dashboard_console.log", secrets),
                 "audit": portable._log_tail(runs / "logs" / "dashboard.log", secrets),
             },
         }
+        try:
+            windows = desktop.windows(gui.pid) if gui is not None else []
+            diagnostics["nativeWindows"] = [{
+                "title": _safe_text(window["title"], secrets, 200),
+                "class": _safe_text(window["class"], secrets, 100),
+                "visible": window["visible"],
+            } for window in windows[:12]]
+            if screenshot is not None:
+                visible = next((window for window in windows if window["visible"]), None)
+                destination = screenshot.with_name(screenshot.stem + "-failure.png")
+                if visible and not destination.exists():
+                    dimensions = desktop.capture_window(visible["hwnd"], destination)
+                    diagnostics["failureScreenshot"] = {
+                        "file": destination.name, "captured": True, **dimensions,
+                    }
+        except Exception as observation_error:
+            diagnostics["nativeObservationError"] = type(observation_error).__name__
+        try:
+            status, _headers, payload = portable._request(opener, debug_url, "/json/list")
+            diagnostics["debugTargetList"] = {
+                "status": status, "targets": _targets(json.loads(payload), secrets),
+            }
+        except Exception as observation_error:
+            diagnostics["debugTargetList"] = {"errorType": type(observation_error).__name__}
         error = str(exc) if isinstance(exc, portable.VerificationError) else type(exc).__name__
         raise portable.VerificationError(error, diagnostics=diagnostics) from None
     finally:

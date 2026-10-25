@@ -144,7 +144,12 @@ def harness(tmp_path, monkeypatch, *, login=True, restore=True, different_backen
         routes.append(path)
         return (401 if path == "/api/data" else 200), {}, b"{}"
 
-    browser = SimpleNamespace(contexts=[SimpleNamespace(pages=[page])])
+    browser = SimpleNamespace(
+        contexts=[SimpleNamespace(pages=[page])],
+        new_browser_cdp_session=lambda: SimpleNamespace(send=lambda _method: {
+            "targetInfos": [{"url": page.url, "title": native.TITLE, "type": "page"}],
+        }),
+    )
 
     class Playwright:
         def __enter__(self):
@@ -448,3 +453,37 @@ def test_temporary_cleanup_final_failure_is_bounded_and_has_safe_diagnostics(mon
     assert failure.value.diagnostics["path"] == str(locked)
     assert failure.value.diagnostics["errno"] == 13
     assert "private error text" not in json.dumps(failure.value.diagnostics)
+
+
+def test_dashboard_wait_pumps_new_target_events_before_reading_cached_pages():
+    server = "http://127.0.0.1:23456/"
+    context = SimpleNamespace(pages=[])
+    calls = []
+
+    def send(method):
+        calls.append(method)
+        context.pages.append(SimpleNamespace(url=server))
+        return {"targetInfos": [{"url": server, "title": "Dashboard", "type": "page"}]}
+
+    browser = SimpleNamespace(contexts=[context], new_browser_cdp_session=lambda: SimpleNamespace(send=send))
+    assert native._dashboard_page(browser, server) is None
+    observations = {}
+    page = native._wait_dashboard_page(browser, server, observations, [], timeout=0)
+    assert page.url == server and calls == ["Target.getTargets"]
+    assert observations["pages"] == [{"context": 0, "url": server}]
+
+
+def test_browser_observations_include_launcher_error_without_credentials():
+    page = SimpleNamespace(
+        url="http://user:private-password@tauri.localhost/index.html?token=private-token#private-token",
+        evaluate=lambda _script: {
+            "connectionError": "startup rejected token=private-token",
+            "bodyText": "Starting. Bearer private-bearer password=private-password",
+        },
+    )
+    browser = SimpleNamespace(contexts=[SimpleNamespace(pages=[page])])
+    observed = native._page_observations(browser, ["private-token", "private-password"])
+    assert observed[0]["url"] == "http://tauri.localhost/index.html"
+    assert "startup rejected" in observed[0]["connectionError"]
+    assert all(value not in json.dumps(observed)
+               for value in ("private-token", "private-password", "private-bearer"))
