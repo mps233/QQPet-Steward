@@ -494,7 +494,9 @@ def test_user_data_paths_windows_installed_mode_uses_localappdata(tmp_path):
     assert paths.runner_pid == local / rp.APP_NAME / "runs" / "runner.pid"
 
 
-def test_windows_launcher_rebinds_dashboard_to_bundle_and_user_data(tmp_path, monkeypatch):
+@pytest.mark.parametrize("config_exists", [False, True])
+def test_windows_launcher_rebinds_dashboard_to_bundle_and_user_data(
+        tmp_path, monkeypatch, config_exists):
     import importlib
     import sys
 
@@ -514,6 +516,8 @@ def test_windows_launcher_rebinds_dashboard_to_bundle_and_user_data(tmp_path, mo
     fake_config.APP_ROOT = tmp_path / "stale-app"
     fake_config.PROJECT_ROOT = tmp_path / "stale-project"
     fake_config.CONFIG_FILE = tmp_path / "stale-config.yaml"
+    seeded = []
+    fake_config.load_config = seeded.append
     monkeypatch.setitem(sys.modules, "dashboard", fake)
     monkeypatch.setitem(sys.modules, "src.config", fake_config)
     for name in (
@@ -530,6 +534,10 @@ def test_windows_launcher_rebinds_dashboard_to_bundle_and_user_data(tmp_path, mo
 
     launcher = importlib.import_module("desktop.windows.dashboard_launcher")
     data = tmp_path / "portable-data"
+    existing = b"# existing user configuration\ncustom: untouched\n"
+    if config_exists:
+        data.mkdir()
+        (data / "config.yaml").write_bytes(existing)
     monkeypatch.setenv("QQPET_DATA_DIR", str(data))
     monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path / "bundle"), raising=False)
     observed: dict[str, object] = {}
@@ -569,6 +577,9 @@ def test_windows_launcher_rebinds_dashboard_to_bundle_and_user_data(tmp_path, mo
     assert actual_config["PROJECT_ROOT"] == data
     assert actual_config["CONFIG_FILE"] == data / "config.yaml"
     assert observed["state"] == data / "runs" / "state.json"
+    assert seeded == ([] if config_exists else [data / "config.yaml"])
+    if config_exists:
+        assert (data / "config.yaml").read_bytes() == existing
     # Paths are restored after main(), so a later server in this interpreter
     # cannot keep writing into the portable configuration.
     assert fake.RUNS == tmp_path / "stale-runs"

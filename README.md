@@ -1,14 +1,14 @@
 # QQ宠物托管（QQPet-Steward）
 
 用电脑挂着 Android 手机，让 QQ 宠物自己上课、打工、冒险、被好友雇佣。
-**手机浏览器打开就能看、能改、能接手操作**——不用装桌面 GUI，也不用守在电脑前。
+电脑端提供完整 App，**手机浏览器也能查看和修改设置**，不用一直守在电脑前。
 
 核心是 Python + adb + uiautomator2 + RapidOCR。项目源自
 [490720818/qq-pet-copilot](https://github.com/490720818/qq-pet-copilot)（GPL-3.0）：
-本版在它的基础上做了 **macOS 适配**，以 React 仪表盘统一 macOS 本机 App 与手机浏览器界面；
+本版提供 **macOS / Windows 完整 App**，以 React 仪表盘统一电脑原生窗口与手机浏览器界面；
 与上游的差异见 [MAC-PORT.md](MAC-PORT.md)。
 
-> 调度器与仪表盘主要在 macOS 上验证；Windows 便携版通过原生 CI 构建和离线验收，
+> 调度器与仪表盘主要在 macOS 上验证；Windows CI 覆盖原生 App、随包后台与自动登录验收，
 > Windows 真实设备操作与 Linux 运行仍需实机验证。
 
 ## 客户端与运行方式
@@ -16,13 +16,13 @@
 - **Android / 手机 PWA**：现有 React 仪表盘，作为**遥控端**连接 Windows / macOS 上的托管服务；手机不跑 OCR、ADB 或 Python。
 - **同源浏览器**：直接打开 `http://<电脑IP>:8787/` 仍用访问码 + Cookie；根页面壳公开以便远程客户端进入配对门禁，所有数据/文件 API 仍然鉴权。
 - **macOS `.app`**：由 `desktop/macos/` 构建的 `QQPet-Steward.app`，包含 UI、Python、仪表盘后台和调度器；打开后自动启动本机后台并进入界面，无需填写 URL 或另装 Python。App 自动通过 launchd 托管后台，已有源码托管实例会继续被采用；关闭窗口或退出 App 不会主动停止任务。
-- **Windows x64 便携版**：完整解压后运行 `start_portable.bat`，使用浏览器仪表盘；包含 Python、ADB、OCR 与后台，仪表盘和调度器是两个 exe。当前不提供 MSI 安装器或原生桌面外壳。
+- **Windows x64 原生 App**：安装 `QQPet-Steward_<version>_windows_x64-setup.exe`，从开始菜单打开独立窗口；Python、ADB、OCR、后台和调度器随包提供，自动准备本机后台并登录。关闭主窗口后保留托盘爪子图标，从爪子菜单可重新打开；退出 App 不会主动停止正在进行的托管任务。
 
 手机首次连接点「打开连接设置」或「扫码配对」：电脑在「设置 → 手机遥控」生成一次性二维码/链接。配对使用一次性票据换取设备 Bearer Token，
 票据 5 分钟有效且只能用一次；设备可在同一页撤销。Cookie 仍用于同源浏览器，不会跨域复用。
 
 安装包见 [GitHub Releases](https://github.com/mps233/QQPet-Steward/releases/latest)，
-提供 macOS DMG/ZIP、Windows x64 便携 ZIP 和 SHA-256 校验文件。
+macOS 使用 DMG/ZIP，Windows 使用 x64 `-setup.exe` 安装器，下载文件附 SHA-256 校验码。
 Mac 版面向 **Apple Silicon / macOS 14 及以上**，采用 ad hoc 签名，尚未完成 Apple 公证；
 Windows 版尚未做 Authenticode 签名。首次打开可能需要按系统安全提示处理。
 
@@ -35,19 +35,23 @@ desktop/macos/scripts/build-macos.sh
 产物在 `desktop/macos/target/release/bundle/macos/QQPet-Steward.app`。
 构建条件、随包资源和离线校验见 [macOS 说明](desktop/macos/README.md)。
 
-构建 Windows portable（在 Windows 上执行）：
+构建 Windows 原生 App（在 Windows x64 上执行，需先准备 Python、Node.js、Rust 与桌面依赖）：
 
 ```powershell
-.venv\Scripts\python.exe desktop\windows\build_portable.py
+.venv\Scripts\python.exe desktop\windows\build_native.py
 ```
+
+安装器输出为 `dist/QQPet-Steward_<version>_windows_x64-setup.exe`；
+完整构建和原生界面验收说明见 [Windows 说明](desktop/windows/README.md)。
 
 `src.runtime_process` 在源码模式选择 `.venv/bin/python` / `.venv\Scripts\python.exe`；
 macOS 冻结版执行随包 `QQPetRuntime scheduler`，Windows 冻结版维持同级 scheduler exe。
 Windows 停止进程使用 `CTRL_BREAK_EVENT → taskkill /T → /F`，POSIX 保持
-`SIGINT → SIGTERM → SIGKILL`。Windows 工作流在原生 runner 验证冻结 exe 和本机服务；
+`SIGINT → SIGTERM → SIGKILL`。Windows 工作流验证冻结 exe、本机服务与真实 Tauri 窗口；
 真实 Android 设备与各类模拟器流程仍需在 Windows 实机验证。
 
 macOS 打包版默认把配置和进度放在 `~/Library/Application Support/QQPetCopilot/`，
+Windows 原生 App 默认使用 `%LOCALAPPDATA%\QQPetCopilot`。
 可通过 `QQPET_DATA_DIR` 指定数据根；采用已有后台时沿用它的数据。App 的只读运行资源与用户数据分开，
 移动 App 不需要移动源码。源码运行及原有 `tools/launchd/install.sh` 托管方式继续有效。
 
@@ -69,8 +73,8 @@ macOS 打包版默认把配置和进度放在 `~/Library/Application Support/QQP
 
 ## 快速开始
 
-**macOS 完整 App**：打开 App 后自动准备本机后台；Python、ADB 和后台已随包提供，
-无需填写服务器地址。全新数据环境会自动进入四步新手引导：
+**macOS / Windows 完整 App**：安装后打开 `QQPet-Steward`，自动准备本机后台并登录独立窗口；
+Python、ADB 和后台已随包提供，无需填写服务器地址。全新数据环境会自动进入四步新手引导：
 **连接设备 → 确认主页 → 选择任务 → 完成准备**。
 
 引导可以点「稍后设置」跳过，之后从「设置 → 新手引导」重新打开。
@@ -113,7 +117,7 @@ cp config.example.yaml config.yaml
 不改变 macOS 的 application coalition，强制退出终端 App 仍可能把它一起杀掉；
 长跑用上面的仪表盘「启动」。
 
-Windows（未实测）：`run.sh` 写死了 `.venv/bin/python`，Windows 下请直接用
+Windows 源码方式：`run.sh` 写死了 `.venv/bin/python`，Windows 下请直接用
 `.venv\Scripts\python scenarios\runner.py`；仪表盘用
 `.venv\Scripts\python dashboard.py --port 8787`，再从界面点「启动」。
 Windows 没有 launchd，开机自启用「任务计划程序」。
@@ -123,7 +127,7 @@ macOS 与 Windows 在 adb 探测、模拟器探测、桌面通知上的差异见
 
 ## 手机仪表盘
 
-源码仪表盘默认端口 8787、绑定 `0.0.0.0`；macOS 完整 App 的随包后台默认只绑定
+源码仪表盘默认端口 8787、绑定 `0.0.0.0`；macOS / Windows 完整 App 的随包后台默认只绑定
 `127.0.0.1`，自动供本机界面使用。需要局域网手机遥控时可继续使用源码 launchd 托管方式。
 日志 3 秒、数据 6 秒、实时画面 15 秒自动刷新。
 
@@ -231,12 +235,12 @@ Telegram 用原生表格，飞书/桌面/OnePush 自动转纯文本；完整示�
 
 调度器、各场景实现、UI 定位注册表、OCR 封装等核心能力来自
 [上游项目](https://github.com/490720818/qq-pet-copilot)（Windows 桌面版）。
-本版做了 macOS 运行链路适配、浏览器仪表盘、实时画面截图，以及一批新版 QQ 界面适配；
+本版增加 macOS / Windows 原生 App、浏览器仪表盘、实时画面截图，以及一批新版 QQ 界面适配；
 差异清单见 [MAC-PORT.md](MAC-PORT.md)。
 
 上游的 PyQt6 桌面 GUI（`main.py`）、旧打包脚本与 Windows 打包 CI
 （`release.yml`）已从本仓库移除；当前支持源码运行与浏览器界面，并在 `desktop/` 提供
-完整 macOS App 和 Windows portable 打包入口。
+完整 macOS App 与 Windows 原生 App / NSIS 安装器打包入口。
 要用上游桌面版（含打包 exe 说明），见
 [上游 README](https://github.com/490720818/qq-pet-copilot)。
 

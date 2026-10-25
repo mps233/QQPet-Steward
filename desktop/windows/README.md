@@ -1,172 +1,147 @@
-# QQPet-Steward for Windows (portable)
+# QQPet-Steward for Windows
 
-This is the Windows x64 portable edition. It includes Python, the dashboard,
-scheduler, ADB, OCR models, and device-control resources. Extract the complete
-directory and run `start_portable.bat`; the interface is the local browser
-dashboard. An MSI installer and a native desktop shell are not included.
+The Windows x64 edition is a complete native App. Install
+`QQPet-Steward_<version>_windows_x64-setup.exe` and open **QQPet-Steward** from
+the Start menu. It opens its own Tauri window, prepares the local backend and
+signs in automatically. Python, ADB, OCR models and device-control resources
+are included; no server URL or separate Python installation is required.
 
-## Product shape
+The installer runs for the current Windows user. If Microsoft WebView2 is
+missing, the installer downloads and installs it. The release binaries are
+not Authenticode-signed; Windows may show an unknown-publisher warning.
 
-The portable package contains two executables:
+## Window, tray and background tasks
 
-* `QQPetCopilot.exe` - the dashboard and local web UI;
-* `QQPetCopilotScheduler.exe` - the scheduler entry point launched by the
-  dashboard.
+Closing the main window hides it and keeps the paw icon in the system tray.
+Use the paw menu's **Open main window** action to return to the App. Opening
+QQPet-Steward again also brings back the existing window.
 
-`src.runtime_process` chooses `.venv\Scripts\python.exe` in a source checkout
-and the sibling scheduler executable in a frozen build.  It launches the
-scheduler in a new process group without a console, writes stdout/stderr to
-`runs\runner_console.log`, and stops it gracefully with `CTRL_BREAK_EVENT`
-before falling back to `taskkill /T` and `taskkill /T /F`.
+The dashboard backend and scheduler run independently of the native window.
+Closing the window or choosing **Exit App** leaves existing tasks running.
+Use **Stop** in the dashboard to stop the scheduler.
 
-## Build a portable zip
+## Data and bundled resources
 
-Run these commands in a **Windows** checkout with Python 3.13 and Node.js
-available:
+The native App stores configuration and progress in:
+
+```text
+%LOCALAPPDATA%\QQPetCopilot\
+  config.yaml
+  runs\
+    dashboard_access.token
+    dashboard_console.log
+    runner_console.log
+    logs\
+    models\rapidocr\
+```
+
+`QQPET_DATA_DIR` can select another writable data directory. When a compatible
+local backend is already running, the App can continue using its data.
+User data stays outside the installation and the read-only runtime resources.
+
+The App copies its internal Python backend into a versioned runtime cache
+before starting it. That cache uses a build fingerprint so a running backend
+does not depend on files in the installer directory.
+
+The runtime includes the React dashboard, room backgrounds, the public task
+templates, exactly three verified OCR models, Windows ADB and both DLLs, four
+Android minitouch binaries, two version-matched Frida server archives and the
+Frida Java bridge. Real configuration, progress, access codes, logs and pairing
+records are never build inputs.
+
+## Build the native App
+
+Build on **Windows x64** with Python 3.13, Node.js, Rust's MSVC toolchain and the
+Visual Studio C++ build tools / Windows SDK available. The GitHub Actions
+`windows-2025` runner provides the Windows build tools.
 
 ```powershell
 py -3.13 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt -r desktop\windows\requirements-build.txt
 
-# Frontend build; dashboard.py serves web\dist directly.
-Push-Location web
 npm install --global pnpm@10.18.0
-pnpm install --frozen-lockfile
-pnpm run build
-Pop-Location
+pnpm --dir web install --frozen-lockfile
+pnpm --dir web run build
+pnpm --dir desktop/macos install --frozen-lockfile
 
-# Download and verify every required resource, then freeze on Windows.
-.\.venv\Scripts\python.exe desktop\windows\build_portable.py
+rustup toolchain install stable --profile minimal
+rustup default stable
+.\.venv\Scripts\python.exe desktop\windows\build_native.py
 ```
 
-The default output is:
+The builder reads the release version from `desktop/macos/tauri.conf.json`.
+The Tauri crate and App assets are shared with macOS; the Windows override
+selects a native Windows window, a generated ICO and a per-user NSIS installer.
+The primary outputs are:
 
 ```text
-dist\QQPet-Steward_<version>_windows_x64\QQPetCopilot.exe
-dist\QQPet-Steward_<version>_windows_x64\QQPetCopilotScheduler.exe
-dist\QQPet-Steward_<version>_windows_x64.zip
-dist\QQPet-Steward_<version>_windows_x64.zip.sha256
+dist\QQPet-Steward_<version>_windows_x64-setup.exe
+dist\QQPet-Steward_<version>_windows_x64-setup.exe.sha256
 ```
 
-Use `--no-fetch` to skip network downloads, `--clean` to remove `build\` and the
-portable output directory before building, and `--no-zip` to keep only the
-directory. `--check` performs read-only validation of an already prepared
-checkout. Missing resources and failed downloads block packaging.
+An auxiliary `QQPet-Steward_<version>_windows_x64-native.zip` contains the
+native App executable and its internal backend. It is useful for validation
+without installing. The installer is the normal distribution entry point.
 
-The `Build Windows portable` GitHub Actions workflow builds on a Windows x64
-runner, tests the helpers, then runs both frozen executables and local HTTP
-checks before uploading a downloadable artifact.
+`build_native.py` first builds and verifies the internal Python runtime, stages
+it under `desktop/macos/target/runtime/QQPetRuntime`, writes its fingerprint,
+generates the ICO from the existing App PNG, then builds Tauri and NSIS.
+Downloads use the existing resource-fetch scripts; missing or corrupt
+resources stop the build.
 
-## Start and stop
+Useful options:
 
-From the package root:
+* `--check`: inspect source configuration and tool availability without writing;
+* `--prepare-only`: build and verify Python, then stage resources and generate the icon;
+* `--skip-runtime-build`: verify and reuse an existing Python build before building Tauri;
+* `--no-fetch`: require already prepared resources;
+* `--no-native-zip`: produce only the installer download and its checksum.
 
-```bat
-start_portable.bat
-```
+## Verification
 
-Or from PowerShell:
+The `Build Windows desktop App` workflow builds the frontend and internal
+Python executables, runs their offline and HTTP checks, builds Tauri / NSIS and
+tests the Rust helpers. It then silently installs the generated installer,
+checks its App files and Start menu shortcut, and verifies the installed backend
+and actual native window. Only a successful run uploads the installer and
+verification reports.
+
+For native GUI verification, install the Python Playwright package. A separate
+browser download is not needed: the tool connects to the App's WebView2.
 
 ```powershell
-.\start_portable.ps1
+.\.venv\Scripts\python.exe -m pip install "playwright>=1.50,<2"
+.\.venv\Scripts\python.exe desktop\windows\verify_native.py `
+  --executable desktop\macos\target\release\QQPet-Steward.exe `
+  --report build\windows-native-verification.json `
+  --screenshot build\windows-native-app.png
 ```
 
-Open `http://127.0.0.1:8787` (or the machine's LAN address).  The first access
-code is stored in `runs\dashboard_access.token`.  The dashboard's **Start** and
-**Stop** buttons drive the sibling scheduler executable.
+The verifier uses temporary data, runtime-cache and WebView2-profile
+directories. It checks the native window, automatic local login, backend
+startup, single-instance behavior and close / reopen behavior. It records
+whether a real window screenshot was available. Reports and screenshots stay
+outside the App bundle.
 
-To stop the dashboard itself:
+These checks do not run an Android device or exercise emulator recovery,
+device input, firewall prompts or every Windows desktop version. Those paths
+still need Windows device testing.
 
-```powershell
-.\stop_portable.ps1
-```
+## Internal Python runtime
 
-The scripts stop only the PID recorded in `runs\dashboard.pid`; they do not
-kill unrelated Python processes.
+`build_portable.py --no-zip` is retained as the native builder's Python
+freezing step. Its two executables are internal components:
 
-## Portable data and ADB
+* `QQPetCopilot.exe`: local dashboard backend;
+* `QQPetCopilotScheduler.exe`: scheduler launched by that backend.
 
-Portable mode keeps mutable data beside the executables:
+Both use the same dependency graph and share `_internal`. The builder verifies
+identical shared files before merging, excludes unused OCR backends and large
+wheel models, and includes only the required resource files. Browser startup
+scripts from the development portable package are not staged into the native
+App.
 
-```text
-config.yaml
-runs\
-  dashboard_access.token
-  dashboard.pid
-  runner_console.log
-  logs\
-  models\rapidocr\
-```
-
-This is safe only in a writable user directory.  Do **not** place the portable
-package under `C:\Program Files`; installed mode is the second milestone and
-uses `%LOCALAPPDATA%\QQPetCopilot`.
-
-The launcher sets `QQPET_DATA_DIR` before importing the dashboard and rebinds
-every `runs\...` / `config.yaml` path to that directory.  This keeps
-`web\dist`, `static`, and OCR models in the read-only bundle while progress,
-logs, access tokens, and configuration remain writable and upgrade-safe.
-
-ADB can be discovered from `PATH` or configured in `config.yaml`.  Bundled
-`resources\platform-tools\adb.exe` inside the frozen resource directory is
-preferred when present. The builder obtains the Windows ADB executable and its
-two DLLs through the existing scrcpy resource downloader; it does not include
-the unused scrcpy video tools in the portable package.
-
-## Assets and models
-
-The spec bundles:
-
-* `web\dist\` (the React dashboard);
-* `static\` (PWA icons and room backgrounds);
-* `config.example.yaml`;
-* exactly three verified OCR models under `models\rapidocr\`;
-* ADB and its DLLs, four Android minitouch binaries, two version-matched Frida
-  server archives, and the Frida Java bridge;
-* the public task-image templates used by the scheduler.
-
-`web\dist`, downloaded models, and `resources` stay outside Git. The builder
-downloads OCR assets into an isolated build directory and copies only selected
-files. It rejects incomplete resources instead of publishing a reduced package.
-Real `config.yaml`, logs, progress, access codes, and pairing records are never
-build inputs.
-
-## Why two executables?
-
-A frozen dashboard's `sys.executable` is `QQPetCopilot.exe`.  Appending
-`scenarios\runner.py` to it would relaunch the dashboard, not the scheduler.
-The scheduler executable is built from `scheduler_launcher.py`, which reads
-`QQPET_DATA_DIR`, rebinds `src.config` before runner import, and executes
-`scenarios.runner` with `run_name="__main__"`.  This preserves the no-argument
-scheduler CLI while keeping the runner inside PyInstaller's PYZ.  Source
-checkouts continue to use the project venv and `runner.py` directly.
-
-It also preserves runner's command-line options (`--emulator`,
-`--emulator-device`, `--skip-opener`, and `--test`) because `build_scheduler_argv`
-passes `extra_args` after the frozen executable unchanged.
-
-## Verification status
-
-The native verifier is intended to run on Windows after the build:
-
-```powershell
-.\.venv\Scripts\python.exe desktop\windows\verify_portable.py `
-  --directory dist\QQPet-Steward_<version>_windows_x64 `
-  --report build\windows-verification.json
-```
-
-It checks AMD64 executables, rejects user data in the package, runs both frozen
-offline self-tests, then starts an isolated local dashboard to check the React
-page, assets, client protocol, authentication, and status response. Its data and
-access code stay in temporary directories, outside the portable output.
-
-This does not run an Android device or exercise emulator recovery, real device
-input, firewall prompts, or all Windows desktop versions. The release binaries
-are not Authenticode-signed; Windows may show an unknown-publisher warning.
-
-The main `dashboard.py` already uses:
-
-* `runtime_process.build_scheduler_argv` for venv/frozen selection;
-* `runtime_process.spawn_detached_scheduler` for platform-specific detachment;
-* `runtime_process.stop_process` for the platform-specific stop ladder;
-* `runtime_process.scheduler_environment` to pass the writable data root.
+`src.runtime_process` uses the sibling scheduler executable in a frozen build
+and the project venv in a source checkout. It starts the scheduler in its own
+process group, writes `runs\runner_console.log`, and stops it with
+`CTRL_BREAK_EVENT` before falling back to `taskkill /T` and `taskkill /T /F`.

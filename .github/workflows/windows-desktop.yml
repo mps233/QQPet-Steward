@@ -1,0 +1,149 @@
+name: Build Windows desktop App
+run-name: Build native Windows App from ${{ github.ref_name }}
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-desktop-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows-x64:
+    runs-on: windows-2025
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      PYTHONUTF8: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      QQPET_DISABLE_TG: "1"
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: "3.13"
+          architecture: x64
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+            desktop/windows/requirements-build.txt
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: "22"
+      - name: Install Python dependencies
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          python -m venv .venv
+          .venv/Scripts/python.exe -m pip install -r requirements.txt -r requirements-dev.txt -r desktop/windows/requirements-build.txt "playwright>=1.50,<2"
+          .venv/Scripts/python.exe -m pip check
+      - name: Build and check the dashboard
+        working-directory: web
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          npm install --global pnpm@10.18.0
+          pnpm install --frozen-lockfile
+          pnpm run build
+          pnpm test
+      - name: Install native build dependencies
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          pnpm --dir desktop/macos install --frozen-lockfile
+      - name: Test Windows packaging and runtime helpers
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          .venv/Scripts/python.exe -m pytest -q tests/test_runtime_process.py tests/test_runtime_process_frozen_launcher.py tests/test_windows_runtime_self_test.py tests/test_windows_dashboard_first_run.py tests/test_windows_portable_build.py tests/test_windows_portable_verify.py tests/test_windows_native_build.py tests/test_windows_native_verify.py tests/test_dashboard_platform_startup.py tests/test_dashboard_media_ranges.py
+          cargo fmt --manifest-path desktop/macos/Cargo.toml -- --check
+      - name: Build and verify the internal Python runtime
+        run: .venv/Scripts/python.exe desktop/windows/build_native.py --prepare-only
+      - name: Build the native App and per-user installer
+        id: build
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          .venv/Scripts/python.exe desktop/windows/build_native.py --skip-runtime-build
+          $Version = (Get-Content desktop/macos/tauri.conf.json -Raw | ConvertFrom-Json).version
+          "version=$Version" >> $env:GITHUB_OUTPUT
+      - name: Test native Rust behavior
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $env:TAURI_CONFIG = Get-Content desktop/windows/tauri.windows.conf.json -Raw
+          cargo test --release --locked --manifest-path desktop/macos/Cargo.toml
+      - name: Install the actual NSIS deliverable
+        id: install
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $Version = (Get-Content desktop/macos/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $Setup = Join-Path (Resolve-Path dist) "QQPet-Steward_${Version}_windows_x64-setup.exe"
+          if (-not (Test-Path -LiteralPath $Setup -PathType Leaf)) {
+            throw "The native NSIS installer is missing: $Setup"
+          }
+          $InstallDir = Join-Path $env:RUNNER_TEMP "QQPetNativeInstall"
+          $Installer = Start-Process -FilePath $Setup -ArgumentList @("/S", "/D=$InstallDir") -Wait -PassThru
+          if ($Installer.ExitCode -ne 0) {
+            throw "NSIS installation failed with exit code $($Installer.ExitCode)"
+          }
+          $RequiredFiles = @(
+            "QQPet-Steward.exe",
+            "backend\.build-fingerprint",
+            "backend\QQPetCopilot.exe",
+            "backend\QQPetCopilotScheduler.exe",
+            "backend\_internal\python313.dll",
+            "backend\_internal\web\dist\index.html",
+            "backend\_internal\static\icon-512.png"
+          )
+          foreach ($Relative in $RequiredFiles) {
+            $InstalledFile = Join-Path $InstallDir $Relative
+            if (-not (Test-Path -LiteralPath $InstalledFile -PathType Leaf)) {
+              throw "The installer omitted a required App file: $Relative"
+            }
+          }
+          $Shortcut = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\QQPet-Steward\QQPet-Steward.lnk"
+          if (-not (Test-Path -LiteralPath $Shortcut -PathType Leaf)) {
+            throw "The per-user Start menu shortcut was not installed"
+          }
+          "executable=$(Join-Path $InstallDir 'QQPet-Steward.exe')" >> $env:GITHUB_OUTPUT
+          "backend=$(Join-Path $InstallDir 'backend')" >> $env:GITHUB_OUTPUT
+      - name: Verify the installed Python backend
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          .venv/Scripts/python.exe desktop/windows/verify_portable.py --directory "${{ steps.install.outputs.backend }}" --report build/windows-installed-backend-verification.json
+      - name: Verify the installed native App
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          .venv/Scripts/python.exe desktop/windows/verify_native.py --executable "${{ steps.install.outputs.executable }}" --report build/windows-native-verification.json --screenshot build/windows-native-app.png
+      - name: Upload verified Windows App
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: windows-desktop-v${{ steps.build.outputs.version }}
+          path: |
+            dist/QQPet-Steward_*_windows_x64-setup.exe
+            dist/QQPet-Steward_*_windows_x64-setup.exe.sha256
+            dist/QQPet-Steward_*_windows_x64-native.zip
+            dist/QQPet-Steward_*_windows_x64-native.zip.sha256
+            build/windows-native-backend-verification.json
+            build/windows-installed-backend-verification.json
+            build/windows-native-verification.json
+            build/windows-native-app.png
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+      - name: Upload diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: windows-desktop-build-diagnostics
+          path: |
+            build/windows-native-backend-verification.json
+            build/windows-installed-backend-verification.json
+            build/windows-native-verification.json
+            build/windows-native-app.png
+            build/pyinstaller/**/warn-*.txt
+          if-no-files-found: ignore
+          retention-days: 7

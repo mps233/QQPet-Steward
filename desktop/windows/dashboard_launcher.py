@@ -131,6 +131,8 @@ def main(argv: list[str] | None = None) -> int:
             continue
         _rebind_module_paths(module, data_root)
     try:
+        if not runtime_config.CONFIG_FILE.is_file():
+            runtime_config.load_config(runtime_config.CONFIG_FILE)
         return int(dashboard.main())
     finally:
         for module, attr, value in original_paths:

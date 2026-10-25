@@ -17,6 +17,10 @@ use tauri::{
     Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
 
+#[cfg(target_os = "windows")]
+#[path = "../../windows/native_backend.rs"]
+mod windows_backend;
+
 const DEFAULT_SERVER: &str = "http://127.0.0.1:8787/";
 const DASHBOARD_LABEL: &str = "dashboard";
 const DASHBOARD_WINDOW_TITLE: &str = "QQPet-Steward";
@@ -188,6 +192,30 @@ fn spawn_dashboard(app: &tauri::AppHandle, server: &str) -> Result<u32, String> 
     if port_open(server) {
         return Err("仪表盘端口已被其他实例占用；不会重复启动".to_owned());
     }
+    #[cfg(target_os = "windows")]
+    let pid = windows_backend::spawn_dashboard(&state.runtime, &state.data_root, port)?;
+    #[cfg(not(target_os = "windows"))]
+    let pid = spawn_posix_dashboard(&state, port)?;
+    remember_dashboard_pid(&state, pid)?;
+    Ok(pid)
+}
+
+fn remember_dashboard_pid(state: &ShellState, pid: u32) -> Result<(), String> {
+    *state
+        .dashboard_child
+        .lock()
+        .map_err(|_| "客户端进程状态已损坏".to_owned())? = Some(pid);
+    #[cfg(target_os = "windows")]
+    fs::write(
+        state.data_root.join("runs/dashboard.pid"),
+        format!("{pid}\n"),
+    )
+    .map_err(|error| format!("无法记录后台进程：{error}"))?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn spawn_posix_dashboard(state: &ShellState, port: u16) -> Result<u32, String> {
     let log = state.data_root.join("runs/dashboard_console.log");
     if let Some(parent) = log.parent() {
         fs::create_dir_all(parent).map_err(|error| format!("无法创建日志目录：{error}"))?;
@@ -219,15 +247,15 @@ fn spawn_dashboard(app: &tauri::AppHandle, server: &str) -> Result<u32, String> 
         .stderr(Stdio::from(stderr))
         .spawn()
         .map_err(|error| format!("启动仪表盘失败：{error}"))?;
-    let pid = child.id();
-    *state
-        .dashboard_child
-        .lock()
-        .map_err(|_| "客户端进程状态已损坏".to_owned())? = Some(pid);
-    Ok(pid)
+    Ok(child.id())
 }
 
 fn integrated_server() -> Result<String, String> {
+    if let Ok(server) = std::env::var("QQPET_SERVER") {
+        let server = normalize_server(&server)?;
+        local_backend_url(&server)?;
+        return Ok(server);
+    }
     let port = match std::env::var("QQPET_PORT") {
         Ok(value) => value
             .parse::<u16>()
@@ -280,6 +308,7 @@ fn launch_agent_plist(runtime: &Path, data_root: &Path, port: u16) -> String {
     )
 }
 
+#[cfg(not(target_os = "windows"))]
 fn install_background_runtime(state: &ShellState) -> Result<PathBuf, String> {
     let bundled = state
         .runtime
@@ -343,6 +372,7 @@ fn managed_backend_runtime(
         .ok_or_else(|| "现有 App 后台的组件路径无效".to_owned())
 }
 
+#[cfg(not(target_os = "windows"))]
 fn start_managed_backend(app: &tauri::AppHandle, port: u16) -> Result<(), String> {
     let state = app
         .try_state::<ShellState>()
@@ -406,6 +436,20 @@ fn start_managed_backend(app: &tauri::AppHandle, port: u16) -> Result<(), String
         }
     }
     Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn start_managed_backend(app: &tauri::AppHandle, port: u16) -> Result<(), String> {
+    let state = app
+        .try_state::<ShellState>()
+        .ok_or_else(|| "应用状态未初始化".to_owned())?;
+    let bundled = state
+        .runtime
+        .parent()
+        .ok_or_else(|| "应用后台组件路径无效".to_owned())?;
+    let runtime = windows_backend::install_runtime(bundled, &state.runtime_store)?;
+    let pid = windows_backend::spawn_dashboard(&runtime, &state.data_root, port)?;
+    remember_dashboard_pid(&state, pid)
 }
 
 fn normalize_server(raw: &str) -> Result<String, String> {
@@ -645,7 +689,10 @@ fn ensure_panel(app: &tauri::AppHandle) -> Result<WebviewWindow, String> {
         // Avoid a native outline around the card's transparent CSS shadow.
         .shadow(false)
         .accept_first_mouse(true)
-        .visible(false)
+        .visible(false);
+    #[cfg(target_os = "windows")]
+    let window = window.transparent(true);
+    let window = window
         .build()
         .map_err(|error| format!("无法创建菜单栏面板：{error}"))?;
     window
@@ -680,9 +727,36 @@ fn tray_scale(app: &tauri::AppHandle) -> Result<f64, String> {
         .ok_or_else(|| "无法确定菜单栏图标所在显示器的缩放比例".to_owned())
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+fn tray_scale(app: &tauri::AppHandle) -> Result<f64, String> {
+    let rect = app
+        .tray_by_id(TRAY_LABEL)
+        .and_then(|tray| tray.rect().ok().flatten())
+        .ok_or_else(|| "无法读取托盘图标位置".to_owned())?;
+    let panel = app
+        .get_webview_window(PANEL_LABEL)
+        .ok_or_else(|| "托盘面板尚未准备完成".to_owned())?;
+    panel
+        .available_monitors()
+        .map_err(|error| format!("无法读取显示器信息：{error}"))?
+        .into_iter()
+        .find(|monitor| {
+            let (x, y) = panel_anchor(&rect, monitor.scale_factor());
+            panel_monitor_matches(
+                (x, y - 1.0),
+                monitor.scale_factor(),
+                monitor.scale_factor(),
+                monitor.position(),
+                monitor.size(),
+            )
+        })
+        .map(|monitor| monitor.scale_factor())
+        .ok_or_else(|| "无法确定托盘图标所在显示器的缩放比例".to_owned())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn tray_scale(_app: &tauri::AppHandle) -> Result<f64, String> {
-    Err("菜单栏面板仅支持 macOS".to_owned())
+    Err("当前系统不支持托盘状态面板".to_owned())
 }
 
 fn panel_monitor_matches(
@@ -708,7 +782,7 @@ fn position_panel(panel: &WebviewWindow, rect: tauri::Rect, tray_scale: f64) -> 
         .into_iter()
         .find(|monitor| {
             panel_monitor_matches(
-                (anchor_x, anchor_y),
+                (anchor_x, anchor_y - 1.0),
                 tray_scale,
                 monitor.scale_factor(),
                 monitor.position(),
@@ -720,14 +794,25 @@ fn position_panel(panel: &WebviewWindow, rect: tauri::Rect, tray_scale: f64) -> 
     let area = monitor.work_area();
     let x = area.position.x as f64;
     let y = area.position.y as f64;
+    #[cfg(not(target_os = "windows"))]
     panel
         .set_size(tauri::Size::Logical(area.size.to_logical::<f64>(scale)))
         .map_err(|error| format!("无法调整面板大小：{error}"))?;
+    #[cfg(not(target_os = "windows"))]
     panel
         .set_position(tauri::Position::Logical(
             area.position.to_logical::<f64>(scale),
         ))
         .map_err(|error| format!("无法定位菜单栏面板：{error}"))?;
+    #[cfg(target_os = "windows")]
+    {
+        panel
+            .set_size(tauri::Size::Physical(area.size))
+            .map_err(|error| format!("无法设置托盘面板大小：{error}"))?;
+        panel
+            .set_position(tauri::Position::Physical(area.position))
+            .map_err(|error| format!("无法定位托盘面板：{error}"))?;
+    }
     let anchor = tauri::PhysicalPosition::new(anchor_x - x, anchor_y - y);
     panel
         .eval(&format!(
@@ -850,12 +935,12 @@ fn state_server(app: &tauri::AppHandle) -> Option<String> {
 fn wait_for_dashboard(server: &str) -> Result<(), String> {
     let deadline = Instant::now() + Duration::from_secs(30);
     while Instant::now() < deadline {
-        if port_open(server) {
+        if port_open(server) && check_http(server).ok {
             return Ok(());
         }
         std::thread::sleep(Duration::from_millis(200));
     }
-    Err("本机托管服务启动后未就绪；请查看项目 runs/dashboard_console.log 后重试".to_owned())
+    Err("本机后台启动后未就绪；请查看应用数据目录中的 runs/dashboard_console.log 后重试".to_owned())
 }
 
 fn ensure_dashboard_running(app: &tauri::AppHandle, server: &str) -> Result<(), String> {
@@ -923,6 +1008,14 @@ fn local_control_token(app: &tauri::AppHandle) -> Result<String, String> {
     Err("本机控制凭据为空；请检查仪表盘日志".to_owned())
 }
 
+#[cfg(any(target_os = "windows", test))]
+fn windows_dashboard_dimensions(work_width: f64, work_height: f64) -> (f64, f64, f64, f64) {
+    // Reserve room for the Windows title bar, borders, and screen margins.
+    let width = 520.0_f64.min((work_width - 32.0).max(1.0));
+    let height = 900.0_f64.min((work_height - 64.0).max(1.0));
+    (width, height, 390.0_f64.min(width), 640.0_f64.min(height))
+}
+
 fn ensure_dashboard(
     app: &tauri::AppHandle,
     server: &str,
@@ -962,32 +1055,54 @@ fn ensure_dashboard(
         DASHBOARD_LABEL,
         WebviewUrl::External(tauri::Url::parse("about:blank").unwrap()),
     )
-    .title(DASHBOARD_WINDOW_TITLE)
-    .title_bar_style(tauri::TitleBarStyle::Overlay)
-    .hidden_title(true)
-    .initialization_script(WINDOW_CHROME_SCRIPT)
-    .incognito(state.transient)
-    .inner_size(520.0, 900.0)
-    .min_inner_size(390.0, 640.0)
-    .visible(false)
-    .center()
-    .on_navigation(move |url| {
-        if dashboard_navigation_allowed(url, &trusted) {
-            true
-        } else {
+    .title(DASHBOARD_WINDOW_TITLE);
+    #[cfg(target_os = "macos")]
+    let window = window
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true)
+        .initialization_script(WINDOW_CHROME_SCRIPT);
+    let window = window.incognito(state.transient);
+    #[cfg(not(target_os = "windows"))]
+    let window = window.inner_size(520.0, 900.0).min_inner_size(390.0, 640.0);
+    #[cfg(target_os = "windows")]
+    let window = {
+        let monitor = app
+            .get_webview_window(LAUNCHER_LABEL)
+            .and_then(|launcher| launcher.current_monitor().ok().flatten())
+            .or_else(|| app.primary_monitor().ok().flatten());
+        let (width, height, min_width, min_height) = monitor
+            .map(|monitor| {
+                let work = monitor
+                    .work_area()
+                    .size
+                    .to_logical::<f64>(monitor.scale_factor());
+                windows_dashboard_dimensions(work.width, work.height)
+            })
+            .unwrap_or((520.0, 900.0, 390.0, 640.0));
+        window
+            .inner_size(width, height)
+            .min_inner_size(min_width, min_height)
+    };
+    let window = window
+        .visible(false)
+        .center()
+        .on_navigation(move |url| {
+            if dashboard_navigation_allowed(url, &trusted) {
+                true
+            } else {
+                let _ = open_external_url(url.as_str());
+                false
+            }
+        })
+        .on_new_window(move |url, _features| {
             let _ = open_external_url(url.as_str());
-            false
-        }
-    })
-    .on_new_window(move |url, _features| {
-        let _ = open_external_url(url.as_str());
-        tauri::webview::NewWindowResponse::Deny
-    })
-    .on_document_title_changed(|window, _title| {
-        let _ = window.set_title(DASHBOARD_WINDOW_TITLE);
-    })
-    .build()
-    .map_err(|error| format!("无法创建仪表盘窗口：{error}"))?;
+            tauri::webview::NewWindowResponse::Deny
+        })
+        .on_document_title_changed(|window, _title| {
+            let _ = window.set_title(DASHBOARD_WINDOW_TITLE);
+        })
+        .build()
+        .map_err(|error| format!("无法创建仪表盘窗口：{error}"))?;
 
     install_session(&window, &base, session)?;
     window
@@ -1274,19 +1389,24 @@ async fn desktop_session(app: &tauri::AppHandle, server: &str) -> Result<Desktop
         {
             Ok(value) => value,
             Err(_) => {
-                // Older running services share the same access key. Derive
-                // their session with the bundled runtime, never in page JS.
-                let output = Command::new(&state.runtime)
-                    .arg("session-cookie")
-                    .env("QQPET_DATA_DIR", &state.data_root)
-                    .stdin(Stdio::null())
-                    .output()
-                    .map_err(|_| "无法准备本机登录状态，请检查应用后台组件".to_owned())?;
-                if !output.status.success() {
-                    return Err("无法准备本机登录状态，请重试".to_owned());
+                #[cfg(not(target_os = "windows"))]
+                {
+                    // Older running services share the same access key. Derive
+                    // their session with the bundled runtime, never in page JS.
+                    let output = Command::new(&state.runtime)
+                        .arg("session-cookie")
+                        .env("QQPET_DATA_DIR", &state.data_root)
+                        .stdin(Stdio::null())
+                        .output()
+                        .map_err(|_| "无法准备本机登录状态，请检查应用后台组件".to_owned())?;
+                    if !output.status.success() {
+                        return Err("无法准备本机登录状态，请重试".to_owned());
+                    }
+                    serde_json::from_slice(&output.stdout)
+                        .map_err(|_| "后台登录状态格式不正确".to_owned())?
                 }
-                serde_json::from_slice(&output.stdout)
-                    .map_err(|_| "后台登录状态格式不正确".to_owned())?
+                #[cfg(target_os = "windows")]
+                return Err("本机后台未提供原生登录接口，请退出旧版便携后台后重试".to_owned());
             }
         };
         let session: DesktopSession =
@@ -1438,22 +1558,28 @@ fn main() {
             reopen_dashboard(app);
         }))
         .setup(|app| {
+            #[cfg(not(target_os = "windows"))]
             let config_dir = app.path().app_config_dir()?;
+            #[cfg(target_os = "windows")]
+            let config_dir = app.path().app_local_data_dir()?;
             let server = integrated_server().unwrap_or_else(|_| DEFAULT_SERVER.to_owned());
             let override_root = std::env::var_os("QQPET_DATA_DIR").map(PathBuf::from);
             let saved_root = fs::read_to_string(config_dir.join("data-root.txt"))
                 .ok()
                 .map(|value| PathBuf::from(value.trim()))
                 .filter(|path| path.join("config.yaml").is_file());
+            #[cfg(not(target_os = "windows"))]
+            let default_root = app
+                .path()
+                .home_dir()?
+                .join("Library/Application Support/QQPetCopilot");
+            #[cfg(target_os = "windows")]
+            let default_root = app.path().local_data_dir()?.join("QQPetCopilot");
             let data_root = override_root
                 .clone()
                 .or_else(|| existing_data_root(&server))
                 .or(saved_root)
-                .unwrap_or(
-                    app.path()
-                        .home_dir()?
-                        .join("Library/Application Support/QQPetCopilot"),
-                );
+                .unwrap_or(default_root);
             if override_root.is_none() {
                 let _ = fs::create_dir_all(&config_dir);
                 let _ = fs::write(
@@ -1461,12 +1587,18 @@ fn main() {
                     data_root.to_string_lossy().as_bytes(),
                 );
             }
+            #[cfg(not(target_os = "windows"))]
             let runtime = app.path().resource_dir()?.join("backend/QQPetRuntime");
+            #[cfg(target_os = "windows")]
+            let runtime = app.path().resource_dir()?.join("backend/QQPetCopilot.exe");
+            let runtime_store = std::env::var_os("QQPET_RUNTIME_STORE")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| config_dir.join("backends"));
             app.manage(ShellState {
                 server,
                 data_root,
                 runtime,
-                runtime_store: config_dir.join("backends"),
+                runtime_store,
                 launch_agent: app
                     .path()
                     .home_dir()?
@@ -1623,6 +1755,26 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn windows_dashboard_fits_short_and_scaled_work_areas() {
+        assert_eq!(
+            windows_dashboard_dimensions(1366.0, 728.0),
+            (520.0, 664.0, 390.0, 640.0)
+        );
+        assert_eq!(
+            windows_dashboard_dimensions(960.0, 500.0),
+            (520.0, 436.0, 390.0, 436.0)
+        );
+        assert_eq!(
+            windows_dashboard_dimensions(360.0, 500.0),
+            (328.0, 436.0, 328.0, 436.0)
+        );
+        assert_eq!(
+            windows_dashboard_dimensions(1920.0, 1040.0),
+            (520.0, 900.0, 390.0, 640.0)
+        );
     }
 
     #[test]

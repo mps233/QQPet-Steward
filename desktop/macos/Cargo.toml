@@ -1,7 +1,7 @@
 [package]
 name = "qqpet-dashboard-desktop"
-version = "0.8.1"
-description = "macOS shell for the QQ Pet dashboard"
+version = "0.8.2"
+description = "Desktop App for the QQ Pet dashboard"
 authors = ["QQ Pet Copilot contributors"]
 edition = "2021"
 rust-version = "1.77.2"

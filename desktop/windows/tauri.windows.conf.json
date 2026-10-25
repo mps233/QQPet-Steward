@@ -1,0 +1,42 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "mainBinaryName": "QQPet-Steward",
+  "app": {
+    "windows": [
+      {
+        "label": "launcher",
+        "title": "QQPet-Steward",
+        "url": "index.html",
+        "width": 460,
+        "height": 680,
+        "minWidth": 380,
+        "minHeight": 560,
+        "center": true,
+        "resizable": true,
+        "visible": false
+      }
+    ]
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["../../build/windows-native/QQPet-Steward.ico"],
+    "shortDescription": "QQPet-Steward for Windows",
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "allowDowngrades": false,
+      "nsis": {
+        "installMode": "currentUser",
+        "installerIcon": "../../build/windows-native/QQPet-Steward.ico",
+        "uninstallerIcon": "../../build/windows-native/QQPet-Steward.ico",
+        "languages": ["SimpChinese", "English"],
+        "displayLanguageSelector": false,
+        "startMenuFolder": "QQPet-Steward",
+        "compression": "lzma"
+      }
+    }
+  }
+}
