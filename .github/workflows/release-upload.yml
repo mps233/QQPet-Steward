@@ -1,0 +1,271 @@
+name: Upload verified release assets to existing draft
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version without v, for example 0.8.3"
+        required: true
+        type: string
+      verified_run_id:
+        description: "Successful full Windows desktop build run ID"
+        required: true
+        type: string
+      expected_commit:
+        description: "Full 40-character commit of the successful build and release tag"
+        required: true
+        type: string
+      release_id:
+        description: "Numeric ID of the existing draft release"
+        required: true
+        type: string
+      mac_dmg_sha256:
+        description: "SHA-256 of the already-uploaded versioned Mac DMG"
+        required: true
+        type: string
+      mac_zip_sha256:
+        description: "SHA-256 of the already-uploaded versioned Mac ZIP"
+        required: true
+        type: string
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: qqpet-release-asset-upload
+  cancel-in-progress: false
+jobs:
+  upload-verified-assets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: mps233/QQPet-Steward
+      PYTHONDONTWRITEBYTECODE: "1"
+      RELEASE_VERSION: ${{ inputs.version }}
+      VERIFIED_RUN_ID: ${{ inputs.verified_run_id }}
+      EXPECTED_COMMIT: ${{ inputs.expected_commit }}
+      RELEASE_ID: ${{ inputs.release_id }}
+      MAC_DMG_SHA256: ${{ inputs.mac_dmg_sha256 }}
+      MAC_ZIP_SHA256: ${{ inputs.mac_zip_sha256 }}
+    steps:
+      - name: Validate successful full-build evidence and upload draft assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          """Upload a successful native Windows build to an existing release draft."""
+          from __future__ import annotations
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import subprocess
+          import sys
+          import tempfile
+          from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
+
+          REPO = "mps233/QQPet-Steward"
+          WORKFLOW = ".github/workflows/windows-desktop.yml"
+          REPORTS = (
+              "windows-native-backend-verification.json",
+              "windows-installed-backend-verification.json",
+              "windows-native-verification.json",
+          )
+
+
+          class GuardError(RuntimeError):
+              pass
+
+
+          def require(condition, message):
+              if not condition:
+                  raise GuardError(message)
+
+
+          def checked_input(name, pattern):
+              value = os.environ.get(name, "")
+              require(len(value) <= 128 and re.fullmatch(pattern, value, flags=re.ASCII) is not None,
+                      "Invalid required workflow input: " + name)
+              return value
+
+
+          def gh(*arguments):
+              result = subprocess.run(["gh", *arguments], stdout=subprocess.PIPE,
+                                      stderr=subprocess.PIPE, text=True, timeout=600, check=False)
+              # A failed download can expose a signed URL in stderr; never echo CLI output.
+              require(result.returncode == 0, "GitHub operation failed; credentials and signed URLs withheld")
+              return result.stdout
+
+
+          def api(path):
+              return json.loads(gh("api", "--hostname", "github.com", path))
+
+
+          def digest(path):
+              with path.open("rb") as stream:
+                  return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+          def release_assets(release_id, tag):
+              release = api(f"repos/{REPO}/releases/{release_id}")
+              require(release.get("id") == release_id and release.get("draft") is True
+                      and release.get("tag_name") == tag,
+                      "The fixed numeric release ID must still identify the exact requested draft tag")
+              assets = api(f"repos/{REPO}/releases/{release_id}/assets?per_page=100")
+              require(isinstance(assets, list) and len(assets) < 100, "Release asset listing is incomplete")
+              names = [asset.get("name") for asset in assets]
+              require(len(names) == len(set(names)), "The draft contains duplicate asset names")
+              return {asset["name"]: asset for asset in assets}
+
+
+          def validate_remote(assets, expected):
+              for name, sha in expected.items():
+                  asset = assets.get(name, {})
+                  require(asset.get("state") == "uploaded" and type(asset.get("size")) is int
+                          and asset["size"] > 0 and asset.get("digest") == "sha256:" + sha,
+                          "GitHub asset digest, size, or state mismatch: " + name)
+
+
+          def upload_to_fixed_release(path, release_id):
+              class NoRedirect(HTTPRedirectHandler):
+                  def redirect_request(self, *_arguments, **_keywords):
+                      raise GuardError("Asset upload redirected; refusing to forward the credential")
+
+              url = f"https://uploads.github.com/repos/{REPO}/releases/{release_id}/assets?name={path.name}"
+              headers = {
+                  "Authorization": "Bearer " + os.environ["GH_TOKEN"],
+                  "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28",
+                  "Content-Type": "application/octet-stream", "Content-Length": str(path.stat().st_size),
+                  "User-Agent": "QQPet-Steward-verified-draft-upload",
+              }
+              with path.open("rb") as stream:
+                  request = Request(url, data=stream, headers=headers, method="POST")
+                  with build_opener(ProxyHandler({}), NoRedirect()).open(request, timeout=600) as response:
+                      require(response.status == 201, "GitHub did not create the fixed draft asset")
+                      asset = json.load(response)
+              require(asset.get("name") == path.name and asset.get("state") == "uploaded",
+                      "GitHub returned an unexpected uploaded asset")
+
+
+          def main():
+              require(os.environ.get("GITHUB_REPOSITORY") == REPO,
+                      "This upload workflow must run only in the trusted repository")
+              require(bool(os.environ.get("GH_TOKEN")), "GITHUB_TOKEN is unavailable")
+              version = checked_input("RELEASE_VERSION", r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?")
+              run_id = int(checked_input("VERIFIED_RUN_ID", r"[1-9][0-9]{0,19}"))
+              head = checked_input("EXPECTED_COMMIT", r"[0-9a-fA-F]{40}").lower()
+              release_id = int(checked_input("RELEASE_ID", r"[1-9][0-9]{0,19}"))
+              dmg_sha = checked_input("MAC_DMG_SHA256", r"[0-9a-fA-F]{64}").lower()
+              zip_sha = checked_input("MAC_ZIP_SHA256", r"[0-9a-fA-F]{64}").lower()
+              tag, artifact_name = "v" + version, "windows-desktop-v" + version
+              mac = {
+                  f"QQPet-Steward_{version}_macos_arm64.dmg": dmg_sha,
+                  f"QQPet-Steward_{version}_macos_arm64.zip": zip_sha,
+              }
+              windows = (f"QQPet-Steward_{version}_windows_x64-setup.exe",
+                         f"QQPet-Steward_{version}_windows_x64-native.zip")
+              upload_names = {*windows, "SHA256SUMS.txt"}
+              allowed_files = {*windows, *(name + ".sha256" for name in windows),
+                               *REPORTS, "windows-native-app.png"}
+
+              def trusted_run():
+                  run = api(f"repos/{REPO}/actions/runs/{run_id}")
+                  require(run.get("id") == run_id and run.get("repository", {}).get("full_name") == REPO
+                          and run.get("head_repository", {}).get("full_name") == REPO
+                          and run.get("head_branch") == "main" and run.get("head_sha") == head
+                          and run.get("path") == WORKFLOW and run.get("event") == "workflow_dispatch"
+                          and run.get("status") == "completed" and run.get("conclusion") == "success",
+                          "The run must be a successful completed main build from the trusted full-build workflow and commit")
+                  require(api(f"repos/{REPO}/commits/{tag}").get("sha") == head,
+                          "The requested release tag does not resolve to the verified build commit")
+                  listing = api(f"repos/{REPO}/actions/runs/{run_id}/artifacts?per_page=100")
+                  require(type(listing.get("total_count")) is int and listing["total_count"] <= 100,
+                          "Artifact listing is unexpectedly large or incomplete")
+                  found = [item for item in listing.get("artifacts", []) if item.get("name") == artifact_name]
+                  require(len(found) == 1, "The exact versioned verified artifact is missing or duplicated")
+                  artifact = found[0]
+                  origin = artifact.get("workflow_run", {})
+                  require(artifact.get("expired") is False and type(artifact.get("id")) is int
+                          and origin.get("id") == run_id and origin.get("head_sha") == head
+                          and origin.get("head_branch") == "main",
+                          "Artifact source differs from the trusted run or the artifact has expired")
+                  return artifact["id"]
+
+              artifact_id = trusted_run()
+              before = release_assets(release_id, tag)
+              require(not (set(before) & upload_names),
+                      "A new Windows/checksum filename already exists; refusing every upload")
+              require(set(before) == set(mac), "The draft must contain only the two exact versioned Mac assets")
+              validate_remote(before, mac)
+              with tempfile.TemporaryDirectory(prefix="qqpet-release-upload-", dir=os.environ.get("RUNNER_TEMP")) as temporary:
+                  work = Path(temporary)
+                  downloaded = work / "verified-artifact"
+                  downloaded.mkdir()
+                  gh("run", "download", str(run_id), "--repo", REPO, "--name", artifact_name,
+                     "--dir", str(downloaded))
+                  entries = list(downloaded.rglob("*"))
+                  require(all(not path.is_symlink() for path in entries), "Artifact contains an unexpected link")
+                  files = [path for path in entries if path.is_file()]
+                  names = [path.name for path in files]
+                  require(len(names) == len(set(names)) and set(names) == allowed_files,
+                          "Artifact must contain exactly four deliverable/sidecar files, three reports, and one PNG")
+                  by_name = {path.name: path for path in files}
+                  for name in REPORTS:
+                      report = json.loads(by_name[name].read_text(encoding="utf-8-sig"))
+                      checks = report.get("checks")
+                      require(report.get("ok") is True and report.get("platform") == "win32"
+                              and isinstance(checks, list) and bool(checks)
+                              and all(isinstance(check, dict) and check.get("ok") is True for check in checks),
+                              "A required Windows native/backend verification report did not pass: " + name)
+                  expected = dict(mac)
+                  for name in windows:
+                      require(by_name[name].stat().st_size > 0, "Windows deliverable is empty: " + name)
+                      sidecar = by_name[name + ".sha256"].read_text(encoding="utf-8-sig").strip()
+                      match = re.fullmatch(r"([0-9a-fA-F]{64})[ \t]+\*?" + re.escape(name), sidecar)
+                      actual = digest(by_name[name])
+                      require(match is not None and match.group(1).lower() == actual,
+                              "Windows payload SHA-256 does not match its exact sidecar: " + name)
+                      expected[name] = actual
+                  manifest = work / "SHA256SUMS.txt"
+                  manifest.write_text("".join(f"{expected[name]}  {name}\n" for name in sorted(expected)), encoding="ascii")
+                  expected[manifest.name] = digest(manifest)
+                  # Recheck all immutable source and draft gates before the first write.
+                  require(trusted_run() == artifact_id, "Verified artifact identity changed during validation")
+                  current = release_assets(release_id, tag)
+                  require(set(current) == set(mac) and not (set(current) & upload_names),
+                          "Draft assets changed during validation; refusing every upload")
+                  validate_remote(current, mac)
+                  for path in [*(by_name[name] for name in windows), manifest]:
+                      current = release_assets(release_id, tag)
+                      require(path.name not in current, "Asset appeared concurrently; refusing overwrite: " + path.name)
+                      validate_remote(current, mac)
+                      # The only mutation adds an asset to the checked numeric draft ID.
+                      upload_to_fixed_release(path, release_id)
+                  final = release_assets(release_id, tag)
+                  require(set(final) == set(expected), "Final draft must contain exactly the five expected assets")
+                  validate_remote(final, expected)
+                  for path in [*(by_name[name] for name in windows), manifest]:
+                      require(final[path.name].get("size") == path.stat().st_size,
+                              "Uploaded asset size mismatch: " + path.name)
+                  summary = {"ok": True, "repository": REPO, "releaseId": release_id, "tag": tag,
+                             "draft": True, "published": False, "verifiedRunId": run_id,
+                             "artifactId": artifact_id, "expectedCommit": head, "sha256": expected}
+                  print(json.dumps(summary, sort_keys=True))
+                  destination = os.environ.get("GITHUB_STEP_SUMMARY")
+                  if destination:
+                      with open(destination, "a", encoding="utf-8") as stream:
+                          stream.write(f"Uploaded and verified five assets on existing **draft** `{tag}`.\n\n")
+                          stream.write(f"Full build run: `{run_id}`; commit: `{head}`. Publication remains manual.\n")
+
+
+          if __name__ == "__main__":
+              try:
+                  main()
+              except Exception as error:
+                  if type(error) is GuardError:
+                      print("Upload stopped: " + str(error), file=sys.stderr)
+                  else:
+                      # Do not expose SDK/CLI errors that may contain credentials or URLs.
+                      print("Upload stopped: " + type(error).__name__ + " (details withheld)", file=sys.stderr)
+                  raise SystemExit(1)
+          PY
