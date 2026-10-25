@@ -394,6 +394,8 @@ def test_stop_process_windows_falls_back_to_taskkill_tree_force():
         ["taskkill", "/PID", "456", "/T"],
         ["taskkill", "/PID", "456", "/T", "/F"],
     ]
+    assert all(kwargs["creationflags"] == rp.CREATE_NO_WINDOW
+               for _argv, kwargs in commands)
 
 
 def test_stop_process_windows_ctrl_break_alone_is_graceful():

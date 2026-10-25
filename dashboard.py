@@ -56,6 +56,8 @@ from src import instance  # noqa: E402  （判活工具：pidfile + os.kill(pid,
 from src.jsonio import write_json, write_text_atomic  # noqa: E402  （统一原子写）
 from src import runtime_process  # noqa: E402  （跨平台调度器启动/停止）
 
+_NO_WINDOW = runtime_process.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+
 try:                                   # 队列状态的"已停止"标记（字段格式见 src/queue_status.py）
     from src.queue_status import mark_stopped as mark_queue_stopped  # noqa: E402
 except Exception as _qs_err:           # 缺 ruamel/yaml 等极端环境：退化为本地写同一份格式
@@ -326,7 +328,8 @@ def scheduler_info() -> dict:
         else:
             try:      # 没有 pidfile 的老进程：退回 ps（ps 不可用就算了，不显示运行时长）
                 uptime = subprocess.run(['ps', '-o', 'etime=', '-p', str(pids[0])],
-                                        capture_output=True, text=True, timeout=5).stdout.strip()
+                                        capture_output=True, text=True, timeout=5,
+                                        creationflags=_NO_WINDOW).stdout.strip()
             except Exception:
                 pass
     return {'alive': bool(pids), 'pid': pids[0] if pids else None, 'uptime': uptime}
@@ -1172,7 +1175,7 @@ def career_sync() -> dict:
     _SYNC['busy'] = True
     try:
         proc = subprocess.run(command, capture_output=True, text=True,
-                              timeout=150, cwd=str(APP_ROOT))
+                              timeout=150, cwd=str(APP_ROOT), creationflags=_NO_WINDOW)
     except subprocess.TimeoutExpired:
         return {'ok': False, 'reason': '识别超时（150 秒）'}
     finally:
@@ -1215,7 +1218,7 @@ def capture_phone(width: int = 390, min_interval: float = 5.0):
     if error:
         raise RuntimeError(error)
     cmd = [adb_path] + (['-s', serial] if serial else []) + ['exec-out', 'screencap', '-p']
-    proc = subprocess.run(cmd, capture_output=True, timeout=30)
+    proc = subprocess.run(cmd, capture_output=True, timeout=30, creationflags=_NO_WINDOW)
     if proc.returncode != 0 or not proc.stdout:
         detail = (proc.stderr or b'').decode('utf-8', 'replace').strip()[:200]
         raise RuntimeError(detail or 'adb screencap 失败')
@@ -1754,7 +1757,7 @@ def adb_info() -> dict:
     if resolved:
         try:
             out = subprocess.run([resolved, 'devices', '-l'], capture_output=True,
-                                 text=True, timeout=10)
+                                 text=True, timeout=10, creationflags=_NO_WINDOW)
             for ln in (out.stdout or '').splitlines()[1:]:
                 ln = ln.strip()
                 if not ln or ln.startswith('*'):
@@ -1797,7 +1800,7 @@ def adb_connect(addr: str) -> dict:
         addr = f'{addr}:5555'          # 省略端口时按 adb 默认无线调试端口补全
     try:
         r = subprocess.run([resolved, 'connect', addr], capture_output=True,
-                           text=True, timeout=20)
+                           text=True, timeout=20, creationflags=_NO_WINDOW)
         out = ((r.stdout or '') + (r.stderr or '')).strip()
         ok = 'connected' in out and 'cannot' not in out.lower() and 'failed' not in out.lower()
         return {'ok': ok, 'msg': out or f'返回码 {r.returncode}', 'addr': addr}

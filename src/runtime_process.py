@@ -355,7 +355,8 @@ def stop_process(
             return StopResult(True, False, tuple(attempts))
 
         run_fn(["taskkill", "/PID", str(pid), "/T"],
-               capture_output=True, text=True, check=False)
+               capture_output=True, text=True, check=False,
+               creationflags=CREATE_NO_WINDOW)
         attempts.append("taskkill_tree")
         if _wait_until_gone(
             pid, terminate_wait, alive=alive_fn, sleep=sleep, clock=clock,
@@ -365,7 +366,8 @@ def stop_process(
 
         forced = True
         run_fn(["taskkill", "/PID", str(pid), "/T", "/F"],
-               capture_output=True, text=True, check=False)
+               capture_output=True, text=True, check=False,
+               creationflags=CREATE_NO_WINDOW)
         attempts.append("taskkill_tree_force")
         stopped = _wait_until_gone(
             pid, kill_wait, alive=alive_fn, sleep=sleep, clock=clock,

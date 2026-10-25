@@ -97,6 +97,10 @@ $PY -m pytest                    # 单元测试（tests/，依赖见 requirement
 
 ## 关键约定（改动时必须遵守）
 
+- **Windows 后台命令不得弹控制台**：界面和后台调用 ADB、职业识别子进程、`taskkill`
+  等控制台程序时，必须传 `creationflags=CREATE_NO_WINDOW`（POSIX 为 0）。
+  `capture_output=True` 只重定向输出，不能阻止黑框；模拟器本身的 GUI 启动仍保留正常窗口。
+  回归见 `tests/test_dashboard_process_windows.py` 与 `tests/test_windows_adb_console.py`。
 - **定位方式**：新 UI 元素登记到 `src/locators.py` 的 `LOCATORS`（沿用 `xxx_in` 进行中标志、
   `xxx_end` 结束标志、`quit`、`back`、`main_sign` 命名）。优先 xpath / u2 选择器
   （`main_sign` 是 xpath `//*[@content-desc="金币胶囊"]` 检测主页面——只有自己主页面
