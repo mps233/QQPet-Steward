@@ -271,6 +271,50 @@ class NativeDesktop:
         finally:
             self.kernel.CloseHandle(backend["handle"])
 
+    def cleanup_gui(self, process) -> None:
+        children = []
+        try:
+            parents = self._parents()
+            owned = {process.pid}
+            while True:
+                descendants = {pid for pid, parent in parents.items() if parent in owned}
+                if descendants <= owned:
+                    break
+                owned.update(descendants)
+            for pid in owned - {process.pid}:
+                handle = self.kernel.OpenProcess(0x1000 | 0x100000, False, pid)
+                if handle:
+                    try:
+                        if self._image(handle).name.casefold() == "msedgewebview2.exe":
+                            children.append(handle)
+                            handle = None
+                    except OSError:
+                        pass
+                    finally:
+                        if handle:
+                            self.kernel.CloseHandle(handle)
+            # Popen retains the Windows process handle, so this PID cannot
+            # be reused while taskkill enumerates this test's process tree.
+            if process.poll() is None:
+                if getattr(process, "_handle", None) is None:
+                    raise portable.VerificationError("the test GUI has no retained process handle")
+                try:
+                    subprocess.run(
+                        ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                        timeout=8, check=False, creationflags=subprocess.CREATE_NO_WINDOW,
+                    )
+                finally:
+                    portable._stop_process(process)
+            deadline = time.monotonic() + 4
+            for handle in children:
+                remaining = max(0, int((deadline - time.monotonic()) * 1000))
+                if self.kernel.WaitForSingleObject(handle, remaining) != 0:
+                    raise portable.VerificationError("an owned WebView2 process did not exit")
+        finally:
+            for handle in children:
+                self.kernel.CloseHandle(handle)
+
 
 def _validate_backend(record: dict, gui_pid: int, executable: Path, started: int) -> None:
     if (record["parent"] != gui_pid or record["created"] < started
@@ -521,12 +565,38 @@ def check_app(executable: Path, sandbox: Path, desktop, playwright_factory,
                 if second is not None:
                     portable._stop_process(second)
                 if gui is not None:
-                    portable._stop_process(gui)
+                    desktop.cleanup_gui(gui)
             finally:
                 if backend is not None:
                     desktop.cleanup_backend(backend)
         finally:
             policy.close()
+
+
+def _cleanup_temporary(temporary, *, timeout: float = 5) -> int:
+    deadline = time.monotonic() + min(timeout, 5)
+    attempts = 0
+    while True:
+        attempts += 1
+        try:
+            temporary.cleanup()
+            return attempts
+        except PermissionError as exc:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                diagnostics = {
+                    "stage": "temp-cleanup", "path": str(exc.filename or temporary.name),
+                    "errorType": type(exc).__name__, "attempts": attempts,
+                }
+                for field in ("winerror", "errno"):
+                    value = getattr(exc, field, None)
+                    if isinstance(value, int):
+                        diagnostics[field] = value
+                raise portable.VerificationError(
+                    "the isolated native test directory could not be removed",
+                    diagnostics=diagnostics,
+                ) from None
+            time.sleep(min(0.1, remaining))
 
 
 def verify(executable: Path, screenshot: Path | None = None) -> dict:
@@ -542,10 +612,18 @@ def verify(executable: Path, screenshot: Path | None = None) -> dict:
         report["checks"].append({"name": stage, "ok": True, **desktop.desktop_evidence()})
         stage = "playwright"
         from playwright.sync_api import sync_playwright
-        with tempfile.TemporaryDirectory(prefix="qqpet-native-verify-") as temporary:
+        temporary = tempfile.TemporaryDirectory(prefix="qqpet-native-verify-")
+        try:
             stage = "native-app"
             report["checks"].extend(check_app(
-                executable, Path(temporary), desktop, sync_playwright, screenshot))
+                executable, Path(temporary.name), desktop, sync_playwright, screenshot))
+        finally:
+            try:
+                attempts = _cleanup_temporary(temporary)
+                report["checks"].append({"name": "temp-cleanup", "ok": True, "attempts": attempts})
+            except Exception:
+                stage = "temp-cleanup"
+                raise
         report["ok"] = True
     except Exception as exc:
         failure = {"name": stage, "ok": False,

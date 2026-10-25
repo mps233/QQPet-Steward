@@ -97,6 +97,9 @@ class FakeDesktop:
         self.cleaned.append(backend["pid"])
         self.backend_alive = False
 
+    def cleanup_gui(self, process):
+        native.portable._stop_process(process)
+
 
 def harness(tmp_path, monkeypatch, *, login=True, restore=True, different_backend=False):
     bundled = tmp_path / "backend"
@@ -383,3 +386,65 @@ def test_runtime_version_evidence_only_reads_documented_keys_and_filters_values(
             return ("150.0.1.2" if hive == "machine" else "0.0.0.0"), 1
 
     assert native._runtime_versions(Registry) == [{"scope": "machine", "version": "150.0.1.2"}]
+
+
+def test_gui_tree_is_killed_before_root_and_waits_only_for_owned_webviews(monkeypatch):
+    events = []
+    process = FakeProcess(12)
+    process._handle = 999
+    desktop = native.NativeDesktop.__new__(native.NativeDesktop)
+    desktop._parents = lambda: {12: 1, 20: 12, 21: 20, 77: 1}
+    desktop._image = lambda handle: Path("msedgewebview2.exe")
+    desktop.kernel = SimpleNamespace(
+        OpenProcess=lambda access, inherit, pid: pid,
+        CloseHandle=lambda handle: events.append(("closed", handle)),
+        WaitForSingleObject=lambda handle, timeout: events.append(("wait", handle)) or 0,
+    )
+
+    def taskkill(command, **kwargs):
+        assert command == ["taskkill", "/PID", "12", "/T", "/F"]
+        assert process.poll() is None
+        events.append(("tree-killed", 12))
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(native.subprocess, "run", taskkill)
+    monkeypatch.setattr(native.subprocess, "CREATE_NO_WINDOW", 0, raising=False)
+    desktop.cleanup_gui(process)
+    assert events[0] == ("tree-killed", 12)
+    assert {value for action, value in events if action == "wait"} == {20, 21}
+    assert {value for action, value in events if action == "closed"} == {20, 21}
+    assert process.stopped and process.terminated == 1
+
+
+def test_temporary_cleanup_retries_permission_error_and_eventually_succeeds(monkeypatch, tmp_path):
+    clock = [0.0]
+    calls = []
+
+    def cleanup():
+        calls.append(True)
+        if len(calls) < 3:
+            raise PermissionError(13, "profile still locked", str(tmp_path / "profile"))
+
+    monkeypatch.setattr(native.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(native.time, "sleep", lambda delay: clock.__setitem__(0, clock[0] + delay))
+    temporary = SimpleNamespace(name=str(tmp_path), cleanup=cleanup)
+    assert native._cleanup_temporary(temporary) == 3
+    assert clock[0] == pytest.approx(0.2)
+
+
+def test_temporary_cleanup_final_failure_is_bounded_and_has_safe_diagnostics(monkeypatch, tmp_path):
+    clock = [0.0]
+    locked = tmp_path / "webview-data" / "Cookies"
+
+    def cleanup():
+        raise PermissionError(13, "private error text", str(locked))
+
+    monkeypatch.setattr(native.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(native.time, "sleep", lambda delay: clock.__setitem__(0, clock[0] + delay))
+    with pytest.raises(native.portable.VerificationError) as failure:
+        native._cleanup_temporary(SimpleNamespace(name=str(tmp_path), cleanup=cleanup), timeout=99)
+    assert clock[0] == pytest.approx(5)
+    assert failure.value.diagnostics["stage"] == "temp-cleanup"
+    assert failure.value.diagnostics["path"] == str(locked)
+    assert failure.value.diagnostics["errno"] == 13
+    assert "private error text" not in json.dumps(failure.value.diagnostics)

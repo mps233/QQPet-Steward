@@ -70,6 +70,18 @@ jobs:
           .venv/Scripts/python.exe desktop/windows/build_native.py --skip-runtime-build
           $Version = (Get-Content desktop/macos/tauri.conf.json -Raw | ConvertFrom-Json).version
           "version=$Version" >> $env:GITHUB_OUTPUT
+      - name: Upload unverified Windows build candidate
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: windows-desktop-candidate-v${{ steps.build.outputs.version }}
+          path: |
+            dist/QQPet-Steward_*_windows_x64-setup.exe
+            dist/QQPet-Steward_*_windows_x64-setup.exe.sha256
+            dist/QQPet-Steward_*_windows_x64-native.zip
+            dist/QQPet-Steward_*_windows_x64-native.zip.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
       - name: Test native Rust behavior
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
