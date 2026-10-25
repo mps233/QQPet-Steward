@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import json
 from pathlib import Path
 import shutil
@@ -150,6 +151,12 @@ def harness(tmp_path, monkeypatch, *, login=True, restore=True, different_backen
             pass
 
     real_wait = native._wait
+
+    @contextmanager
+    def no_host_policy(**_kwargs):
+        yield {"policyApplied": False, "elevated": False, "policyScope": "QQPet-Steward.exe"}
+
+    monkeypatch.setattr(native, "webview_test_environment", no_host_policy)
     monkeypatch.setattr(native, "_wait", lambda callback, timeout, message:
                         real_wait(callback, 0, message))
     monkeypatch.setattr(native.subprocess, "Popen", popen)
@@ -326,3 +333,53 @@ def test_cli_refuses_screenshot_in_native_app_directory(tmp_path):
         native.main(["--executable", str(tmp_path / "app" / "app.exe"),
                      "--report", str(tmp_path / "report.json"),
                      "--screenshot", str(tmp_path / "app" / "image.png")])
+
+
+@pytest.mark.parametrize("login", [True, False])
+def test_scoped_webview_policy_is_restored_after_owned_process_cleanup(tmp_path, monkeypatch, login):
+    desktop, playwright, children, _environments, _routes = harness(
+        tmp_path, monkeypatch, login=login)
+    events = []
+
+    @contextmanager
+    def policy(**kwargs):
+        assert kwargs["executable"] == tmp_path / "QQPet-Steward.exe"
+        assert kwargs["user_data_folder"] == tmp_path / "webview-data"
+        assert kwargs["browser_arguments"] == kwargs["environ"][
+            "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"]
+        events.append("entered")
+        try:
+            yield {"policyApplied": True, "elevated": True, "policyScope": "QQPet-Steward.exe"}
+        finally:
+            assert children[0].stopped and desktop.cleaned == [23]
+            events.append("restored")
+
+    monkeypatch.setattr(native, "webview_test_environment", policy)
+    if login:
+        checks = native.check_app(tmp_path / "QQPet-Steward.exe", tmp_path, desktop, playwright)
+        assert checks[0]["webviewEnvironment"]["policyApplied"] is True
+    else:
+        with pytest.raises(native.portable.VerificationError) as error:
+            native.check_app(tmp_path / "QQPet-Steward.exe", tmp_path, desktop, playwright)
+        assert error.value.diagnostics["webviewEnvironment"]["elevated"] is True
+    assert events == ["entered", "restored"]
+
+
+def test_runtime_version_evidence_only_reads_documented_keys_and_filters_values():
+    class Registry:
+        HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER = "machine", "user"
+        KEY_READ, KEY_WOW64_32KEY, KEY_WOW64_64KEY = 1, 2, 4
+
+        @staticmethod
+        @contextmanager
+        def OpenKey(hive, path, reserved, access):
+            assert path == native.WEBVIEW2_CLIENT_KEY and reserved == 0
+            assert access in (3, 5)
+            yield hive
+
+        @staticmethod
+        def QueryValueEx(hive, name):
+            assert name == "pv"
+            return ("150.0.1.2" if hive == "machine" else "0.0.0.0"), 1
+
+    assert native._runtime_versions(Registry) == [{"scope": "machine", "version": "150.0.1.2"}]

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack
 import ctypes
 from ctypes import wintypes
 import hashlib
@@ -20,13 +21,37 @@ from urllib.request import ProxyHandler, build_opener
 
 if __package__:
     from . import verify_portable as portable
+    from .webview_test_environment import webview_test_environment
 else:
     import verify_portable as portable
+    from webview_test_environment import webview_test_environment
 
 
 TITLE = "QQPet-Steward"
 FILETIME_EPOCH = 11644473600
 BROWSER_NAMES = {"chrome.exe", "msedge.exe", "firefox.exe", "brave.exe"}
+WEBVIEW2_CLIENT_KEY = (
+    r"SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+)
+
+
+def _runtime_versions(registry=None) -> list[dict]:
+    if registry is None:
+        import winreg as registry
+    versions = []
+    seen = set()
+    for scope, hive in (("machine", registry.HKEY_LOCAL_MACHINE), ("user", registry.HKEY_CURRENT_USER)):
+        for view in (registry.KEY_WOW64_32KEY, registry.KEY_WOW64_64KEY):
+            try:
+                with registry.OpenKey(hive, WEBVIEW2_CLIENT_KEY, 0, registry.KEY_READ | view) as key:
+                    version, _kind = registry.QueryValueEx(key, "pv")
+                if (isinstance(version, str) and re.fullmatch(r"[0-9]+(?:\.[0-9]+){3}", version)
+                        and version != "0.0.0.0" and (scope, version) not in seen):
+                    versions.append({"scope": scope, "version": version})
+                    seen.add((scope, version))
+            except OSError:
+                pass
+    return versions
 
 
 def _api(library, name, result, *arguments):
@@ -90,7 +115,8 @@ class NativeDesktop:
                                              diagnostics={"win32Error": ctypes.get_last_error()})
         desktop = self.user.OpenInputDesktop(0, False, 1)
         evidence = {"windowStation": name.value, "windowStationVisible": bool(flags.flags & 1),
-                    "inputDesktopAvailable": bool(desktop)}
+                    "inputDesktopAvailable": bool(desktop),
+                    "webView2RuntimeVersions": _runtime_versions()}
         if desktop:
             self.user.CloseDesktop(desktop)
         else:
@@ -339,6 +365,8 @@ def check_app(executable: Path, sandbox: Path, desktop, playwright_factory,
     browsers_before = desktop.browser_windows()
     opener = build_opener(ProxyHandler({}))
     last_http = {}
+    policy = ExitStack()
+    policy_evidence = {}
 
     def http_status(base, path):
         last_http.clear()
@@ -349,6 +377,12 @@ def check_app(executable: Path, sandbox: Path, desktop, playwright_factory,
             return status
         except (URLError, OSError, TimeoutError) as exc:
             last_http["errorType"] = type(exc).__name__
+            reason = exc.reason if isinstance(exc, URLError) else exc
+            last_http["reasonType"] = type(reason).__name__
+            for field in ("errno", "winerror"):
+                value = getattr(reason, field, None)
+                if isinstance(value, int):
+                    last_http[field] = value
             return None
 
     def main_window():
@@ -357,6 +391,11 @@ def check_app(executable: Path, sandbox: Path, desktop, playwright_factory,
         return candidates[0] if len(candidates) == 1 else None
 
     try:
+        stage = "webview-test-environment"
+        policy_evidence = policy.enter_context(webview_test_environment(
+            executable=executable, user_data_folder=sandbox / "webview-data",
+            browser_arguments=env["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"], environ=env,
+        ))
         with (sandbox / "gui.log").open("wb") as output, (
                 sandbox / "gui-secondary.log").open("wb") as secondary_output:
             gui = subprocess.Popen([str(executable)], cwd=sandbox, env=env,
@@ -370,7 +409,7 @@ def check_app(executable: Path, sandbox: Path, desktop, playwright_factory,
             if http_status(server, "/api/data") != 401:
                 raise portable.VerificationError("native app backend did not require authentication")
             checks.append({"name": stage, "ok": True, "backendOwned": True,
-                           "defaultMode": True, **cache})
+                           "defaultMode": True, "webviewEnvironment": policy_evidence, **cache})
             stage = "embedded-webview"
             debug_url = f"http://127.0.0.1:{debug}"
             _wait(lambda: http_status(debug_url, "/json/version") == 200, 45,
@@ -458,6 +497,7 @@ def check_app(executable: Path, sandbox: Path, desktop, playwright_factory,
             "guiExitCode": gui.poll() if gui is not None else None,
             "backendPIDRecorded": _pid_file(pid_path) is not None,
             "lastHTTP": last_http,
+            "webviewEnvironment": policy_evidence,
             "logTails": {
                 "gui": portable._log_tail(sandbox / "gui.log", secrets),
                 "backend": portable._log_tail(runs / "dashboard_console.log", secrets),
@@ -469,21 +509,24 @@ def check_app(executable: Path, sandbox: Path, desktop, playwright_factory,
     finally:
         # Claim only a backend with this GUI as parent and this build's image.
         # Retained process handles ensure cleanup cannot target a reused PID.
-        if backend is None and gui is not None:
-            pid = _pid_file(pid_path)
-            if pid:
-                try:
-                    backend = desktop.claim_backend(pid, gui.pid, expected_backend, started)
-                except (OSError, RuntimeError):
-                    pass
         try:
-            if second is not None:
-                portable._stop_process(second)
-            if gui is not None:
-                portable._stop_process(gui)
+            if backend is None and gui is not None:
+                pid = _pid_file(pid_path)
+                if pid:
+                    try:
+                        backend = desktop.claim_backend(pid, gui.pid, expected_backend, started)
+                    except (OSError, RuntimeError):
+                        pass
+            try:
+                if second is not None:
+                    portable._stop_process(second)
+                if gui is not None:
+                    portable._stop_process(gui)
+            finally:
+                if backend is not None:
+                    desktop.cleanup_backend(backend)
         finally:
-            if backend is not None:
-                desktop.cleanup_backend(backend)
+            policy.close()
 
 
 def verify(executable: Path, screenshot: Path | None = None) -> dict:
