@@ -15,6 +15,12 @@
 #  它也落在 BAG_REGION 里（控件 bounds [60,1356][360,1656]），所以复用 `_match`；
 #  但**不能复用好友家的模板**——跨素材 + 通道错位会误判（实测把敞口判成"可领" 0.679）。
 #
+# 限时皮肤（2026-10 万圣节）：官方把福袋换成了「戴巫婆帽的南瓜」——
+#  未领 = 南瓜 + 紫色巫婆帽 + 四周光芒；已领 = 帽子消失、只剩发光南瓜。
+#  这是限时的，活动结束后米黄袋子还会回来，所以**两套模板都保留**（列表里逐个匹配取最高分），
+#  不要用新模板覆盖旧文件。素材：scenarios/assets/home_bag_{tied,open}_pumpkin.png，
+#  好友列表的「有福袋」徽章同理新增 friend_icon_bag_pumpkin.png（同位置 43x43、77x77 外扩）。
+#
 # !! 模板通道：`screenshot()` 返回 **RGB**，而 `cv2.imread` 读回来是 **BGR**，
 #    偏偏 cv2.matchTemplate 是逐通道比对的 —— 通道错位会让分数虚低。新模板一律用
 #    `_load_rgb_tpl()`（PIL，按 RGB）读，与 screen 对齐；好友家那两个老模板是 cv2
@@ -70,26 +76,39 @@ def _load_rgb_tpl(path: str):
 
 
 class GiftBagScenario(VisitScenario):
+    @staticmethod
+    def _load_tpls(*names: str) -> list:
+        """按名字加载一组模板（缺失的跳过，一个都没有才算缺失）。"""
+        tpls = []
+        for name in names:
+            path = os.path.join(TEMPLATE_DIR, name)
+            if os.path.isfile(path):
+                tpls.append(_load_rgb_tpl(path))
+        if not tpls:
+            raise FileNotFoundError('、'.join(names))
+        return tpls
+
     def __init__(self, dev=None):
         DeviceScenario.__init__(self, dev)  # 跳过 VisitScenario 的踩踩字段/日志
         gb = self.cfg.gift_bag
         self.last_sweep_at: datetime | None = None  # 上次扫描完成时间（调度间隔用）
-        # 袋子的两态模板：**自己和好友家是同一份素材**（都是米黄袋子+橙绳结），
-        # 用一套即可（实测跨房间自匹配 0.85、另一态 0.51；旧的浅蓝"颈口"模板是
+        # 袋子的两态模板：**自己和好友家是同一份素材**，用一套即可
+        # （实测跨房间自匹配 0.85、另一态 0.51；旧的浅蓝"颈口"模板是
         # 早期从别的素材裁的，跨房间只剩 0.55，判不出袋子——已弃用）。
+        # 常规款（米黄袋子）与 2026-10 限时的万圣节南瓜款**两套都保留**，逐个匹配取最高分
+        # （限时皮肤结束后旧模板继续有效，新模板也不碍事）。
         # 必须按 RGB 读：screenshot() 是 RGB，而 cv2.imread 返回 BGR，通道错位会拉低分数。
-        self._tpl_tied = _load_rgb_tpl(
-            os.path.join(TEMPLATE_DIR, 'home_bag_tied.png'))
-        self._tpl_open = _load_rgb_tpl(
-            os.path.join(TEMPLATE_DIR, 'home_bag_open.png'))
+        self._tpl_tied = self._load_tpls(
+            'home_bag_tied.png', 'home_bag_tied_pumpkin.png')
+        self._tpl_open = self._load_tpls(
+            'home_bag_open.png', 'home_bag_open_pumpkin.png')
         self._tpl_home_tied = self._tpl_tied
         self._tpl_home_open = self._tpl_open
         # 好友列表里的「有福袋」图标模板：用来筛出该去哪几家（见 scan_friend_list）
         try:
-            self._tpl_friend_bag = _load_rgb_tpl(
-                os.path.join(TEMPLATE_DIR, 'friend_icon_bag.png'))
-            self._tpl_friend_other = _load_rgb_tpl(
-                os.path.join(TEMPLATE_DIR, 'friend_icon_other.png'))
+            self._tpl_friend_bag = self._load_tpls(
+                'friend_icon_bag.png', 'friend_icon_bag_pumpkin.png')
+            self._tpl_friend_other = self._load_tpls('friend_icon_other.png')
         except Exception as e:  # noqa: BLE001 - 缺图标只影响"按需挑好友"，退回逐家遍历
             self._tpl_friend_bag = self._tpl_friend_other = None
             log(f'福袋: 好友列表图标模板缺失（{e}），退回逐家遍历')
@@ -122,6 +141,15 @@ class GiftBagScenario(VisitScenario):
                 best_s = s
         return best, best_loc, best_s
 
+    def _match_any(self, img, tpls, region_box=None):
+        """一组模板逐个匹配，返回分最高的一组（分数, 全图坐标, 尺度, 命中的模板）。"""
+        best = (-1.0, (0, 0), 1.0, None)
+        for tpl in tpls:
+            score, loc, s = self._match(img, tpl, region_box)
+            if score > best[0]:
+                best = (score, loc, s, tpl)
+        return best
+
     def is_friend_page(self, screen=None) -> bool:
         """当前好友页的主人是不是我们的好友：右上角有"加好友"= 非好友，袋子领不了。
 
@@ -136,8 +164,8 @@ class GiftBagScenario(VisitScenario):
     def bag_state(self, screen=None) -> str:
         """'tied'=系绳可领 / 'open'=已领（敞口或摊平）/ 'none'=没有袋子。"""
         img = screen if screen is not None else self.screen()
-        st, _, _ = self._match(img, self._tpl_tied)
-        so, _, _ = self._match(img, self._tpl_open)
+        st, _, _, _ = self._match_any(img, self._tpl_tied)
+        so, _, _, _ = self._match_any(img, self._tpl_open)
         if st >= TIED_MIN_SCORE and st > so:
             return 'tied'
         if so >= TIED_MIN_SCORE and so > st:
@@ -149,10 +177,10 @@ class GiftBagScenario(VisitScenario):
 
         袋子位置随房间布局上下左右浮动（实测最左 x150 摆位），不能点固定坐标。"""
         img = screen if screen is not None else self.screen()
-        st, loc, s = self._match(img, self._tpl_tied)
+        st, loc, s, tpl = self._match_any(img, self._tpl_tied)
         if st < TIED_MIN_SCORE:
             return None
-        th, tw = self._tpl_tied.shape[:2]
+        th, tw = tpl.shape[:2]
         cx = loc[0] + int(tw * s / 2)
         cy = loc[1] + int(th * s / 2)
         return cx, cy
@@ -166,11 +194,11 @@ class GiftBagScenario(VisitScenario):
         跨素材 + 通道错位会把敞口误判成"可领"（实测系绳分 0.679 > 阈值）。
         两态判据来自用户观察：未领=袋口收拢系绳、已领=袋口外翻。
         """
-        if self._tpl_home_tied is None:
+        if not self._tpl_home_tied:
             return 'none'
         img = screen if screen is not None else self.screen()
-        st, _, _ = self._match(img, self._tpl_home_tied, HOME_BAG_REGION)
-        so, _, _ = self._match(img, self._tpl_home_open, HOME_BAG_REGION)
+        st, _, _, _ = self._match_any(img, self._tpl_home_tied, HOME_BAG_REGION)
+        so, _, _, _ = self._match_any(img, self._tpl_home_open, HOME_BAG_REGION)
         if st >= HOME_BAG_MIN_SCORE and st > so + HOME_BAG_MARGIN:
             return 'tied'
         if so >= HOME_BAG_MIN_SCORE and so > st + HOME_BAG_MARGIN:
@@ -179,13 +207,13 @@ class GiftBagScenario(VisitScenario):
 
     def home_bag_click_point(self, screen=None) -> tuple[int, int] | None:
         """自己家钱袋「未领取」时的点击点（系绳模板命中位中心，随摆位浮动）。"""
-        if self._tpl_home_tied is None:
+        if not self._tpl_home_tied:
             return None
         img = screen if screen is not None else self.screen()
-        st, loc, s = self._match(img, self._tpl_home_tied, HOME_BAG_REGION)
+        st, loc, s, tpl = self._match_any(img, self._tpl_home_tied, HOME_BAG_REGION)
         if st < HOME_BAG_MIN_SCORE:
             return None
-        th, tw = self._tpl_home_tied.shape[:2]
+        th, tw = tpl.shape[:2]
         return loc[0] + int(tw * s / 2), loc[1] + int(th * s / 2)
 
     def claim_home_bag(self) -> str:
@@ -231,8 +259,9 @@ class GiftBagScenario(VisitScenario):
     def scan_friend_list(self) -> list[tuple[int, int]] | None:
         """开好友列表 → 返回**有福袋图标**的好友行的「访问」按钮坐标。
 
-        用户指出的判据：好友列表里"这家有可领福袋"会带一个**黄色袋子+爪印**图标；
-        别的东西（比如粉爱心魔法棒）不是福袋。于是不必挨家进好友家检测——
+        用户指出的判据：好友列表里"这家有可领福袋"会带一个图标（常规款=黄色袋子+爪印，
+        2026-10 限时款=戴巫婆帽的南瓜；两套模板都保留、取高分）；别的东西（比如粉爱心
+        魔法棒）不是福袋。于是不必挨家进好友家检测——
 
         实测这天：9 家好友里只有 2 家真有福袋，其余 7 家每轮白跑一趟导航；
         而原实现还因为模板问题**点错了对象**（把没福袋的判成可领、把有福袋的判成没有）。
@@ -244,7 +273,7 @@ class GiftBagScenario(VisitScenario):
         返回：坐标列表（可能为空 = 列表打开了但没有福袋）；None = 这一步用不了
         （模板缺失/好友按钮没找到/列表打不开），调用方退回逐家遍历。
         """
-        if self._tpl_friend_bag is None:
+        if not self._tpl_friend_bag:
             return None
         btn = self.see('main_friend_btn')
         if not btn:
@@ -268,7 +297,7 @@ class GiftBagScenario(VisitScenario):
             elif 'ImageView' in node and 40 <= x2 - x1 <= 50 and 780 <= x1 <= 840:
                 icons.append((x1, y1, x2, y2))
         log(f'福袋: 好友列表 {len(icons)} 个图标 / {len(visits)} 个访问按钮')
-        tgt_h, tgt_w = self._tpl_friend_bag.shape[:2]
+        tgt_h, tgt_w = self._tpl_friend_bag[0].shape[:2]
         h, w = screen.shape[:2]
         targets: list[tuple[int, int]] = []
         for (ix1, iy1, _ix2, _iy2) in icons:
@@ -278,8 +307,8 @@ class GiftBagScenario(VisitScenario):
             crop = screen[cy:cy + tgt_h, cx:cx + tgt_w]
             if crop.shape[:2] != (tgt_h, tgt_w):
                 continue
-            sb = self._icon_score(crop, self._tpl_friend_bag)
-            so = self._icon_score(crop, self._tpl_friend_other)
+            sb = max(self._icon_score(crop, t) for t in self._tpl_friend_bag)
+            so = max(self._icon_score(crop, t) for t in self._tpl_friend_other)
             if sb < FRIEND_ICON_MIN_SCORE or sb <= so:
                 continue
             for (vx1, vy1, vx2, vy2) in visits:
@@ -322,7 +351,7 @@ class GiftBagScenario(VisitScenario):
         另外用 `done`（按「访问」按钮的 y）兜底，防止图标不消失时原地打转。
         返回 (检查家数, 领取个数)；None = 图标这一环用不了（调用方退回逐家遍历）。
         """
-        if self._tpl_friend_bag is None:
+        if not self._tpl_friend_bag:
             return None
         checked = claimed = 0
         done: set[int] = set()

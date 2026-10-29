@@ -11,8 +11,9 @@ import { assetUrl } from './connection'
 
 /** 背景图版本号：**换图后必须 +1**。`/qp-icons/*` 走 `Cache-Control: max-age=3600`，
  *  同名覆盖时浏览器一小时内仍显示旧图（踩过：素材已更新、页面还是旧的）。
+ *  7 = 新增「木屋奇遇」「梦幻糖果」两套家居背景（pack73 / pack72）。
  *  6 = 新增「花田诗意」动态背景（huatian-day/night + 两个 loop.mp4）。 */
-export const BG_VER = '6'
+export const BG_VER = '7'
 
 export interface SceneInfo {
   name: string
@@ -30,17 +31,16 @@ export interface SceneInfo {
 }
 
 export const SCENE_INFO: Record<string, SceneInfo> = {
-  // 官方 5 套房间场景
-  main: { name: '主房间', file: 'room-main', dark: 'room-main-dark', sb: '#D5A758', sbDark: '#A9722D' },
-  feed: { name: '喂食区', file: 'room-feed', dark: 'room-feed-dark', sb: '#CA9F5B', sbDark: '#C39145' },
-  shower: { name: '浴室', file: 'room-shower', dark: 'room-shower-dark', sb: '#E7BC6C', sbDark: '#A3651D' },
-  record: { name: '教室 / 打工', file: 'room-record', dark: 'room-record-dark', sb: '#CAA05C', sbDark: '#C18C3A' },
   // 官方那套房间场景里还有个「商店」（room-store）—— 用户要求去掉，已移除。
   // 移除是安全的：SCENE_OF 里没有任何任务映射到 store，computeScene 也不会返回它；
   // readManualScene 会校验值是否还在 SCENE_INFO 里，所以旧 localStorage 里留下的
   // 'store' 会自动回落到「自动」，不会白屏。图片文件仍在磁盘上，随时可加回来。
-  // 官方「装扮 → 背景」16 款（顺序照官方页面从上到下、左到右；最前面那款 2026-10 新上）
-  // 「花田诗意」是 2026-10 上新的**灵动背景**（背景 id 61），排在官方列表第一位。
+  // 官方「装扮 → 背景」18 款（顺序照官方页面从上到下、左到右）
+  // 「木屋奇遇」「梦幻糖果」是 2026-10 底新上的两套（背景 id 73 / 72，列表带 NEW 角标），
+  // 官方页面排在最前；暗版是官方夜灯版（与白天是两张不同的图）。
+  'home-cabin': { name: '木屋奇遇', file: 'home-cabin', dark: 'home-cabin-dark', sb: '#712D13', sbDark: '#360E06' },
+  'home-candy': { name: '梦幻糖果', file: 'home-candy', dark: 'home-candy-dark', sb: '#8DC3C6', sbDark: '#186E83' },
+  // 「花田诗意」是 2026-10 上新的**灵动背景**（背景 id 61），排在官方列表第三位。
   // 它是唯一带视频层的：顶 820px 的 mp4 循环 + 全天候立绘叠层，只有 9.3.75+ 客户端能播。
   // 素材来源见 qqpet_assets/_raw/pet_home_bg_dynamic/（root 从 app 私有目录拉的原始包）。
   'home-huatian': {
@@ -76,6 +76,12 @@ export const SCENE_INFO: Record<string, SceneInfo> = {
   'career-xingchen': { name: '星尘魔法塔', file: 'career-xingchen', dark: 'career-xingchen-dark', sb: '#4E3163', sbDark: '#2C2352' },
   'career-gulu': { name: '咕噜厨房', file: 'career-gulu', dark: 'career-gulu-dark', sb: '#E8CAAF', sbDark: '#A17559' },
   'career-graduate': { name: '高级学院毕业', file: 'career-graduate', dark: 'career-graduate-dark', sb: '#ECD4CB', sbDark: '#CEC9BA' },
+  // 官方 4 套房间场景放最后：它们主要是「自动」模式按任务用的，手动挑的人少
+  // （用户要求把主房间/喂食区/浴室/教室打工挪到列表末尾；SCENE_ORDER 即声明顺序）。
+  main: { name: '主房间', file: 'room-main', dark: 'room-main-dark', sb: '#D5A758', sbDark: '#A9722D' },
+  feed: { name: '喂食区', file: 'room-feed', dark: 'room-feed-dark', sb: '#CA9F5B', sbDark: '#C39145' },
+  shower: { name: '浴室', file: 'room-shower', dark: 'room-shower-dark', sb: '#E7BC6C', sbDark: '#A3651D' },
+  record: { name: '教室 / 打工', file: 'room-record', dark: 'room-record-dark', sb: '#CAA05C', sbDark: '#C18C3A' },
 }
 
 /** 长按循环顺序 + 选择面板顺序（= 上面声明顺序） */
@@ -213,7 +219,7 @@ function syncSceneVideo(key: string, dark: boolean): void {
 }
 
 /** 把背景与状态栏色写到 `html` 上（CSS 变量 + data-scene）。
- *  家居背景 15 套 × 明/暗 = 30 张，逐个写 CSS 规则会重复两份表，所以由 JS 内联写。
+ *  家居背景 17 套 × 明/暗 = 34 张，逐个写 CSS 规则会重复两份表，所以由 JS 内联写。
  *  带 `video` 的（目前只有「花田诗意」）另外同步视频层。 */
 export function applyScene(key: string, dark = isDarkTheme()): void {
   const root = document.documentElement
