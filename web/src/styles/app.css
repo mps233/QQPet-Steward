@@ -478,7 +478,7 @@ main section[data-page]{min-height:100%}  /* .home 与内页共用（内页另�
    （手机图标换成卡通版时包围盒从 89.6% 变 93.3%，百分比就跟着从 47.8% 降到 45.9%）。 */
 .col-r .rbtn img{object-fit:contain}
 .col-r .rbtn:nth-child(1) img{width:48.7%;height:48.7%}   /* 冒险：指南针 */
-.col-r .rbtn:nth-child(2) img{width:54.2%;height:54.2%}   /* 职业：公文包（最扁，需最大盒子） */
+.col-r .rbtn:nth-child(2) img{width:58%;height:58%}   /* 职业：圆形职业奖章（外圆可见直径约 79.6%，58% 盒 → 19.4dp） */
 .col-r .rbtn:nth-child(3) img{width:52.5%;height:52.5%}   /* 画面：手机（唯一例外，见上：竖长条要按面积补） */
 /* 第三颗现在是「明暗切换」（太阳 / 月亮 / 半明半暗，见 static/qp-icons/ctrl/theme-*.svg）。
    三张图都是正方形构图、可见包围盒约 76~80%，比手机图"矮胖"——按可见面积给 58%

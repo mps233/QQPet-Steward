@@ -323,11 +323,10 @@
 }
 .v2-home .v2-rail.right .rbtn img{ object-fit:contain }
 .v2-home .v2-rail.right .rbtn:nth-child(1) img{ width:48.7%; height:48.7% }  /* 冒险：指南针 */
-/* 职业树：**出门地图右上角那颗「职业小镇」的橙色树**（游戏内入口图标）。
-   原来是公文包，用户要求换成官方那颗树。树枝干细、占满率低于公文包，
-   相邻两颗是 48.7%/52.5%，它给 60% 才能在深底上看起来一样重。
-   图源 static/qp-icons/official/off_r2_career.png（80×80，从游戏截图抠出）。 */
-.v2-home .v2-rail.right .rbtn:nth-child(2) img{ width:60%; height:60% }
+/* 职业树：新版圆形职业奖章（ctrl/career-tree.svg），与指南针/日月同一套实心卡通。
+   旧版是官方截图抠出的扁平剪影，可见包围盒只有 ~75%，所以给了 60%；
+   新图外圆可见直径约 79.6%，按「可见高度 ≈19.4dp」反解为 58%（与 V1 同一数值）。 */
+.v2-home .v2-rail.right .rbtn:nth-child(2) img{ width:58%; height:58% }
 .v2-home .v2-rail.right .rbtn:nth-child(3) img{ width:52.5%; height:52.5% }  /* 画面：手机（竖长条） */
 /* 第三颗现在是「明暗切换」：正方形构图，按可见面积给 58%（与 app.css 同一份理由）。 */
 .v2-home .v2-rail.right .rbtn.theme-rbtn img{ width:58%; height:58% }

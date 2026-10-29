@@ -145,11 +145,9 @@ export function OverviewV2({
             <img src={assetUrl('/qp-icons/official/cap_compass.png')} alt="" />
           </button>
           <button className="rbtn r" title="职业树" onClick={() => onNav('plan')}>
-            {/* `?v=` 是必需的：`/qp-icons/*` 走 `Cache-Control: max-age=3600`，
-                这个文件名复用（换的只是内容，不是新文件名），不加版本号浏览器
-                一小时内仍显示旧图 —— 用户实报「好像没生效？」踩过。
-                以后换这张图就把 v 往上加。 */}
-            <img src={assetUrl('/qp-icons/official/off_r2_career.png?v=4')} alt="" />
+            {/* 新版圆形职业奖章（ctrl/career-tree.svg）：旧版官方剪影与指南针/日月不是一套画风。
+                新文件名不需要 `?v=`，但统一走 icon() 保持版本机制一致。 */}
+            <img src={icon('/qp-icons/ctrl/career-tree.svg')} alt="" />
           </button>
           {/* 第三颗：明暗切换（跟随系统 → 浅色 → 深色）。实时画面仍可从功能栏的
               「画面」按钮进入，所以这里不再重复放手机图标。 */}

@@ -23,7 +23,7 @@
  */
 import { assetUrl } from './connection'
 
-export const ICON_VER = '5'
+export const ICON_VER = '6'
 
 /** 给 `/qp-icons/...` 路径加上当前版本号。 */
 export const icon = (path: string): string =>

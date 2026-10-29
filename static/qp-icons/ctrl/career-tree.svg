@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <!-- 右列「职业树」圆钮图标（第五版：圆形奖章）。
+       前几版单独画树，22dp 下不是像烛台就是像盆栽；这一版改用「徽章」构图：
+       和指南针一样是圆盘 + 奶油面 + 深色图形，边缘是暖金渐变环。
+       树本身保留官方剪影的五向分叉（主干 → 左右下枝 / 左右上枝 / 顶枝），
+       枝端小金果点题「职业收益」，分叉结构仍是图形主体。
+
+       尺寸：外圆 r18 + 描边 2.2 → 可见包围盒约 79.6%，
+       CSS 盒子 58%（24.4dp）→ 可见直径约 19.4dp，与指南针/主题对齐
+       （见 app.css 右列注释）。改图要重新量包围盒。 -->
+  <defs>
+    <linearGradient id="ct-ring" x1="0.15" y1="0" x2="0.85" y2="1">
+      <stop offset="0" stop-color="#FFE7B0"/>
+      <stop offset="0.5" stop-color="#E8A93A"/>
+      <stop offset="1" stop-color="#B96B1E"/>
+    </linearGradient>
+    <radialGradient id="ct-face" cx="0.35" cy="0.28" r="0.9">
+      <stop offset="0" stop-color="#FFFDF7"/>
+      <stop offset="1" stop-color="#FFF0D2"/>
+    </radialGradient>
+    <linearGradient id="ct-bud" x1="0.25" y1="0" x2="0.75" y2="1">
+      <stop offset="0" stop-color="#FFE7A6"/>
+      <stop offset="0.55" stop-color="#FFC24A"/>
+      <stop offset="1" stop-color="#F09300"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 奖章：暖金外环 + 奶油面 + 左上高光 -->
+  <circle cx="24" cy="24" r="18" fill="url(#ct-ring)" stroke="#8A4B12" stroke-width="2.2"/>
+  <circle cx="24" cy="24" r="14.2" fill="url(#ct-face)" stroke="#D9A24A" stroke-width="1.2"/>
+  <path d="M9.6 18.2C11.2 12.4 16 8.1 21.8 7.4" fill="none"
+        stroke="#FFF8EA" stroke-width="2.2" stroke-linecap="round" opacity=".5"/>
+
+  <!-- 树：五向分叉，深棕剪影 -->
+  <g fill="none" stroke="#8A4B12" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M24 37.2V27.2" stroke-width="4.2"/>
+    <path d="M24 32.6C20.5 30.6 17 27.8 14.5 24" stroke-width="3.4"/>
+    <path d="M24 32.6C27.5 30.6 31 27.8 33.5 24" stroke-width="3.4"/>
+    <path d="M24 27.4C21.5 23.4 19.5 19.4 18.5 15.4" stroke-width="3"/>
+    <path d="M24 27.4C26.5 23.4 28.5 19.4 29.5 15.4" stroke-width="3"/>
+    <path d="M24 27.4V12.4" stroke-width="3"/>
+  </g>
+
+  <!-- 枝端金果 -->
+  <g fill="url(#ct-bud)" stroke="#B85E08" stroke-width="1">
+    <circle cx="14.5" cy="24" r="1.8"/>
+    <circle cx="33.5" cy="24" r="1.8"/>
+    <circle cx="18.5" cy="15.4" r="1.7"/>
+    <circle cx="29.5" cy="15.4" r="1.7"/>
+    <circle cx="24" cy="12.4" r="1.8"/>
+  </g>
+</svg>
