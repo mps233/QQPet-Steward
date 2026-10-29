@@ -24,6 +24,8 @@ export function Overview({
   busy,
   scene,
   theme,
+  bgOpen,
+  onBgOpenChange,
   onNav,
   onStart,
   onStop,
@@ -34,6 +36,9 @@ export function Overview({
   busy: string
   scene: ReturnType<typeof useScene>
   theme: ThemeState
+  /** 房间背景面板开关由 App 持有（打开时要同步压暗系统绘制的状态栏带） */
+  bgOpen: boolean
+  onBgOpenChange: (open: boolean) => void
   onNav: (p: PageKey) => void
   onStart: () => void
   onStop: () => void
@@ -42,7 +47,6 @@ export function Overview({
   onToggle: (k: string, on: boolean) => Promise<unknown>
 }) {
   const [petOpen, setPetOpen] = useState(false)
-  const [bgOpen, setBgOpen] = useState(false)
   const sch = data.scheduler
 
   // 左上角圆钮：**点按 = 开背景选择面板**、**长按 500ms = 直接切下一张**。
@@ -67,7 +71,7 @@ export function Overview({
     onClick: () => {
       // 短按时必须把长按定时器撤掉 —— 否则 500ms 后它还会再切一次背景
       window.clearTimeout(holdTimer.current)
-      if (!longPressed.current) setBgOpen(true)
+      if (!longPressed.current) onBgOpenChange(true)
       longPressed.current = false
     },
     onPointerLeave: () => window.clearTimeout(holdTimer.current),
@@ -147,7 +151,7 @@ export function Overview({
         manual={scene.manual}
         dark={scene.dark}
         onSelect={(k) => scene.select(k)}
-        onClose={() => setBgOpen(false)}
+        onClose={() => onBgOpenChange(false)}
       />
     </section>
   )

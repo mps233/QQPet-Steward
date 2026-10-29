@@ -516,6 +516,12 @@ main section[data-page]{min-height:100%}  /* .home 与内页共用（内页另�
 #bgSheet{position:fixed;inset:0;z-index:30;display:none}
 #bgSheet.on{display:block}
 #bgSheet .bgmask{position:absolute;inset:0;background:rgba(0,0,0,.42)}
+/* 面板打开时，**系统绘制的状态栏带**也要跟着压暗：`.bgmask` 是 DOM 图层，
+   盖不到那条带（iOS 独立窗口 / Android PWA 都一样），不处理就会页身暗了、
+   顶部还亮一条（用户实报）。颜色由 App.tsx 按同一遮罩比例算好写进
+   --qp-sheet-statusbar；iOS 26+ 采样的是 html 的 background-color，
+   所以这里必须把 html 的底色也换掉（房间背景图盖满视口，平时这色不可见）。 */
+html[data-sheet="open"]{background-color:var(--qp-sheet-statusbar,#000)}
 #bgSheet .bgpanel{
   position:absolute;left:0;right:0;bottom:0;
   /* 宽屏下不要满屏拉开：与内页同一版心居中（否则 1440 宽时缩略图铺满整屏）。 */
@@ -1871,12 +1877,12 @@ pre#logbox{
 }
 
 /* 房间背景由 JS 按 `html[data-scene]` 内联写到 html 上（见 setSceneAttr）：
-   键 = SCENE_INFO 的键（5 套场景 room-* + 16 款官方家居背景 home-*）。
+   键 = SCENE_INFO 的键（5 套场景 room-* + 18 款官方家居背景 home-*）。
    注意：**必须写在 html 上** —— 背景图作用在 html 元素，而 CSS 变量只向下继承，
    写在 body 上的覆写对父级 html 无效（曾踩坑：data-scene 变了但背景不动）。
    下面这 4 条只是"JS 还没跑"的首帧兜底（早期版本靠它们切换）；
    JS 一旦跑起来，内联的 --qp-room/--qp-statusbar 优先级更高、覆盖它们。
-   15 款家居背景 + 8 个职业/毕业主题都有官方夜间版（--qp-room-* 的深色值在
+   17 款家居背景 + 8 个职业/毕业主题都有官方夜间版（--qp-room-* 的深色值在
    `:root[data-theme="dark"]` 里换成 *-dark 图，见 SCENE_INFO 的 dark 字段）。 */
 html[data-scene="feed"]{--qp-room:var(--qp-room-feed);--qp-statusbar:var(--qp-sb-feed)}
 html[data-scene="shower"]{--qp-room:var(--qp-room-shower);--qp-statusbar:var(--qp-sb-shower)}

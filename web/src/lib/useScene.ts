@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useLayoutEffect, useState } from 'react'
 import {
   applyScene,
   computeScene,
@@ -23,7 +23,11 @@ export function useScene(curKey: string, etaKind: string, dark: boolean) {
 
   const scene = manual === 'auto' ? computeScene(curKey, etaKind) : manual
 
-  useEffect(() => {
+  // **必须是 layout effect**：App 里同步 theme-color 的那个 useLayoutEffect 要读
+  // `--qp-statusbar`，而它在本 hook 之后声明、同一提交内按声明顺序执行。
+  // 换成普通 useEffect 会晚一拍：换背景后面板里的状态栏带还停在上一张的颜色
+  // （面板打开时那条带要跟着压暗，颜色取自这个变量）。
+  useLayoutEffect(() => {
     applyScene(scene, dark)
   }, [scene, dark])
 

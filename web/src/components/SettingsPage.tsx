@@ -663,12 +663,10 @@ export function SettingsPage({
   const g = gid ? GROUPS[gid] ?? null : null
 
   if (!g) {
-    const total = MENU.reduce((n, section) => n + section.items.length, 0)
     return (
       <>
         <NavHead title="设置" onBack={onExit} />
         <div className="set-page" id="setMenu">
-          <SetBand text={`${total} 个设置分组 · 改动会自动保存`} />
           {onOnboarding ? (
             <section className="set-sec">
               <h3>使用帮助</h3>

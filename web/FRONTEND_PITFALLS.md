@@ -461,3 +461,86 @@ html[data-page="adv"] .page-slot.page-enter::-webkit-scrollbar {
 `clientWidth` 缩小；隐藏后 390 宽视口的 `clientWidth` 应恢复为 390，
 页面仍是同一个 `.page-slot` 滚动容器。验证必须同时断言：
 `overflowY === "auto"`、`scrollTop = 500` 可读回、`clientWidth === offsetWidth`。
+
+## 十三、系统绘制的状态栏带：DOM 遮罩盖不到（2026-10-29，用户实报“点开换背景以后顶部是亮的”）
+
+**现象**：打开房间背景面板后页面被 `.bgmask`（`rgba(0,0,0,.42)`）压暗，
+但状态栏那条带还是场景原色（浅色主题下是 `#9BC9FB` 之类的亮蓝），顶部亮一条。
+
+**原因**：那条带**不是 DOM**——iOS 独立 Web App 由系统绘制（iOS 18- 读
+`<meta name="theme-color">`，iOS 26+ 采样 `html/body` 的 `background-color`，
+见 `app.css` 的 `--qp-statusbar` 注释）。`position:fixed; inset:0` 的遮罩
+也画不上去（WebKit bug 301994），所以只压暗 DOM 必然割裂。
+
+**修法**（三处缺一不可）：
+1. 面板开着时给 `html` 加 `data-sheet="open"`，CSS 把 `background-color` 换成
+   `--qp-sheet-statusbar`（iOS 26+ 的采样源）；
+2. 同一个值写进 `meta[name=theme-color]`（iOS 18- 的采样源）；
+3. 值 = 当前场景状态栏色 **× 0.58**（与遮罩同比例）。`theme-color` 只认
+   具体颜色、不支持 `color-mix()`，所以在 `App.tsx` 的 `dimStatusbar()` 里算。
+
+**⚠ 换背景时颜色必须同一帧跟上**：面板里点一张就换场景，而 `--qp-statusbar`
+是 `useScene` 写的。它原来用 `useEffect`（被动效应，晚于 layout effect），
+`App` 里的 theme-color 同步会读到**上一张**的颜色 —— 面板开着换背景，顶部
+会停在旧色。现在 `useScene` 的 `applyScene` 改成 `useLayoutEffect`，且声明
+在 theme-color 那个 effect 之前（同一组件内按声明顺序执行）。
+
+**验证**（headless 读不到系统带，只能断言三处数据源同值）：
+打开面板 → `html[data-sheet] === 'open'`、`getComputedStyle(html).backgroundColor`
+=== `meta.content` === `--qp-sheet-statusbar`（实测深色 `#152578 → rgb(12,21,70)`、
+浅色 `#9BC9FB → rgb(90,117,146)`）；面板内切换到另一张 → 三项一起变；
+关闭 → `data-sheet` 移除且恢复场景原色 `#RRGGBB`。
+
+**改 `.bgmask` 透明度时，`App.tsx` 的 `dimStatusbar()` 系数要一起改**
+（0.42 → 1-0.42），两处不同源就会在顶部差一截。
+
+## 十四、全屏页（新手引导）不进历史栈 ⇒ 返回落到总览 / 再点导航又弹回来（2026-10-29，用户实报）
+
+**症状**：设置 →「新手引导」→ 侧滑返回，落到的不是设置页而是**总览**；之后在总览点「通知」图标，
+页面又**弹回新手引导**。
+
+**真因**：引导是 `App.tsx` 里的一个 early-return 全屏分支，打开时只 `setGuideMode('open')`
+——**浏览器历史栈里根本没有这一层**。侧滑返回退掉的是底下那条 `?tab=set`，URL 变 `/`、
+`page` 按 URL 重建为 main，而引导还盖在最上面；关掉引导自然落到总览。
+`guideMode` 又只在「稍后设置 / 完成」里清，任何残留状态下再导航都会把引导重新渲染出来
+（症状 2 就是这么来的）。
+
+**规则：全屏页/模态页也是"页面"，必须能在 URL 里表示、进历史栈。** 只靠组件 state 的全屏层，
+返回键一定退的是它底下那一层，退完两边状态就对不上了。
+
+**修法**（都在 `App.tsx`）：
+1. 引导以 `?guide=1` 作为历史栈里的一层：`openGuide()` `pushState`；
+   `popstate` 里 `setGuideFromUrl(parseLoc().guide)`，没有 guide 就关引导；
+2. 「稍后设置」= `replaceState` 去掉 guide + `history.back()` → 退回**打开它的页面**（设置），
+   不是一律回总览；
+3. 「完成」= back 退掉引导条目，`onPop` 用 `replaceHome` 把落到的设置条目改写成 `/`（总览），
+   栈里不留"完成引导后又退回设置"的怪路径；
+4. 引导盖着时**不写** `scrollMemo`（那一刻滚动容器是引导页），关闭时靠
+   `guideOpen` 依赖把设置页原滚动位置还原；
+5. `go('main')` 的 `steps === 0` 不能落到 `history.go(-0)`（浏览器当 `go(0)` = **重载整页**）。
+
+**改了这块必须验的四条**（headless + 离线路由桩即可，附 `?guide=1` 断言）：
+| 路径 | 期望 |
+| --- | --- |
+| 设置 → 引导 → 侧滑返回 | URL `?tab=set`、引导关闭、**设置页在** |
+| 设置 → 引导 → 稍后设置 | 同上 |
+| 设置 → 引导 → 走完四步 | URL `/`、引导关闭、**总览在**（无设置页残留） |
+| 总览 → 点「通知」图标 | `?tab=notify`、通知页在、**引导不出现** |
+
+**以后新增任何全屏页**，先问一句"它在历史栈里吗"——没有的话，侧滑返回必然把底下那层弹掉。
+
+**转场也必须走同一套 `.page-slot`，不能另开一棵 early-return 的渲染树。**
+早先引导是 `if (guideOpen) return <main>…</main>` 的独立分支，所以只有它是硬切、没有动画
+（用户实报"进入动画跟其他选项不一样"）。现在引导固定在 `<main>` 的最后一个槽位：
+打开 = 引导 `page-enter-fwd` + 旧页 `page-leave-fwd`；关闭 = 引导 `page-leave-back` +
+落点页 `page-enter-back`（与返回其他页面完全一致）。
+
+**两个必须守的点**：
+1. 引导槽位的 `key`（`guide-slot`）与槽位位置在整个进出过程中**不变** —— 换位置/换 key
+   都会重新挂载 `Onboarding`，离场那 320ms 里会看到步骤跳回第一步；
+2. `guideLeaving` 必须与"关闭"在**同一个批次**置上（`closeGuide` / `popstate` 里），
+   晚一拍的话引导先卸载再挂载，同样丢步骤状态。
+
+验证：打开/关闭瞬间采样槽位 class 与 `getComputedStyle().animationName`
+（应为 `qp-enter-fwd` / `qp-leave-back`，时长 `0.32s`），且**离场动画期间**
+`.ob-kicker` 仍停在"第 N 步"。

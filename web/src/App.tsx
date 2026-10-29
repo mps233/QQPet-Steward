@@ -21,7 +21,7 @@ import { readConnection } from './lib/connection'
  *  构建产物由 dashboard.py 的 `/` 直接服务（旧版原生界面已删除，构建见 web/build.sh）。 */
 /** 一个"视图" = 页面 + 二级键（设置分组 / 日志子页）。
  *  转场按**视图粒度**做，所以"设置一级 → 二级"与"总览 → 内页"共用同一套滑动动画。 */
-type View = { page: PageKey; grp: string | null; sub: string | null }
+type View = { page: PageKey; grp: string | null; sub: string | null; guide: boolean }
 type LeavingView = View & { scrollTop: number }
 
 /** 真正的滚动容器：**当前页的 `.page-slot`**。
@@ -65,6 +65,24 @@ export default function App() {
   return <DashboardApp onLoginRequired={() => setLoginRequired(true)} />
 }
 
+/** 背景选择面板打开时，状态栏那条带要跟 `.bgmask` 一起压暗。
+ *
+ *  原因：`.bgmask` 是 DOM 图层，盖不到**系统绘制**的状态栏带（iOS 独立窗口 /
+ *  Android PWA 都是），不压暗的话面板一开，页身暗了、顶部还亮一条（用户实报）。
+ *  `theme-color` 的 content 只认具体颜色、不能写 color-mix，所以在这里按遮罩的
+ *  同一比例（1 - 0.42）算。**改 `.bgmask` 的透明度时这两个数要一起改。**
+ */
+function dimStatusbar(color: string): string {
+  const m = /^#([0-9a-f]{6})$/i.exec(color.trim())
+  if (!m) return color
+  const n = parseInt(m[1] ?? '', 16)
+  const k = 1 - 0.42
+  const r = Math.round(((n >> 16) & 0xff) * k)
+  const g = Math.round(((n >> 8) & 0xff) * k)
+  const b = Math.round((n & 0xff) * k)
+  return `rgb(${r}, ${g}, ${b})`
+}
+
 /** Dashboard after the remote shell has paired. Keeping this in a child means
  *  the connection gate's early return cannot change the App hook order. */
 function DashboardApp({ onLoginRequired }: { onLoginRequired: () => void }) {
@@ -74,9 +92,11 @@ function DashboardApp({ onLoginRequired }: { onLoginRequired: () => void }) {
   const theme = useTheme()
   const loginRequested = useRef(false)
   const [busy, setBusy] = useState('')
-  const [guideMode, setGuideMode] = useState<'auto' | 'open' | 'closed'>('auto')
-  const guideOpen = guideMode === 'open'
-    || (guideMode === 'auto' && !!data?.onboarding?.required && !data.scheduler.alive)
+  /** 引导关闭状态：`auto` = 首次启动自动弹（后端 required 且调度器没跑），`closed` = 用户关掉了。
+   *  **手动从「设置 → 新手引导」打开的引导不在这里**，它压一条 `guide=1` 的历史条目
+   *  （见 `openGuide` / `guideFromUrl`）—— 全屏页只靠组件 state 的话，侧滑返回会把底下那层
+   *  设置页弹掉、引导却还盖着，关掉后落到总览（用户实报）。 */
+  const [guideMode, setGuideMode] = useState<'auto' | 'closed'>('auto')
   /**
    * 历史栈模型（与 旧版 的 showTab / popstate 一一对应）：
    *   navDepth = 0（总览）/ 1（内页）/ 2（二级：设置 grp、日志子页）
@@ -89,6 +109,10 @@ function DashboardApp({ onLoginRequired }: { onLoginRequired: () => void }) {
    */
   const navDepth = useRef(0)
   const pendingTab = useRef<PageKey | null>(null)
+  /** 完成引导后，退栈落到的那一条（设置）要改写回总览 —— 见 closeGuide 的 completed 分支 */
+  const replaceHome = useRef(false)
+  /** 关闭引导的连点锁（openGuide 时复位） */
+  const guideClosing = useRef(false)
 
   /** 从 URL 解析当前所在位置：页面 + 二级键（设置的分组 / 日志的子页）。
    *  **URL 是唯一事实来源** —— 侧滑返回时浏览器只改 URL 再抛 popstate，
@@ -101,6 +125,8 @@ function DashboardApp({ onLoginRequired }: { onLoginRequired: () => void }) {
       page: (t && known.includes(t) ? t : 'main') as PageKey,
       grp: sp.get('grp'),
       sub: sp.get('sub'),
+      /** 新手引导是否作为**历史栈里的一层**打开（`?guide=1`） */
+      guide: sp.get('guide') === '1',
     }
   }, [])
 
@@ -109,10 +135,25 @@ function DashboardApp({ onLoginRequired }: { onLoginRequired: () => void }) {
   // 二级（设置分组 / 日志子页）：两个都从 URL 初始化，直开 ?tab=set&grp=work 也能落在二级
   const [grp, setGrp] = useState<string | null>(() => parseLoc().grp)
   const [sub, setSub] = useState<string | null>(() => parseLoc().sub)
+  // 引导是否由 URL（`?guide=1`）驱动 —— 与 page/grp/sub 同一套"URL 是唯一事实来源"。
+  // 侧滑返回 → URL 里没有 guide 了 → 引导自动关掉，底下的页面照 URL 重建。
+  const [guideFromUrl, setGuideFromUrl] = useState<boolean>(() => parseLoc().guide)
+  const autoGuide = guideMode === 'auto' && !!data?.onboarding?.required && !data.scheduler.alive
+  const guideOpen = guideFromUrl || autoGuide
+  // popstate 处理器在 effect 里注册，闭包拿不到最新 guideOpen —— 用 ref 判"返回时引导是不是开着"
+  const guideOpenRef = useRef(guideOpen)
+  guideOpenRef.current = guideOpen
+  // 房间背景选择面板的开关（由两版总览共用）。**状态放在 App 而不是 Overview 里**：
+  // 面板打开时要把系统绘制的状态栏带一起压暗，而 theme-color 的同步逻辑在下面
+  // 那个 effect 里 —— 两边共用同一份 open 状态，场景在面板里切换时才能跟着更新。
+  const [bgSheetOpen, setBgSheetOpen] = useState(false)
 
   /** 0 总览 / 1 内页 / 2 二级（设置分组 · 日志子页） */
   const depthOf = (loc: { page: PageKey; grp: string | null; sub: string | null }): number =>
     loc.page === 'main' ? 0 : loc.grp || loc.sub ? 2 : 1
+  /** 引导是盖在当前视图上的一层（`?guide=1`），转场层级 +1 —— 打开 = fwd、关闭 = back，
+   *  与其他页面的进出方向一致。 */
+  const depthOfView = (v: View): number => depthOf(v) + (v.guide ? 1 : 0)
 
   // ---- 各视图的滚动位置记忆 ----
   // 设置一级菜单滚到下面 → 点进二级 → 返回时停在顶部（用户实报）：真正滚动的是 `.page-slot`，
@@ -142,8 +183,9 @@ function DashboardApp({ onLoginRequired }: { onLoginRequired: () => void }) {
       } else if (target === 0) {
         const steps = navDepth.current
         navDepth.current = 0
+        // steps 为 0 时**不能**落到 history.go(-0)：浏览器把它当 go(0) = 重载整页
         if (steps === 1) history.back()
-        else history.go(-steps)
+        else if (steps > 1) history.go(-steps)
       } else {
         pendingTab.current = name
         navDepth.current = 0
@@ -189,10 +231,118 @@ function DashboardApp({ onLoginRequired }: { onLoginRequired: () => void }) {
     }
   }, [])
 
+  /** 打开新手引导：**压一条历史条目**（`?guide=1`），返回键/侧滑才能退回打开它的页面。
+   *  早先这里只 setState，浏览器栈里没有引导这一层：侧滑返回把底下的「设置」弹掉、
+   *  引导还盖在上面，关掉引导就落到了总览（用户实报）。 */
+  const openGuide = useCallback(() => {
+    saveScroll()
+    guideClosing.current = false
+    setGuideLeaving(false)
+    const sp = new URLSearchParams(location.search)
+    sp.set('guide', '1')
+    try {
+      history.pushState({ tab: sp.get('tab'), guide: 1 }, '',
+        location.pathname + '?' + sp.toString())
+    } catch {
+      /* 某些环境禁 pushState，退化成纯状态切换 */
+    }
+    setGuideFromUrl(true)
+  }, [saveScroll])
+
+  /** 关闭引导。`completed` = 走完引导 → 回总览；否则（稍后设置 / 侧滑）→ 回**打开它的页面**
+   *  （设置），而不是一律回总览。
+   *
+   *  引导有自己的历史条目，所以两种收尾都走"退栈"：
+   *   - 稍后设置：先把当前条目的 URL 去掉 guide 再 back —— 落回打开它的那一条（设置），
+   *     万一退栈没生效，URL 也不会在下次返回时把引导又弹出来；
+   *   - 完成：back 退掉引导后，onPop 把落到的设置条目**改写回总览**（`replaceHome`），
+   *     历史栈里不留一层"完成引导后又退回设置"的怪路径。 */
+  const closeGuide = useCallback((completed: boolean) => {
+    // 连点防护：「稍后设置」快速点两下会各发一次 history.back()，多退一层到总览
+    if (guideClosing.current) return
+    guideClosing.current = true
+    // **与关闭状态同一个批次**置上：晚一拍的话引导会先被卸载再重新挂载，
+    // 离场动画里的步骤状态会退回第一步。
+    setGuideLeaving(true)
+    setGuideMode('closed')
+    if (!guideFromUrl) {
+      if (completed) go('main')
+      return
+    }
+    setGuideFromUrl(false)
+    if (completed) {
+      // 先就地切到总览：只把引导关掉的话，popstate 回来之前会闪一帧设置页
+      setPage('main')
+      setGrp(null)
+      setSub(null)
+      replaceHome.current = true
+      try {
+        history.back()
+      } catch {
+        // 退栈不可用：直接改写当前条目回总览
+        replaceHome.current = false
+        const sp = new URLSearchParams(location.search)
+        sp.delete('guide')
+        sp.delete('tab')
+        sp.delete('grp')
+        sp.delete('sub')
+        const tail = sp.toString()
+        try {
+          history.replaceState({ tab: 'main' }, '', location.pathname + (tail ? '?' + tail : ''))
+        } catch {
+          /* 忽略 */
+        }
+        navDepth.current = 0
+        setPage('main')
+        setGrp(null)
+        setSub(null)
+      }
+      return
+    }
+    const sp = new URLSearchParams(location.search)
+    sp.delete('guide')
+    const tail = sp.toString()
+    try {
+      history.replaceState({ tab: sp.get('tab') }, '', location.pathname + (tail ? '?' + tail : ''))
+    } catch {
+      /* 忽略 */
+    }
+    try {
+      history.back()
+    } catch {
+      /* 忽略：URL 已经改好，页面状态本来就是打开引导前的那个视图 */
+    }
+  }, [go, guideFromUrl])
+
   // 侧滑 / 浏览器返回
   useEffect(() => {
     const onPop = () => {
-      saveScroll()   // 先把**正在离开的那个视图**的位置记下来（此刻 DOM 还没更新）
+      // 先把**正在离开的那个视图**的位置记下来（此刻 DOM 还没更新）。
+      // 引导盖着时不记：这时的滚动容器是引导页，记下来会覆盖掉设置页的位置。
+      if (!guideOpenRef.current) saveScroll()
+      if (replaceHome.current) {
+        // 完成引导：退掉引导条目后落到的是"设置"，把它改写成总览 —— 栈里不留
+        // "完成引导 → 返回却看到设置"的怪路径（URL 的其它参数如 ui 保留）。
+        replaceHome.current = false
+        const sp = new URLSearchParams(location.search)
+        sp.delete('guide')
+        sp.delete('tab')
+        sp.delete('grp')
+        sp.delete('sub')
+        const tail = sp.toString()
+        try {
+          history.replaceState({ tab: 'main' }, '', location.pathname + (tail ? '?' + tail : ''))
+        } catch {
+          /* 忽略 */
+        }
+        navDepth.current = 0
+        setPage('main')
+        setGrp(null)
+        setSub(null)
+        setGuideLeaving(true)
+        setGuideFromUrl(false)
+        return
+      }
       if (pendingTab.current) {
         // 跳级退栈的收尾：落回总览后再压目标页
         const t = pendingTab.current
@@ -213,6 +363,14 @@ function DashboardApp({ onLoginRequired }: { onLoginRequired: () => void }) {
       setPage(loc.page)
       setGrp(loc.grp)
       setSub(loc.sub)
+      // 引导跟着 URL 走：退到没有 guide 的那一条就把引导关掉（URL 驱动的与首次启动
+      // 自动弹出的都算）。不关的话它会一直盖在已经退过一层的页面上（用户实报的根因）。
+      // guideLeaving 必须和关闭同批置上：晚一拍引导会先卸载再挂载，步骤状态丢失。
+      if (guideOpenRef.current && !loc.guide) {
+        setGuideMode('closed')
+        setGuideLeaving(true)
+      }
+      setGuideFromUrl(loc.guide)
     }
     window.addEventListener('popstate', onPop)
     return () => window.removeEventListener('popstate', onPop)
@@ -230,6 +388,9 @@ function DashboardApp({ onLoginRequired }: { onLoginRequired: () => void }) {
   // 视图（页面 + 二级）变化后，把记住的滚动位置写回去。
   // 新视图没记录过 → 落在顶部（进二级/进内页从顶部开始，符合预期）。
   useLayoutEffect(() => {
+    // 引导盖着时不动滚动位置：这一刻的滚动容器是引导页，把设置页的位置写上去没有意义，
+    // 也会把 scrollKeyRef 弄脏。关闭引导时 guideOpen 变 false，下面照常还原设置页的位置。
+    if (guideOpen) return
     const key = scrollKeyOf(page, grp, sub)
     scrollKeyRef.current = key
     const y = scrollMemo.current[key] ?? 0
@@ -244,52 +405,69 @@ function DashboardApp({ onLoginRequired }: { onLoginRequired: () => void }) {
       window.cancelAnimationFrame(raf)
       window.clearTimeout(t)
     }
-  }, [page, grp, sub])
+  }, [page, grp, sub, guideOpen])
 
   // ---- iOS 式转场：前后两个**视图**同时在场（旧视图左让 / 新视图右入，返回时反过来）----
   // leaving = 正在退场的视图及其滚动位置，动画结束就卸载；dir 决定方向。
   // **视图 = 页面 + 二级**：设置一级↔二级、日志↔子页也走同一套滑动，不再只有页面级才有动画
   // （早先这里只认 PageKey，所以"进二级"是硬切，看着像动画丢了；实际是从来没挂过）。
   const [leaving, setLeaving] = useState<LeavingView | null>(null)
+  /** 引导正在退场：它**不能**像普通页面那样塞进 `leaving`（那会重新挂载组件、把步骤状态
+   *  冲回第一步），所以保持在原槽位、只把类名换成离场动画，动画结束再卸载。 */
+  const [guideLeaving, setGuideLeaving] = useState(false)
   const [dir, setDir] = useState<'fwd' | 'back'>('fwd')
   const [transiting, setTransiting] = useState(false)
   const prevView = useRef<View | null>(null)
   const leaveTimer = useRef<number>()
   const leaveSlot = useRef<HTMLDivElement>(null)
+  const guideSlot = useRef<HTMLDivElement>(null)
+  /** 引导在不在屏幕上（含退场动画期间）—— 状态栏色、data-page 都要等它真正滑走再换 */
+  const guideVisible = guideOpen || guideLeaving
   const finishTransition = useCallback(() => {
     window.clearTimeout(leaveTimer.current)
     setLeaving(null)
     setTransiting(false)
+    setGuideLeaving(false)
   }, [])
 
   /** 首帧前准备转场，不能先画目标页、下一帧才把它移到动画起点。
    *  首次渲染不触发（prevView 还是 null）。方向按**层级**判：变深 = fwd、变浅 = back；
    *  日志子页互切（sub 为空 / index / reward）不滑，直接换内容。 */
   useLayoutEffect(() => {
-    const cur: View = { page, grp, sub }
+    const cur: View = { page, grp, sub, guide: guideOpen }
     const from = prevView.current
     prevView.current = cur
     if (!from) return
     if (from.page === cur.page && (from.grp || '') === (cur.grp || '')
-        && (from.sub || '') === (cur.sub || '')) {
+        && (from.sub || '') === (cur.sub || '') && from.guide === cur.guide) {
       return   // 同一个视图（只是数据刷新）→ 不动画
     }
     window.clearTimeout(leaveTimer.current)
-    const dFrom = depthOf(from)
-    const dTo = depthOf(cur)
+    const dFrom = depthOfView(from)
+    const dTo = depthOfView(cur)
     // 同页同级只换内容：日志刚进来时 sub 是空的，点 tab 才变成 index/reward，
     // 只看 depth 会把这次点击当成"进二级"，整页（含标题栏和 tab 条）横滑一次 —— 用户实报。
     // 注意只认 sub：设置页的 grp（null → work）仍要走进二级的动画。
+    // 引导同理：guide 变了就不是同级。
     const sameLevel = from.page === cur.page && (from.grp || '') === (cur.grp || '')
+      && from.guide === cur.guide
     if (sameLevel || dFrom === dTo || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
       finishTransition()
       return
     }
     setDir(dTo > dFrom ? 'fwd' : 'back')
-    setLeaving({
-      ...from,
-      scrollTop: scrollMemo.current[scrollKeyOf(from.page, from.grp, from.sub)] ?? 0,
-    })
+    if (from.guide) {
+      // 引导退场：它自己留在原槽位做离场动画（见 guideLeaving 的注释），
+      // 落点页面走正常的进场 slot，垫在引导下面滑进来。
+      setLeaving(null)
+      setGuideLeaving(true)
+    } else {
+      setLeaving({
+        ...from,
+        scrollTop: scrollMemo.current[scrollKeyOf(from.page, from.grp, from.sub)] ?? 0,
+      })
+      setGuideLeaving(false)
+    }
     setTransiting(true)
     // animationend 是主路径，这里的定时器只兜"动画被取消/浏览器没抛事件"。
     // **时长必须按实际动画算**（原来固定 600ms）：宽屏是 200ms 淡出、手机是 320ms 横滑，
@@ -298,15 +476,15 @@ function DashboardApp({ onLoginRequired }: { onLoginRequired: () => void }) {
     // 真正的时长在下面那个 leaveSlot 的 layoutEffect 里读 computed style 后重设。
     leaveTimer.current = window.setTimeout(finishTransition, 600)
     return () => window.clearTimeout(leaveTimer.current)
-  }, [page, grp, sub, finishTransition])
+  }, [page, grp, sub, guideOpen, finishTransition])
 
   useLayoutEffect(() => {
-    if (!leaving || !leaveSlot.current) return
-    leaveSlot.current.scrollTop = leaving.scrollTop
-    // 按**实际**动画时长重设兜底定时器（见上面那条注释）。
+    // 普通离场页与引导槽都用这条：按**实际**动画时长重设兜底定时器（见上面那条注释）。
     // 动画被禁用（prefers-reduced-motion，或样式没命中）时 animationDuration 是 0s，
     // 此时下一帧就收尾 —— 绝不能让离场页在屏幕上多停。
-    const el = leaveSlot.current
+    const el = guideVisible ? guideSlot.current : leaving ? leaveSlot.current : null
+    if (!el) return
+    if (!guideVisible && leaving) el.scrollTop = leaving.scrollTop
     const raw = window.getComputedStyle(el).animationDuration || '0s'
     // 可能是 "0.2s" / "200ms" / 逗号分隔的多个值，取最大的那个
     const ms = Math.max(
@@ -321,7 +499,7 @@ function DashboardApp({ onLoginRequired }: { onLoginRequired: () => void }) {
     window.clearTimeout(leaveTimer.current)
     // +80ms 余量：animationend 正常会先到，这只是迟到的保险
     leaveTimer.current = window.setTimeout(finishTransition, ms > 0 ? ms + 80 : 0)
-  }, [leaving, finishTransition])
+  }, [leaving, guideVisible, finishTransition])
 
   // 自动换背景要跟着「当前任务 + 进行中的活动」走
   // 场景键统一用**任务键**：pending 时后端给的就是键（pending_key），平时
@@ -343,11 +521,12 @@ function DashboardApp({ onLoginRequired }: { onLoginRequired: () => void }) {
   //    background-color（那条路靠 CSS 的 --qp-statusbar，本身已经对）。
   useLayoutEffect(() => {
     const root = document.documentElement
-    root.setAttribute('data-page', guideOpen ? 'onboarding' : page)
+    // 引导退场的那 320ms 里它还在屏幕上，状态栏色不能先跳回设置页的白
+    root.setAttribute('data-page', guideVisible ? 'onboarding' : page)
     // 用主题解析结果而不是系统偏好：手动切深色时状态栏也要跟着暗
     const dark = theme.dark
     let want = '#FFFFFF' // 内页顶栏是白的
-    if (guideOpen) {
+    if (guideVisible) {
       want = dark ? '#27231D' : '#FCF7ED'
     } else if (page === 'main') {
       const v = getComputedStyle(root).getPropertyValue('--qp-statusbar').trim()
@@ -367,13 +546,30 @@ function DashboardApp({ onLoginRequired }: { onLoginRequired: () => void }) {
       // 实时画面页头是暖白半透明（见 live.css），同样跟着内页白底会露白带。
       want = '#FFFAF1'
     }
+    // 背景选择面板开着时，页身被 .bgmask 压暗 42%，但那条带是系统画的、DOM 盖不到。
+    // 不把它的颜色一起压暗，面板一打开顶部就会亮一条（用户实报）。
+    // 这里同时写三处：meta（iOS 18-）、html 的 background-color（iOS 26+ 采样，
+    // 靠 CSS 的 html[data-sheet] 规则读取 --qp-sheet-statusbar）、以及 want 本身。
+    if (bgSheetOpen && page === 'main' && !guideVisible) {
+      want = dimStatusbar(want)
+      root.setAttribute('data-sheet', 'open')
+      root.style.setProperty('--qp-sheet-statusbar', want)
+    } else {
+      root.removeAttribute('data-sheet')
+    }
     document.querySelectorAll('meta[name="theme-color"]').forEach((m) => {
       // 两条 meta 都写成同一个值：iOS 18- 按**系统**主题挑 media 匹配的那条，
       // 而手动选择可能与系统不一致 —— 两条同值才不会出现状态栏串色。
       // （媒体查询本身没法被 JS 改写，所以只能这样对齐。）
       m.setAttribute('content', want)
     })
-  }, [page, scene.scene, scene.dark, theme.dark, guideOpen])
+  }, [page, scene.scene, scene.dark, theme.dark, guideVisible, bgSheetOpen])
+
+  // 面板只属于总览页：一旦离开（按钮/侧滑/直链），把它关掉，
+  // 否则回到总览时会带着上次的 open=true 又弹出来。
+  useLayoutEffect(() => {
+    if (page !== 'main') setBgSheetOpen(false)
+  }, [page])
 
   /**
    * 调度器启停。
@@ -519,30 +715,6 @@ function DashboardApp({ onLoginRequired }: { onLoginRequired: () => void }) {
     )
   }
 
-  if (guideOpen) {
-    return (
-      <div className="app">
-        <main>
-          <div className="page-slot page-enter">
-            <Onboarding
-              data={data}
-              onSave={saveOne}
-              onLater={() => {
-                setGuideMode('closed')
-                go('main')
-              }}
-              onDone={() => {
-                setGuideMode('closed')
-                go('main')
-                reload()
-              }}
-            />
-          </div>
-        </main>
-      </div>
-    )
-  }
-
   /** 按**视图**渲染（页面 + 二级键）。抽成函数是为了让"正在退场的那个视图"也能被渲染
    *  —— iOS 式转场需要前后两个视图同时在场（单页滑入那种是旧页瞬间消失，不像原生）。
    *  grp/sub 一律走参数，**不能读闭包里的全局值**：退场的那个视图往往带着不同的二级键
@@ -564,6 +736,8 @@ function DashboardApp({ onLoginRequired }: { onLoginRequired: () => void }) {
           busy={busy}
           scene={scene}
           theme={theme}
+          bgOpen={bgSheetOpen}
+          onBgOpenChange={setBgSheetOpen}
           onNav={go}
           onStart={() => void start()}
           onStop={() => void stop()}
@@ -625,7 +799,7 @@ function DashboardApp({ onLoginRequired }: { onLoginRequired: () => void }) {
             grp={v.grp}
             onOpen={(id) => openSub('grp', id)}
             onBackSub={backSub}
-            onOnboarding={() => setGuideMode('open')}
+            onOnboarding={openGuide}
           />
         </section>
       )
@@ -654,13 +828,45 @@ function DashboardApp({ onLoginRequired }: { onLoginRequired: () => void }) {
         ) : null}
         {/* 进场 slot 的 key **不含 sub**：日志两个子页共用同一个 slot，tab 条不重建，
             白色药丸的 180ms 过渡才跑得起来；页面 / 设置分组（grp）变化仍换 key，
-            保持整页转场。 */}
-        <div
-          key={'enter:' + scrollKeyOf(page, grp, null)}
-          className={'page-slot page-enter' + (transiting ? ' page-enter-' + dir : '')}
-        >
-          {renderView({ page, grp, sub }, data)}
-        </div>
+            保持整页转场。
+            引导盖着时不渲染它（引导是不透明全屏页，底下的页面既看不见也没必要挂着）；
+            引导**退场**时要渲染：它是滑走的落点页面，要垫在下面一起滑进来。 */}
+        {!guideOpen || guideLeaving ? (
+          <div
+            key={'enter:' + scrollKeyOf(page, grp, null)}
+            className={'page-slot page-enter' + (transiting ? ' page-enter-' + dir : '')}
+          >
+            {renderView({ page, grp, sub, guide: false }, data)}
+          </div>
+        ) : null}
+        {/* 新手引导：与其他页面共用同一套 .page-slot 转场（打开 = fwd 滑入 + 旧页左让，
+            关闭 = back 滑出 + 落点页滑入）。它**固定占最后一个槽位、key 不变**，
+            进出期间组件保持挂载 —— 否则离场时重新挂载会把步骤状态冲回第一步。
+            早先这里是另一棵 early-return 的树，所以只有它是硬切、没有动画（用户实报）。 */}
+        {guideVisible ? (
+          <div
+            key="guide-slot"
+            ref={guideSlot}
+            className={'page-slot ' + (guideLeaving
+              ? 'page-leave page-leave-back'
+              : 'page-enter' + (transiting ? ' page-enter-' + dir : ''))}
+            onAnimationEnd={(e) => {
+              if (e.target === e.currentTarget) finishTransition()
+            }}
+          >
+            <Onboarding
+              data={data}
+              onSave={saveOne}
+              // 稍后设置：从设置里打开的，退回设置（不是总览）；首次启动自动弹的，留在首页
+              onLater={() => closeGuide(false)}
+              onDone={() => {
+                // 走完引导统一回总览
+                closeGuide(true)
+                reload()
+              }}
+            />
+          </div>
+        ) : null}
       </main>
     </div>
   )
