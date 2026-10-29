@@ -24,6 +24,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from .attr_parse import parse_attr
 from .config import PROJECT_ROOT
 from .jsonio import write_json
 from .ocr import ocr_fullscreen
@@ -55,7 +56,6 @@ PLATE_Y_MIN = 0.30
 SHOT_SLUG = {'武术家': 'wushujia', '梦境旅人': 'mengjinglvren', '大明星': 'damingxing'}
 
 CJK_RE = re.compile(r'[\u4e00-\u9fff]')
-ATTR_RE = re.compile(r'(力量|智力|魅力)\s*([0-9]{1,6})')
 
 
 # ---------------------------------------------------------------- 纯函数（可离线回归）
@@ -71,9 +71,9 @@ def read_attrs(items, ymax: int) -> dict:
     for t, x, y, s in items:
         if ymax and y > ymax:
             continue
-        m = ATTR_RE.search(t)
-        if m:
-            got[m.group(1)] = int(m.group(2))
+        parsed = parse_attr(t)
+        if parsed:
+            got[parsed[0]] = parsed[1]
     return got
 
 

@@ -8,7 +8,6 @@
 轻量导航不调用 goto_town（工作期间会阻塞等结束），用出门→小镇入口的直接点击。
 """
 import json
-import re
 import sys
 import time
 from pathlib import Path
@@ -16,12 +15,12 @@ from pathlib import Path
 BASE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE))
 
+from src.attr_parse import parse_attr  # noqa: E402
 from src.ocr import ocr_fullscreen  # noqa: E402
 from src.config import APP_ROOT  # noqa: E402
 from scenarios.work import WorkScenario  # noqa: E402
 
 PLAN_FILE = APP_ROOT / 'runs' / 'career_plan.json'
-ATTR_RE = re.compile(r'(力量|智力|魅力)\s*([0-9]{1,6})')
 TOWN_FALLBACK = (850, 1238)   # 出门页小镇入口参考坐标（1080 宽）
 LEAVE_FALLBACK = (538, 2078)  # 主页面出门按钮参考坐标
 
@@ -35,9 +34,9 @@ def read_attrs(ws) -> dict | None:
         for t, used_x, y, s in res:
             if y > 600:
                 continue
-            m = ATTR_RE.search(t)
-            if m:
-                got[m.group(1)] = int(m.group(2))
+            parsed = parse_attr(t)
+            if parsed:
+                got[parsed[0]] = parsed[1]
         if len(got) == 3:
             return got
         time.sleep(1.0)
