@@ -46,8 +46,12 @@ export function FuncBar({
         </button>
       </div>
       <div className="fb-group">
+        {/* 图标用「卡通手机」而不是原来的刷新箭头：这个按钮是**进入设备画面**，
+            不是刷新（画面本身每 15 秒自动轮询）。箭头在 22dp 下还会缩成一个
+            像逗号的橙弧，看不出语义。phone.svg 当初就是为「实时画面」画的
+            （右列圆钮旧入口），同一份素材直接复用，画风与同组 play/stop 一致。 */}
         <button className="fab ghost" id="btnShot" title="实时画面" onClick={onShot}>
-          <img className="fi" src={icon('/qp-icons/ctrl/refresh.svg')} alt="" />
+          <img className="fi" src={icon('/qp-icons/ctrl/phone.svg')} alt="" />
           <span className="ft">画面</span>
         </button>
       </div>
