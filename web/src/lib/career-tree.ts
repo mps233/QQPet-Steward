@@ -1,4 +1,5 @@
 import { assetUrl } from './connection'
+import { wanExact } from './format'
 
 /**
  * 职业树静态数据：8 条职业线 × 5 个层级 = 40 格。
@@ -488,13 +489,14 @@ export function resolveStates(
 }
 
 /** 弹窗里 `条件` 行的三段文案：`力量8726/225 智力222/113 魅力589/412`。
+ *  当前值过万时按游戏缩写显示（11800 → `力量1.18w/…`）；不足一万原样。
  *  需求未知（中级/高级）时显示 `力量>?`；占位格整行不显示。 */
 export function conditionText(def: CareerCellDef, attrs: Trio): string {
   const names = ['力量', '智力', '魅力'] as const
   return names
     .map((n, i) => {
       if (!def.need) return `${n}>?`
-      return `${n}${attrs[i]}/${def.need[i]}`
+      return `${n}${wanExact(attrs[i] ?? 0)}/${def.need[i]}`
     })
     .join('  ')
 }

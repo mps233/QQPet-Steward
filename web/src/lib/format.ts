@@ -58,6 +58,13 @@ export const hrs = (sec: number | undefined): string =>
 export const wan = (n: number): string =>
   n >= 10000 ? (n / 10000).toFixed(1).replace(/\.0$/, '') + 'w' : String(n)
 
+/** 游戏内属性缩写：最多两位小数、去掉尾零。
+ *  职业树页照官方显示 —— 游戏在属性过万后给的是 `1.18w`（不是 `1.2w`），
+ *  而 `wan()` 只有一位小数会把 11800 显示成 1.2w，丢精度。
+ *  11800 → "1.18w"，12000 → "1.2w"，10000 → "1w"，不足一万原样。 */
+export const wanExact = (n: number): string =>
+  n >= 10000 ? (n / 10000).toFixed(2).replace(/\.?0+$/, '') + 'w' : String(n)
+
 /** 把值夹进 0~100 的百分比（进度条 / 状态环用） */
 export const pct = (v: number, max: number): number =>
   max > 0 ? Math.min(100, Math.max(0, (v / max) * 100)) : 0

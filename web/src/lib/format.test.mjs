@@ -15,7 +15,7 @@ try {
     '--module', 'esnext', '--target', 'es2020',
     '--moduleResolution', 'bundler', '--outDir', out,
   ], { stdio: 'pipe' })
-  const { formatUptime, parseUptimeSeconds, advanceUptime, countdownSeconds, hms, wan } =
+  const { formatUptime, parseUptimeSeconds, advanceUptime, countdownSeconds, hms, wan, wanExact } =
     await import(pathToFileURL(join(out, 'format.js')).href)
 
   const cases = [
@@ -115,7 +115,21 @@ try {
   for (const [input, expected] of wanCases) {
     assert.equal(wan(input), expected, `wan: ${input}`)
   }
-  console.log(`Time formatting/clocks: ${cases.length + parseCases.length + tickCases.length + countdownCases.length + wanCases.length + 3} checks passed`)
+  // 职业树属性沿用游戏写法：最多两位小数、去尾零（真机实测 力量 1.18w）
+  const wanExactCases = [
+    [0, '0'],
+    [878, '878'],
+    [9999, '9999'],
+    [10000, '1w'],
+    [11800, '1.18w'],
+    [12000, '1.2w'],
+    [134000, '13.4w'],
+    [118000, '11.8w'],
+  ]
+  for (const [input, expected] of wanExactCases) {
+    assert.equal(wanExact(input), expected, `wanExact: ${input}`)
+  }
+  console.log(`Time formatting/clocks: ${cases.length + parseCases.length + tickCases.length + countdownCases.length + wanCases.length + wanExactCases.length + 3} checks passed`)
 } finally {
   rmSync(out, { recursive: true, force: true })
 }

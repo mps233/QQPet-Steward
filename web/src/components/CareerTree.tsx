@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react'
 import { assetUrl } from '../lib/connection'
+import { wanExact } from '../lib/format'
 import { showToast } from '../lib/toast'
 import {
   LINES,
@@ -323,7 +324,8 @@ export function CareerTree({ attrs, treeLines, treeTiers, equipped, gates }: Tre
             <span className="ct-attr" key={k}>
               <img className="ct-attr-ico" src={attrIcon(k)} alt="" />
               <b>{label}</b>
-              <i>{v}</i>
+              {/* 过万按游戏的缩写显示（1.18w），别直接印 11800 —— 官方页面就是缩写 */}
+              <i>{wanExact(v)}</i>
             </span>
           ))}
         </div>
