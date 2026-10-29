@@ -252,6 +252,26 @@
 .ct-scroll::-webkit-scrollbar {
   display: none;
 }
+/* 桌面端：Mac App 的 WKWebView 里触控板横滑不可靠，滚动条又被隐藏；
+   这里给出「按住拖动」的抓手光标 + 副标题提示。触摸设备不显示。 */
+.ct-drag-hint {
+  display: none;
+}
+@media (hover: hover) and (pointer: fine) {
+  .ct-drag-hint {
+    display: inline;
+    margin-left: 0.35em;
+    opacity: 0.62;
+  }
+  .ct-scroll {
+    cursor: grab;
+  }
+  .ct-scroll.ct-dragging {
+    cursor: grabbing;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+}
 .ct-grid {
   display: flex;
   align-items: flex-start;

@@ -1,4 +1,5 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react'
 import { assetUrl } from '../lib/connection'
 import { showToast } from '../lib/toast'
 import {
@@ -175,6 +176,99 @@ interface Popup {
 export function CareerTree({ attrs, treeLines, treeTiers, equipped, gates }: TreeProps) {
   const [popup, setPopup] = useState<Popup | null>(null)
   const pageRef = useCareerMetrics()
+  const scrollRef = useRef<HTMLDivElement>(null)
+  /** 桌面端「按住拖动」横向滑动。
+   *
+   *  为什么需要：职业树是横向滚动容器（overflow-x:auto），手机上原生横滑没问题；
+   *  但 Mac App 的 WKWebView 里触控板横滑不可靠，且滚动条又被 `scrollbar-width:none`
+   *  隐藏了 —— 桌面上看起来就是「怎么都滑不到右边」。这里给鼠标/触控板加一个
+   *  按住拖动兜底，并在副标题里提示「左右拖动查看」。
+   *
+   *  只对 pointerType === 'mouse' 生效：触摸设备继续走原生滚动，不抢手势。
+   *  拖过 6px 才进入拖动态；松手后的 click 用 capture 阶段挡掉，
+   *  避免拖完误开职业弹窗。 */
+  const drag = useRef<{ x: number; left: number; pointerId: number; moved: boolean } | null>(null)
+  /** 拖拽结束后要吞掉的那一次 click（防止拖完误开职业弹窗） */
+  const suppressClick = useRef(false)
+
+  const finishDrag = useCallback((pointerId?: number) => {
+    const el = scrollRef.current
+    const d = drag.current
+    if (!d) return
+    if (d.moved) suppressClick.current = true
+    drag.current = null
+    if (!el) return
+    el.classList.remove('ct-dragging')
+    if (pointerId !== undefined && el.hasPointerCapture?.(pointerId)) {
+      try {
+        el.releasePointerCapture(pointerId)
+      } catch {
+        /* Safari 在指针已释放时会抛，忽略 */
+      }
+    }
+  }, [])
+
+  // 兜底：鼠标可能在窗口外/元素外松开，pointerup 不一定送到 .ct-scroll；
+  // 监听 window 的 pointerup/pointercancel + blur，保证拖拽状态一定结束，
+  // 不会出现「鼠标都松了还一直抓着」。
+  useEffect(() => {
+    const onGlobalEnd = (e: PointerEvent) => {
+      if (drag.current && drag.current.pointerId === e.pointerId) finishDrag(e.pointerId)
+    }
+    const onBlur = () => finishDrag()
+    // mouseup 兜底：个别 WKWebView 版本会丢 pointerup，但 mouseup 仍在
+    const onMouseUp = () => finishDrag()
+    window.addEventListener('pointerup', onGlobalEnd, true)
+    window.addEventListener('pointercancel', onGlobalEnd, true)
+    window.addEventListener('mouseup', onMouseUp, true)
+    window.addEventListener('blur', onBlur)
+    return () => {
+      window.removeEventListener('pointerup', onGlobalEnd, true)
+      window.removeEventListener('pointercancel', onGlobalEnd, true)
+      window.removeEventListener('mouseup', onMouseUp, true)
+      window.removeEventListener('blur', onBlur)
+    }
+  }, [finishDrag])
+
+  const onScrollDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (e.pointerType !== 'mouse' || e.button !== 0) return
+    const el = scrollRef.current
+    if (!el) return
+    suppressClick.current = false
+    drag.current = { x: e.clientX, left: el.scrollLeft, pointerId: e.pointerId, moved: false }
+  }
+  const onScrollMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const d = drag.current
+    const el = scrollRef.current
+    if (!d || !el) return
+    // 左键已经松开（常见于在窗口外松手）→ 立刻结束，绝不继续跟手
+    if ((e.buttons & 1) === 0) {
+      finishDrag(e.pointerId)
+      return
+    }
+    const dx = e.clientX - d.x
+    if (!d.moved && Math.abs(dx) < 6) return
+    if (!d.moved) {
+      d.moved = true
+      try {
+        el.setPointerCapture(e.pointerId)
+      } catch {
+        /* 指针已失效时忽略 */
+      }
+      el.classList.add('ct-dragging')
+    }
+    el.scrollLeft = d.left - dx
+    e.preventDefault()
+  }
+  const endScrollDrag = (e: ReactPointerEvent<HTMLDivElement>) => {
+    finishDrag(e.pointerId)
+  }
+  const suppressAfterDrag = (e: ReactMouseEvent<HTMLDivElement>) => {
+    if (!suppressClick.current) return
+    e.preventDefault()
+    e.stopPropagation()
+    suppressClick.current = false
+  }
 
   const states = useMemo(
     () => resolveStates(attrs, treeLines, equipped, treeTiers, gates),
@@ -233,7 +327,10 @@ export function CareerTree({ attrs, treeLines, treeTiers, equipped, gates }: Tre
             </span>
           ))}
         </div>
-        <p className="ct-sub">不同的属性搭配，会点亮宠物不同的职业路线</p>
+        <p className="ct-sub">
+          不同的属性搭配，会点亮宠物不同的职业路线
+          <span className="ct-drag-hint">· 左右拖动查看</span>
+        </p>
       </div>
 
       <div className="ct-body">
@@ -245,7 +342,16 @@ export function CareerTree({ attrs, treeLines, treeTiers, equipped, gates }: Tre
             </div>
           ))}
         </div>
-        <div className="ct-scroll">
+        <div
+          className="ct-scroll"
+          ref={scrollRef}
+          onPointerDown={onScrollDown}
+          onPointerMove={onScrollMove}
+          onPointerUp={endScrollDrag}
+          onPointerCancel={endScrollDrag}
+          onLostPointerCapture={() => finishDrag()}
+          onClickCapture={suppressAfterDrag}
+        >
           <div className="ct-grid">
             {LINES.map((lineName, li) => {
               // 该列已解锁的级数 ≥2 → 整列金线（官方：只有武术家 4 级属于这种）
@@ -333,7 +439,6 @@ export function CareerTree({ attrs, treeLines, treeTiers, equipped, gates }: Tre
           }}
         />
       ) : null}
-
     </div>
   )
 }
