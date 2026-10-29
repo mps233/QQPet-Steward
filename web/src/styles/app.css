@@ -284,9 +284,10 @@ main section[data-page]{min-height:100%}  /* .home 与内页共用（内页另�
      · 宽屏：版心的 1.1 倍（≈473px），刚好一格多一点，新旧页始终在同一列附近。
    另加**离场淡出**：只有位移的话，旧页只要没被新页完全盖住就会露出来（上面就是这个），
    淡出到 0 之后无论位置如何都不会被看见 —— 这也是原生 iOS push 的观感。
-   注意：动画期间容器上有 transform，会让内部的 position:fixed 子孙（#bgSheet、
-   #liveToast）暂时相对它定位 —— 只在切页那 320ms 内存在，期间不会去开面板，
-   所以没影响；但别把这套挂到常驻容器上。 */
+   注意：动画期间容器上有 transform，会让内部的 position:fixed 子孙（#bgSheet）
+   暂时相对它定位 —— 只在切页那 320ms 内存在，期间不会去开面板，所以没影响；
+   但别把这套挂到常驻容器上。（全局 toast 宿主在 main.tsx 里、位于转场容器之外，
+   不受这条影响。） */
 /* 两个 slot 都必须是**绝对定位**、叠在 main 上。别给 .page-enter 加
    `position:relative` —— 那会让当前页变成"由内容撑高"，而 .home 里全是绝对定位的
    浮动层、撑不开它，`.home{min-height:100%}` 的百分比随之失效，整页塌成只剩背景
@@ -479,6 +480,10 @@ main section[data-page]{min-height:100%}  /* .home 与内页共用（内页另�
 .col-r .rbtn:nth-child(1) img{width:48.7%;height:48.7%}   /* 冒险：指南针 */
 .col-r .rbtn:nth-child(2) img{width:54.2%;height:54.2%}   /* 职业：公文包（最扁，需最大盒子） */
 .col-r .rbtn:nth-child(3) img{width:52.5%;height:52.5%}   /* 画面：手机（唯一例外，见上：竖长条要按面积补） */
+/* 第三颗现在是「明暗切换」（太阳 / 月亮 / 半明半暗，见 static/qp-icons/ctrl/theme-*.svg）。
+   三张图都是正方形构图、可见包围盒约 76~80%，比手机图"矮胖"——按可见面积给 58%
+   （同一条经验：统一高度对长宽比差很多的图标不够用）。 */
+.col-r .rbtn.theme-rbtn img{width:58%;height:58%}
 .rbtn:active{transform:scale(.94)}
 /* 官方圆钮没有"选中态"：所有钮同底色 + 原色图标。
    选中仅用轻微白色描边提示，不改底色（改底色与官方观感差很远）。 */
@@ -503,27 +508,6 @@ main section[data-page]{min-height:100%}  /* .home 与内页共用（内页另�
    色相/亮度按左列官方图标实测基色 #BD6221、亮度 ~106 重映射，色差 ΔRGB≈(2.6,1.1,0)）。
    尺寸 58.5% 保持不动 —— 那是按衣服轮廓调过的，与其他图标的视觉大小一致。 */
 #tabbar #btnScene img{width:58.5%;height:58.5%}
-
-/* 切换房间背景的轻提示（#sceneToast，JS 的 sceneToast()）。
-   4 张房间图肉眼可辨，但"回到自动"这一步在任务场景恰好是主房间时看不出变化，
-   故给一句状态文字；位置取绝对定位居中偏下 —— 避开顶部资料卡/胶囊区，
-   也不会盖住底部抽屉（.deck）。1.6 秒自动淡出，pointer-events:none 不挡点击。
-   z-index 高于 .flt 各层（总览页里最高的是 .deck 的 5），保证压在最上面。
-   **居中不用 transform**（与 .navtitle 同一条理由）：left:0/right:0 + margin:auto
-   就能水平居中（宽度由内容决定），文字不会被推进合成层而糊掉。 */
-#sceneToast{
-  /* 原来靠 `top:62% + translate(-50%,-50%)` 同时做两个方向的居中。
-     去掉 transform 后水平改由 margin:auto 完成，垂直改由"减去自身半高"完成
-     （高度 = font 12.5 × line-height 1.5 + 上下 padding 6×2 ≈ 31px，
-      取 15px；这是个一闪而过的提示，差 1px 看不出来）。 */
-  position:absolute;left:0;right:0;top:calc(62% - 15px);
-  margin-left:auto;margin-right:auto;width:max-content;
-  z-index:9;max-width:86%;padding:6px 14px;border-radius:999px;
-  font-size:12.5px;color:#fff;background:rgba(0,0,0,.72);
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-  opacity:0;transition:opacity .16s;pointer-events:none;
-}
-#sceneToast.on{opacity:1}
 
 /* 房间背景选择面板（#bgSheet，点左上角黄衣圆钮打开）
    22 张 = 自动 + 5 套官方房间场景 + 16 款官方「装扮→背景」家居背景（含动态的「花田诗意」）；
@@ -1204,16 +1188,6 @@ main section[data-page]{min-height:100%}  /* .home 与内页共用（内页另�
 .mrow.dragging{position:relative;z-index:9;opacity:.94;border-radius:calc(var(--u)*10);
                box-shadow:0 8px 22px rgba(0,0,0,.22)}
 #taskList.dragging-list{touch-action:none;-webkit-user-select:none;user-select:none}
-/* 水平居中**不用 transform**：iOS PWA 上带 transform 的元素会被提升成合成层，
-   文字按低分辨率栅格化而发糊（见 FRONTEND_PITFALLS 第三节；#sceneToast / .navtitle /
-   .ct-title / .livetoast 都已改掉，这条是最后一个漏网的）。
-   居中改 left:0/right:0 + margin:auto；入场位移改用 bottom（不建合成层）。 */
-#torderToast{position:fixed;left:0;right:0;margin-left:auto;margin-right:auto;width:max-content;
-  bottom:calc(var(--u)*40);
-  background:rgba(0,0,0,.82);color:#fff;font-size:calc(var(--u)*12);
-  padding:calc(var(--u)*8) calc(var(--u)*15);border-radius:calc(var(--u)*18);
-  opacity:0;pointer-events:none;transition:opacity .18s,bottom .18s;z-index:99}
-#torderToast.on{opacity:1;bottom:calc(var(--u)*50)}
 /* 开关命中区：**只纵向撑满行高**（视觉是 25×15u 的小开关）。
    为什么不用 44×44：任务行距实测 24.5u（320 宽短屏）/ 26.5u（矮屏）/ 30.5u（基础），
    44 会上下各压进相邻行一半 —— 在两行之间取点命中的是**下一行**的开关，
@@ -1375,14 +1349,10 @@ main section[data-page]{min-height:100%}  /* .home 与内页共用（内页另�
 .shotpage .livecard{--live-ar-w:9;--live-ar-h:20;position:relative;display:flex;align-items:center;justify-content:center;background:#000;overflow:hidden;align-self:center;aspect-ratio:var(--live-ar-w)/var(--live-ar-h);width:min(100%,calc((100vh - 210px) * var(--live-ar-w) / var(--live-ar-h)));width:min(100%,calc((100dvh - 210px) * var(--live-ar-w) / var(--live-ar-h)))}
 .shotpage #liveVideo{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;display:block;touch-action:manipulation}
 .shotpage .livehint{position:absolute;left:12px;right:12px;bottom:10px;color:#cbd5e1;font-size:12px;line-height:1.5;text-align:center;pointer-events:none}
-/* 点击接收层（盖在 video 上）与操作反馈气泡：注入结果一律给反馈，
-   否则"点了没反应"分不清是没接管、没开播、还是被服务端拒绝 */
+/* 点击接收层（盖在 video 上）：注入结果一律给反馈，
+   否则"点了没反应"分不清是没接管、没开播、还是被服务端拒绝。
+   （旧版的 .livetoast 已删除：现场反馈统一走全局 ToastHost。） */
 .shotpage .livetap{position:absolute;inset:0;z-index:1;cursor:crosshair}
-/* 居中走 left:0/right:0 + margin:auto（不用 translateX(-50%)，理由同 .navtitle：
-   带 transform 的文字在 iOS PWA 上会按低分辨率栅格化、糊成一团）。
-   宽度上限交给 max-width + width:max-content，与原来的视觉一致。 */
-.shotpage .livetoast{position:absolute;left:0;right:0;bottom:14px;margin-left:auto;margin-right:auto;width:max-content;z-index:3;max-width:92%;padding:5px 14px;border-radius:999px;font-size:12px;color:#fff;background:rgba(0,0,0,.72);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:0;transition:opacity .18s;pointer-events:none}
-.shotpage .livetoast.on{opacity:1}
 .shotpage #btnTakeover.on{background:#16a34a;color:#fff;border-color:#16a34a}
 .shotpage #liveMeta{font-size:12px;color:#64748b;align-self:center}
 .scenecard{position:relative;display:block;border-radius:var(--r-xl);overflow:hidden}
@@ -1880,23 +1850,24 @@ pre#logbox{
 /* ---------- 15. 深色模式 ---------- */
 /* 官方【没有独立深色主题】—— 深色下只是把房间背景换成偏暗的版本，
    组件（胶囊/圆钮/资料卡/文字）颜色**完全不变**。
-   所以这里只切背景图，不改任何 token，保证与官方一致。 */
-@media(prefers-color-scheme:dark){
-  :root{
-    /* 只替换背景图；其余 token 一律沿用浅色值 */
-    --qp-room-main:url('/qp-icons/bg/room-main-dark.jpg?v=5');
-    --qp-room-feed:url('/qp-icons/bg/room-feed-dark.jpg?v=5');
-    --qp-room-shower:url('/qp-icons/bg/room-shower-dark.jpg?v=5');
-    --qp-room-record:url('/qp-icons/bg/room-record-dark.jpg?v=5');
-    --qp-room-store:url('/qp-icons/bg/room-store-dark.jpg?v=5');
-    /* 状态栏采样色是唯一例外：它要跟背景图走（深色房间顶部明显更暗），
-       否则深色模式下状态栏还是浅色那条，比背景亮一截。取各 -dark 图顶部实测色。 */
-    --qp-sb-main:#A9722D;
-    --qp-sb-feed:#C39145;
-    --qp-sb-shower:#A3651D;
-    --qp-sb-record:#C18C3A;
-    --qp-sb-store:#2A2E38;
-  }
+   所以这里只切背景图，不改任何 token，保证与官方一致。
+   ⚠ 触发器是 `<html data-theme="dark">`（lib/useTheme.ts 写入），不再用
+   `@media (prefers-color-scheme: dark)`：主题现在有「跟随系统 / 浅色 / 深色」三态，
+   手动选择与系统切换统一走这个属性，避免两套规则互相覆盖。 */
+:root[data-theme="dark"]{
+  /* 只替换背景图；其余 token 一律沿用浅色值 */
+  --qp-room-main:url('/qp-icons/bg/room-main-dark.jpg?v=5');
+  --qp-room-feed:url('/qp-icons/bg/room-feed-dark.jpg?v=5');
+  --qp-room-shower:url('/qp-icons/bg/room-shower-dark.jpg?v=5');
+  --qp-room-record:url('/qp-icons/bg/room-record-dark.jpg?v=5');
+  --qp-room-store:url('/qp-icons/bg/room-store-dark.jpg?v=5');
+  /* 状态栏采样色是唯一例外：它要跟背景图走（深色房间顶部明显更暗），
+     否则深色模式下状态栏还是浅色那条，比背景亮一截。取各 -dark 图顶部实测色。 */
+  --qp-sb-main:#A9722D;
+  --qp-sb-feed:#C39145;
+  --qp-sb-shower:#A3651D;
+  --qp-sb-record:#C18C3A;
+  --qp-sb-store:#2A2E38;
 }
 
 /* 房间背景由 JS 按 `html[data-scene]` 内联写到 html 上（见 setSceneAttr）：
@@ -1906,7 +1877,7 @@ pre#logbox{
    下面这 4 条只是"JS 还没跑"的首帧兜底（早期版本靠它们切换）；
    JS 一旦跑起来，内联的 --qp-room/--qp-statusbar 优先级更高、覆盖它们。
    15 款家居背景 + 8 个职业/毕业主题都有官方夜间版（--qp-room-* 的深色值在
-   @media(prefers-color-scheme:dark) 里换成 *-dark 图，见 SCENE_INFO 的 dark 字段）。 */
+   `:root[data-theme="dark"]` 里换成 *-dark 图，见 SCENE_INFO 的 dark 字段）。 */
 html[data-scene="feed"]{--qp-room:var(--qp-room-feed);--qp-statusbar:var(--qp-sb-feed)}
 html[data-scene="shower"]{--qp-room:var(--qp-room-shower);--qp-statusbar:var(--qp-sb-shower)}
 html[data-scene="record"]{--qp-room:var(--qp-room-record);--qp-statusbar:var(--qp-sb-record)}

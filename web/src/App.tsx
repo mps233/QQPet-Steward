@@ -13,6 +13,8 @@ import { PlanPage } from './components/PlanPage'
 import { SettingsPage } from './components/SettingsPage'
 import { useData } from './lib/useData'
 import { useScene } from './lib/useScene'
+import { useTheme } from './lib/useTheme'
+import { showToast } from './lib/toast'
 import { readConnection } from './lib/connection'
 
 /** 前端外壳：页面切换 + 全部内页（总览 / 冒险 / 职业 / 日志 / 通知 / 设置 / 实时画面）。
@@ -68,6 +70,8 @@ export default function App() {
 function DashboardApp({ onLoginRequired }: { onLoginRequired: () => void }) {
   const { data, error, reload } = useData(6000)
   useConnectionState()
+  /** 主题三态（跟随系统 / 浅色 / 深色）：背景图与圆钮共用这一份解析结果 */
+  const theme = useTheme()
   const loginRequested = useRef(false)
   const [busy, setBusy] = useState('')
   const [guideMode, setGuideMode] = useState<'auto' | 'open' | 'closed'>('auto')
@@ -242,8 +246,6 @@ function DashboardApp({ onLoginRequired }: { onLoginRequired: () => void }) {
     }
   }, [page, grp, sub])
 
-  const [orderMsg, setOrderMsg] = useState('')
-
   // ---- iOS 式转场：前后两个**视图**同时在场（旧视图左让 / 新视图右入，返回时反过来）----
   // leaving = 正在退场的视图及其滚动位置，动画结束就卸载；dir 决定方向。
   // **视图 = 页面 + 二级**：设置一级↔二级、日志↔子页也走同一套滑动，不再只有页面级才有动画
@@ -330,7 +332,7 @@ function DashboardApp({ onLoginRequired }: { onLoginRequired: () => void }) {
     ? data.queue.pending_key || ''
     : keyOfTaskName(data?.queue.current)
   const etaKind = data?.work_eta?.kind ?? ''
-  const scene = useScene(curKey, etaKind)
+  const scene = useScene(curKey, etaKind, theme.dark)
 
   // 切页/换背景时同步两件「旧版有、迁移时漏掉」的东西：
   //
@@ -342,7 +344,8 @@ function DashboardApp({ onLoginRequired }: { onLoginRequired: () => void }) {
   useLayoutEffect(() => {
     const root = document.documentElement
     root.setAttribute('data-page', guideOpen ? 'onboarding' : page)
-    const dark = !!window.matchMedia?.('(prefers-color-scheme: dark)').matches
+    // 用主题解析结果而不是系统偏好：手动切深色时状态栏也要跟着暗
+    const dark = theme.dark
     let want = '#FFFFFF' // 内页顶栏是白的
     if (guideOpen) {
       want = dark ? '#27231D' : '#FCF7ED'
@@ -365,12 +368,12 @@ function DashboardApp({ onLoginRequired }: { onLoginRequired: () => void }) {
       want = '#FFFAF1'
     }
     document.querySelectorAll('meta[name="theme-color"]').forEach((m) => {
-      // 两组 meta 各带一个 media 查询，只改属于当前主题的那条 ——
-      // 两条都改的话，切系统主题时会把另一主题的值也覆盖成当前主题的色（串色）
-      const isDark = (m.getAttribute('media') || '').includes('dark')
-      if (isDark === dark) m.setAttribute('content', want)
+      // 两条 meta 都写成同一个值：iOS 18- 按**系统**主题挑 media 匹配的那条，
+      // 而手动选择可能与系统不一致 —— 两条同值才不会出现状态栏串色。
+      // （媒体查询本身没法被 JS 改写，所以只能这样对齐。）
+      m.setAttribute('content', want)
     })
-  }, [page, scene.scene, scene.dark, guideOpen])
+  }, [page, scene.scene, scene.dark, theme.dark, guideOpen])
 
   /**
    * 调度器启停。
@@ -378,18 +381,26 @@ function DashboardApp({ onLoginRequired }: { onLoginRequired: () => void }) {
    * 历史坑：这里原先只有 try/finally —— 请求失败时 finally 照常跑，3 秒后按钮
    * 从「启动中」变回「启动」，界面没有任何错误文本（而 api.ts 层的裸 fetch 连
    * r.ok 都不判，catch 根本不会触发）。用户看到的是"点了没反应，也无从排查"。
-   * 现在：错误落 orderMsg；**失败信息不自动消失**（成功才 1.8 秒后清），
+   * 现在：错误走底部 toast；**失败信息不自动消失**（成功才 1.8 秒后清），
    * 保证用户来得及读。见 docs/review/01-p0-交互急救.md 缺陷 2。
    */
   const runRunnerAction = async (kind: 'start' | 'stop') => {
     setBusy(kind)
     try {
       await (kind === 'start' ? runnerStart() : runnerStop())
-      setOrderMsg(kind === 'start' ? '调度器启动中…' : '调度器停止中…')
-      window.setTimeout(() => setOrderMsg(''), 1800)
+      showToast(kind === 'start' ? '调度器启动中…' : '调度器停止中…', {
+        placement: 'bottom',
+        icon: 'paw',
+        duration: 1800,
+      })
     } catch (e) {
-      setOrderMsg(`${kind === 'start' ? '启动' : '停止'}失败：${String(e)}`)
-      // 不设自动清除 —— 失败信息必须留在屏幕上
+      // duration: 0 —— 失败信息必须留在屏幕上，直到被下一条覆盖
+      showToast(`${kind === 'start' ? '启动' : '停止'}失败：${String(e)}`, {
+        placement: 'bottom',
+        tone: 'error',
+        icon: 'error',
+        duration: 0,
+      })
     } finally {
       window.setTimeout(() => {
         setBusy('')
@@ -412,11 +423,28 @@ function DashboardApp({ onLoginRequired }: { onLoginRequired: () => void }) {
         task_order: full.join('>'),
         main_order: mains.join('>'),
       })
-      setOrderMsg(r.ok ? '任务顺序已保存 · 下一轮调度生效' : `保存失败：${r.rejected.join('、')}`)
+      if (r.ok) {
+        showToast('任务顺序已保存 · 下一轮调度生效', {
+          placement: 'bottom',
+          icon: 'success',
+          duration: 2200,
+        })
+      } else {
+        showToast(`保存失败：${r.rejected.join('、')}`, {
+          placement: 'bottom',
+          tone: 'error',
+          icon: 'error',
+          duration: 0,
+        })
+      }
     } catch (e) {
-      setOrderMsg(`保存失败：${String(e)}`)
+      showToast(`保存失败：${String(e)}`, {
+        placement: 'bottom',
+        tone: 'error',
+        icon: 'error',
+        duration: 0,
+      })
     } finally {
-      window.setTimeout(() => setOrderMsg(''), 2200)
       reload()
     }
   }, [reload])
@@ -432,14 +460,15 @@ function DashboardApp({ onLoginRequired }: { onLoginRequired: () => void }) {
     async (updates: Record<string, unknown>) => {
       try {
         const r = await saveSettings(updates)
-        if (!r.ok) {
-          setOrderMsg(`保存失败：${r.rejected.join('、') || '后端拒绝'}`)
-          throw new Error(r.rejected.join('、') || '后端拒绝')
-        }
-        setOrderMsg('已保存')
-        window.setTimeout(() => setOrderMsg(''), 1800)
+        if (!r.ok) throw new Error(r.rejected.join('、') || '后端拒绝')
+        showToast('已保存', { placement: 'bottom', icon: 'success', duration: 1800 })
       } catch (e) {
-        setOrderMsg(`保存失败：${String(e)}`)
+        showToast(`保存失败：${String(e)}`, {
+          placement: 'bottom',
+          tone: 'error',
+          icon: 'error',
+          duration: 0,
+        })
         throw e
       } finally {
         reload()
@@ -534,6 +563,7 @@ function DashboardApp({ onLoginRequired }: { onLoginRequired: () => void }) {
           data={d}
           busy={busy}
           scene={scene}
+          theme={theme}
           onNav={go}
           onStart={() => void start()}
           onStop={() => void stop()}
@@ -632,11 +662,6 @@ function DashboardApp({ onLoginRequired }: { onLoginRequired: () => void }) {
           {renderView({ page, grp, sub }, data)}
         </div>
       </main>
-
-      {/* 拖拽保存结果的轻提示（复用 #torderToast 的样式，与 旧版 一致） */}
-      <div id="torderToast" className={orderMsg ? 'on' : ''}>
-        {orderMsg}
-      </div>
     </div>
   )
 }

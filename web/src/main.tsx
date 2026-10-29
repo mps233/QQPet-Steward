@@ -2,6 +2,7 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import { ToastHost } from './components/ToastHost'
 import { installStageUnit } from './lib/stage'
 // 旧界面那 1499 行 CSS 原样搬过来（class 名保持不变 → 样式直接生效，一行没改）
 import './styles/app.css'
@@ -22,6 +23,8 @@ import './styles/logs.css'
 // 冒险记录（游戏风格「冒险手账」，独立命名空间 .adv-*）
 import './styles/adv.css'
 import './styles/onboarding.css'
+// 全局轻提示（ToastHost）：暖可可气泡，独立命名空间 qp-toast-*
+import './styles/toast.css'
 
 installStageUnit()
 
@@ -31,6 +34,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         放在 App 外层，保证连外壳出错时也能给出"托管仍在运行 + 重新加载"。 */}
     <ErrorBoundary>
       <App />
+      {/* 全局唯一的气泡宿主：放在 App 外侧，页面切换/引导页/连接页都不会把它卸载 */}
+      <ToastHost />
     </ErrorBoundary>
   </React.StrictMode>,
 )

@@ -268,8 +268,9 @@ V2 把所有 `.flt` 组件改成 `position:static` 参与文档流。这**不只
 { top:0; bottom:0; display:flex; align-items:center }   /* 或 line-height */
 ```
 
-已改：`.navhead .navtitle`、`.ct-title`、`.ct-toast`、`#sceneToast`、
-`.shotpage .livetoast`、`.drawer`（V1/V2 两份）。**新增居中元素时别再用 translate 那套。**
+已改：`.navhead .navtitle`、`.ct-title`、`.qp-toast`（原 `#sceneToast` / `#themeToast` /
+`#torderToast` / `.ct-toast` / `.livetoast` 已统一到这里）、`.drawer`（V1/V2 两份）。
+**新增居中元素时别再用 translate 那套。**
 
 **为什么 headless 验不出来**：Chromium 在桌面上默认就按 DPR 栅格化，不会出现这条
 （写了个四行对照页量过一个字节都不差）。**这条只能在真机上认。**

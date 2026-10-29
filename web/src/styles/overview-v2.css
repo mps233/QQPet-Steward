@@ -329,6 +329,8 @@
    图源 static/qp-icons/official/off_r2_career.png（80×80，从游戏截图抠出）。 */
 .v2-home .v2-rail.right .rbtn:nth-child(2) img{ width:60%; height:60% }
 .v2-home .v2-rail.right .rbtn:nth-child(3) img{ width:52.5%; height:52.5% }  /* 画面：手机（竖长条） */
+/* 第三颗现在是「明暗切换」：正方形构图，按可见面积给 58%（与 app.css 同一份理由）。 */
+.v2-home .v2-rail.right .rbtn.theme-rbtn img{ width:58%; height:58% }
 
 /* ---------- 窄屏 ---------- */
 @media(max-width:360px){

@@ -736,33 +736,6 @@
   cursor: pointer;
 }
 
-/* ---------- toast ---------- */
-.ct-toast {
-  position: fixed;
-  /* **不用 transform 做居中**（同 .ct-title / .navtitle）：iOS PWA 上带 transform
-     的元素会被提升成合成层，文字按低分辨率栅格化，看起来糊。这里用
-     left:0/right:0 + margin:auto 水平居中，垂直保留 top + 自身半高的近似值
-     （toast 高度 = 13px 字 + 上下 9px padding ≈ 35，取 17.5）。 */
-  left: 0;
-  right: 0;
-  top: calc(51.1% - 17.5px);
-  margin-left: auto;
-  margin-right: auto;
-  width: max-content;
-  z-index: 70;
-  /* 实测 214.7×36.7dp；宽度别卡太死否则「该职业还未现世，再观望一下」会换行 */
-  max-width: calc(100vw - 40px);
-  padding: 9px 18px;
-  white-space: nowrap;
-  border-radius: 18px;
-  background: rgb(46, 35, 32);
-  color: #fff;
-  font-size: 13px;
-  text-align: center;
-  animation: ct-fade 0.15s ease-out;
-  pointer-events: none;
-}
-
 /* 「职业数据」折叠区已按要求删除（2026-10-19，准备重做）。
    原样式（.ct-data / .ct-data-head）与备份一起留在
    `backup/career-data-section-<日期>/career-tree.css`，重做时可参考。 */

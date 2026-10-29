@@ -2,7 +2,10 @@ import { useRef, useState } from 'react'
 import type { Data } from '../api'
 import { assetUrl } from '../lib/connection'
 import { icon } from '../lib/icons'
+import { THEME_ICON, THEME_LABEL, nextThemePref } from '../lib/theme'
+import { showToast } from '../lib/toast'
 import type { useScene } from '../lib/useScene'
+import type { ThemeState } from '../lib/useTheme'
 import { BgSheet } from './BgSheet'
 import { Capsules } from './Capsules'
 import { useConnectionState } from './ConnectionGate'
@@ -37,6 +40,7 @@ export function OverviewV2({
   data,
   busy,
   scene,
+  theme,
   onNav,
   onStart,
   onStop,
@@ -46,6 +50,7 @@ export function OverviewV2({
   data: Data
   busy: string
   scene: ReturnType<typeof useScene>
+  theme: ThemeState
   onNav: (p: PageKey) => void
   onStart: () => void
   onStop: () => void
@@ -78,6 +83,14 @@ export function OverviewV2({
     },
     onPointerLeave: () => window.clearTimeout(holdTimer.current),
     onPointerCancel: () => window.clearTimeout(holdTimer.current),
+  }
+
+  /** 主题圆钮：三态循环 + 一句轻提示（图标与房间背景换图是主要反馈）。 */
+  const toggleTheme = () => {
+    const next = theme.cycle()
+    showToast(`主题：${THEME_LABEL[next]}`, {
+      icon: next === 'light' ? 'theme-light' : next === 'dark' ? 'theme-dark' : 'theme-system',
+    })
   }
 
   return (
@@ -127,7 +140,7 @@ export function OverviewV2({
 
       {/* 右列：3 颗圆钮 + 功能栏（V1 里功能栏就在第 3 颗圆钮下方） */}
       <div className="v2-rail right">
-        <nav className="v2-rail-right-btns" aria-label="快捷入口">
+        <nav className="v2-rail-right-btns" aria-label="快捷操作">
           <button className="rbtn r" title="冒险" onClick={() => onNav('adv')}>
             <img src={assetUrl('/qp-icons/official/cap_compass.png')} alt="" />
           </button>
@@ -138,8 +151,15 @@ export function OverviewV2({
                 以后换这张图就把 v 往上加。 */}
             <img src={assetUrl('/qp-icons/official/off_r2_career.png?v=4')} alt="" />
           </button>
-          <button className="rbtn r" title="实时画面" onClick={() => onNav('shot')}>
-            <img src={icon('/qp-icons/ctrl/phone.svg')} alt="" />
+          {/* 第三颗：明暗切换（跟随系统 → 浅色 → 深色）。实时画面仍可从功能栏的
+              「画面」按钮进入，所以这里不再重复放手机图标。 */}
+          <button
+            className="rbtn r theme-rbtn"
+            title={`主题：${THEME_LABEL[theme.pref]}（点击切换为${THEME_LABEL[nextThemePref(theme.pref)]}）`}
+            aria-label={`主题：${THEME_LABEL[theme.pref]}，点击切换`}
+            onClick={toggleTheme}
+          >
+            <img src={icon(THEME_ICON[theme.pref])} alt="" />
           </button>
         </nav>
         <div className="v2-funcseat">
@@ -156,11 +176,6 @@ export function OverviewV2({
       {/* 底栏（弧形面板 + 居中状态卡） */}
       <div className="v2-bottom">
         <Deck data={data} />
-      </div>
-
-      {/* 切换房间背景的轻提示 */}
-      <div id="sceneToast" className={scene.toast ? 'on' : ''}>
-        {scene.toast}
       </div>
 
       <BgSheet

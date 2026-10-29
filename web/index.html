@@ -3,6 +3,21 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <!-- 首帧主题：与 src/lib/theme.ts 的键名/解析规则保持一致。
+         手动选了深色而系统是浅色时，若等 React 起来再写 data-theme，会先闪一帧浅色
+         房间背景。这段内联脚本在样式表生效前就把属性写好，避免闪烁。 -->
+    <script>
+      (function () {
+        try {
+          var pref = localStorage.getItem('qpet_theme')
+          var sys = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+          document.documentElement.setAttribute(
+            'data-theme',
+            pref === 'dark' || (pref !== 'light' && sys) ? 'dark' : 'light'
+          )
+        } catch (e) {}
+      })()
+    </script>
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
     <!-- theme-color：iOS 独立 Web App（添加到主屏）下状态栏那条带的颜色。

@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { assetUrl } from '../lib/connection'
+import { showToast } from '../lib/toast'
 import {
   LINES,
   TIERS,
@@ -173,23 +174,12 @@ interface Popup {
 
 export function CareerTree({ attrs, treeLines, treeTiers, equipped, gates }: TreeProps) {
   const [popup, setPopup] = useState<Popup | null>(null)
-  const [toast, setToast] = useState('')
   const pageRef = useCareerMetrics()
-  const toastTimer = useRef<number | undefined>(undefined)
 
   const states = useMemo(
     () => resolveStates(attrs, treeLines, equipped, treeTiers, gates),
     [attrs, treeLines, equipped, treeTiers, gates],
   )
-
-  const showToast = useCallback((msg: string) => {
-    setToast(msg)
-    window.clearTimeout(toastTimer.current)
-    // 官方 toast 停留约 2 秒
-    toastTimer.current = window.setTimeout(() => setToast(''), 2000)
-  }, [])
-
-  useEffect(() => () => window.clearTimeout(toastTimer.current), [])
 
   const openCell = (li: number, ti: number) => {
     const st = states[li]?.[ti] ?? 'empty'
@@ -199,7 +189,11 @@ export function CareerTree({ attrs, treeLines, treeTiers, equipped, gates }: Tre
     }
     if (st === 'placeholder') {
       // 占位格 = 大师级未投放
-      showToast('该职业还未现世，再观望一下')
+      showToast('该职业还未现世，再观望一下', {
+        placement: 'career',
+        icon: 'paw',
+        duration: 2000,
+      })
       return
     }
     setPopup({ line: li, tier: ti })
@@ -331,12 +325,15 @@ export function CareerTree({ attrs, treeLines, treeTiers, equipped, gates }: Tre
           onClose={() => setPopup(null)}
           onEquip={() => {
             setPopup(null)
-            showToast('已对外展示该职业')
+            showToast('已对外展示该职业', {
+              placement: 'career',
+              icon: 'success',
+              duration: 2000,
+            })
           }}
         />
       ) : null}
 
-      {toast ? <div className="ct-toast">{toast}</div> : null}
     </div>
   )
 }

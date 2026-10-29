@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <!-- 右列主题圆钮 · 浅色（太阳）。
+       画风对齐同排的 ctrl/phone.svg：实心卡通 + 深橙描边 + 暖橙渐变，
+       在右列纯黑蒙版上保持同样的"实心插画"体量。
+       尺寸：可见包围盒约 80% × 80%（射线端点 + 描边），CSS 盒子给 58%
+       （太阳是正方形构图，与手机那种竖长条不同，按可见面积反解）。
+       改图重画后要重新量包围盒，别直接改百分比。 -->
+  <defs>
+    <linearGradient id="sun-g" x1="0.25" y1="0" x2="0.75" y2="1">
+      <stop offset="0" stop-color="#FFE3A6"/>
+      <stop offset="0.5" stop-color="#FFB23E"/>
+      <stop offset="1" stop-color="#E08000"/>
+    </linearGradient>
+  </defs>
+  <!-- 八条射线：从 r=13.2 到 r=17.8，圆头端点 -->
+  <path d="M37.2 24h4.6M33.3 33.3l3.3 3.3M24 37.2v4.6M14.7 33.3l-3.3 3.3M10.8 24H6.2M14.7 14.7l-3.3-3.3M24 10.8V6.2M33.3 14.7l3.3-3.3"
+        fill="none" stroke="#C9660A" stroke-width="2.8" stroke-linecap="round"/>
+  <!-- 日面 -->
+  <circle cx="24" cy="24" r="9.2" fill="url(#sun-g)" stroke="#C9660A" stroke-width="2.4"/>
+  <!-- 左上高光：一点玻璃质感，避免整块死平 -->
+  <path d="M19.4 19.9q2.2-2.5 5-3.1" fill="none" stroke="#FFF8EA"
+        stroke-width="2.1" stroke-linecap="round" opacity=".5"/>
+</svg>

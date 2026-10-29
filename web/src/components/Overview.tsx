@@ -2,7 +2,10 @@ import { useRef, useState } from 'react'
 import type { Data } from '../api'
 import { assetUrl } from '../lib/connection'
 import { icon } from '../lib/icons'
+import { THEME_ICON, THEME_LABEL, nextThemePref } from '../lib/theme'
+import { showToast } from '../lib/toast'
 import type { useScene } from '../lib/useScene'
+import type { ThemeState } from '../lib/useTheme'
 import { BgSheet } from './BgSheet'
 import { Capsules } from './Capsules'
 import { Deck } from './Deck'
@@ -20,6 +23,7 @@ export function Overview({
   data,
   busy,
   scene,
+  theme,
   onNav,
   onStart,
   onStop,
@@ -29,6 +33,7 @@ export function Overview({
   data: Data
   busy: string
   scene: ReturnType<typeof useScene>
+  theme: ThemeState
   onNav: (p: PageKey) => void
   onStart: () => void
   onStop: () => void
@@ -69,6 +74,16 @@ export function Overview({
     onPointerCancel: () => window.clearTimeout(holdTimer.current),
   }
 
+  /** 主题圆钮：三态循环 + 一句轻提示。
+   *  主要反馈是图标本身（半明半暗 / 太阳 / 月亮）和房间背景换夜间图；
+   *  提示走全局 ToastHost，图标跟着新模式走。 */
+  const toggleTheme = () => {
+    const next = theme.cycle()
+    showToast(`主题：${THEME_LABEL[next]}`, {
+      icon: next === 'light' ? 'theme-light' : next === 'dark' ? 'theme-dark' : 'theme-system',
+    })
+  }
+
   return (
     <section className="home" data-page="main">
       {/* 左列圆钮（官方 4 个：返回/设置/消息/日记 x=20 y=36.3/94.3/154.3/214.3） */}
@@ -96,10 +111,16 @@ export function Overview({
           {/* `?v=` 见 OverviewV2 同名说明：文件名复用必须挂版本号才拿得到新图。 */}
           <img src={assetUrl('/qp-icons/official/off_r2_career.png?v=4')} alt="" />
         </button>
-        {/* `/qp-icons/*` 走 max-age=3600，不换 URL 拿旧图 1 小时 —— 版本号统一由
-            lib/icons.ts 的 ICON_VER 提供（原先这里是散落的 `?v=2`）。 */}
-        <button className="rbtn r" data-tab="shot" title="实时画面" onClick={() => onNav('shot')}>
-          <img src={icon('/qp-icons/ctrl/phone.svg')} alt="" />
+        {/* 第三颗：明暗切换（三态：跟随系统 → 浅色 → 深色）。实时画面仍可从
+            功能栏的「画面」按钮进入，所以这里不再重复放手机图标。
+            `/qp-icons/*` 走 max-age=3600，版本号统一由 lib/icons.ts 的 ICON_VER 提供。 */}
+        <button
+          className="rbtn r theme-rbtn"
+          title={`主题：${THEME_LABEL[theme.pref]}（点击切换为${THEME_LABEL[nextThemePref(theme.pref)]}）`}
+          aria-label={`主题：${THEME_LABEL[theme.pref]}，点击切换`}
+          onClick={toggleTheme}
+        >
+          <img src={icon(THEME_ICON[theme.pref])} alt="" />
         </button>
       </nav>
 
@@ -119,11 +140,6 @@ export function Overview({
         onShot={() => onNav('shot')}
       />
       <Deck data={data} />
-
-      {/* 切换房间背景的轻提示 */}
-      <div id="sceneToast" className={scene.toast ? 'on' : ''}>
-        {scene.toast}
-      </div>
 
       <BgSheet
         open={bgOpen}

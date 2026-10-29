@@ -1,0 +1,118 @@
+/* ==========================================================================
+   全局轻提示（ToastHost）· 奶油玻璃（方案 A）
+   --------------------------------------------------------------------------
+   原先四处气泡各写一套：总览的 #sceneToast/#themeToast 是 rgba(0,0,0,.72)
+   黑胶囊，App 的 #torderToast 是另一个黑胶囊，职业树的 .ct-toast 是深棕块。
+   现在统一成这一份「奶油玻璃」材质：
+     · 底色是暖白玻璃（与任务卡/资料卡/onboarding 白卡同一族），
+       不再是像从别的 App 借来的 Material 黑胶囊。
+     · 暖棕字 #5A3410 + 暖金小图标片（呼应主按钮 #FFD66F→#FFC24A 与 --accent），
+       既保留对比度，又和房间的奶油色温一致。
+     · 细暖棕边 + 暖棕阴影 + backdrop blur；在浅色面板/底栏上靠边框与阴影分离，
+       在夜间房间/职业树深色页上靠浅色底反出来。
+   位置仍是三档（center/career/bottom），由 ToastHost 按 store 的 placement 渲染。
+
+   ⚠ 居中继续用 left:0/right:0 + margin:auto，**不用 transform**：
+     iOS PWA 上带 transform 的元素会被提升成合成层，13px 的字会糊
+     （与 #sceneToast / .ct-title 同一条旧坑，见 FRONTEND_PITFALLS 第三节）。
+   ========================================================================== */
+
+.qp-toast {
+  /* 颜色都收在这里：以后想再调冷暖/深浅只改这一组，不改下面的结构 */
+  --toast-bg: linear-gradient(180deg, rgba(255, 255, 255, .62), rgba(255, 255, 255, 0) 58%),
+              rgba(255, 251, 244, .96);
+  --toast-ink: #5A3410;
+  /* 描边比纯卡片略重：背景选择面板本身就是奶油底，18% 的细边会糊成一片；
+     .32 的暖橙边既能把气泡从奶油面上"拎"出来，又不至于像按钮。 */
+  --toast-line: rgba(201, 102, 10, .32);
+  --toast-shadow: 0 10px 26px rgba(90, 55, 20, .24),
+                  inset 0 1px 0 rgba(255, 255, 255, .75);
+  --toast-ico-bg: linear-gradient(180deg, #FFE3A6, #FFC24A);
+  --toast-ico-line: rgba(201, 102, 10, .32);
+  --toast-ico-ink: #7A3C00;
+
+  position: fixed;
+  left: 0;
+  right: 0;
+  margin-left: auto;
+  margin-right: auto;
+  width: max-content;
+  max-width: min(86vw, 560px);
+  z-index: 100;
+
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+  padding: 5px 14px 5px 6px;
+  border: 1px solid var(--toast-line);
+  border-radius: 999px;
+  background: var(--toast-bg);
+  color: var(--toast-ink);
+  box-shadow: var(--toast-shadow);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+
+  font: 600 12.5px/1.5 "Avenir Next", "PingFang SC", sans-serif;
+  letter-spacing: .01em;
+  text-align: center;
+  pointer-events: none;
+  animation: qp-toast-in .16s ease-out;
+}
+
+/* 三档位置：沿用旧气泡各自的位置，不动现有观感 */
+.qp-toast--center { top: calc(62% - 15px); }
+.qp-toast--career { top: calc(51.1% - 17.5px); }
+.qp-toast--bottom {
+  top: auto;
+  bottom: calc(var(--u) * 50 + env(safe-area-inset-bottom, 0px));
+  animation-name: qp-toast-rise;
+}
+
+/* 错误态：同一套奶油玻璃结构，压向暖红；与 .ob-error / 设置页错误色同一族 */
+.qp-toast--error {
+  --toast-bg: linear-gradient(180deg, rgba(255, 255, 255, .45), rgba(255, 255, 255, 0) 58%),
+              rgba(255, 244, 238, .97);
+  --toast-ink: #8E2F24;
+  --toast-line: rgba(165, 54, 44, .34);
+  --toast-shadow: 0 10px 26px rgba(120, 40, 25, .22),
+                  inset 0 1px 0 rgba(255, 255, 255, .70);
+  --toast-ico-bg: #F9DCD2;
+  --toast-ico-line: rgba(165, 54, 44, .30);
+  --toast-ico-ink: #A5362C;
+}
+
+.qp-toast__ico {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--toast-ico-bg);
+  border: 1px solid var(--toast-ico-line);
+  color: var(--toast-ico-ink);
+}
+.qp-toast__ico svg { display: block; width: 13px; height: 13px; }
+
+.qp-toast__txt {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+/* 入场：淡入；底部那条额外做一点点上移（用 bottom，不用 transform） */
+@keyframes qp-toast-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes qp-toast-rise {
+  from {
+    opacity: 0;
+    bottom: calc(var(--u) * 42 + env(safe-area-inset-bottom, 0px));
+  }
+  to {
+    opacity: 1;
+    bottom: calc(var(--u) * 50 + env(safe-area-inset-bottom, 0px));
+  }
+}

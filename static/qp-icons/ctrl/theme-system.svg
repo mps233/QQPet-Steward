@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <!-- 右列主题圆钮 · 跟随系统（半明半暗的圆）。
+       左半暖橙实心 = 明、右半米白 = 暗，是"自动/跟随系统"通用的对比度图标；
+       不用太阳+月亮两枚小图并排 —— 22dp 下会糊成一团。
+       尺寸：外圆 r17 + 描边，可见包围盒约 76%，与太阳/月亮对齐（CSS 盒子同为 58%）。 -->
+  <defs>
+    <!-- 比太阳/月亮那套渐变更饱和：这个圆盘直径大（r17），如果沿用浅色头，
+         左半上缘会发白、与右半米白糊成一片，"明暗"分界就看不出来了。 -->
+    <linearGradient id="sys-g" x1="0.2" y1="0" x2="0.8" y2="1">
+      <stop offset="0" stop-color="#FFC85C"/>
+      <stop offset="0.55" stop-color="#FF990F"/>
+      <stop offset="1" stop-color="#E07B00"/>
+    </linearGradient>
+  </defs>
+  <!-- 底：米白整圆（右半就是"暗"的那一半） -->
+  <circle cx="24" cy="24" r="17" fill="#FFF8EA" stroke="#C9660A" stroke-width="2.4"/>
+  <!-- 左半：暖橙实心 -->
+  <path d="M24 7 A17 17 0 0 0 24 41 Z" fill="url(#sys-g)"/>
+  <!-- 明暗分界线 -->
+  <path d="M24 8.2V39.8" stroke="#C9660A" stroke-width="1.4" opacity=".5"/>
+  <!-- 左半高光 -->
+  <path d="M15.6 15.9q1.6-3 4.4-4.6" fill="none" stroke="#FFF8EA"
+        stroke-width="2.1" stroke-linecap="round" opacity=".45"/>
+</svg>

@@ -248,21 +248,21 @@ main section.onboarding-page[data-page="onboarding"] {
   .ob-primary { font-size: 13px !important; }
 }
 
-@media (prefers-color-scheme: dark) {
-  html[data-page][data-page="onboarding"] { background: #27231d; }
-  main section.onboarding-page[data-page="onboarding"] {
-    --ob-paper: #27231d;
-    --ob-card: #353026;
-    --ob-ink: #f2e3c9;
-    --ob-muted: #bbaa8e;
-    --ob-line: #514534;
-    --ob-soft: #3b3226;
-    background: radial-gradient(ellipse at 95% 0, #9c681a20, transparent 38%), var(--ob-paper);
-  }
-  .ob-steps > .done > span { border-color: #58663d; background: #3c462d; color: #c4d9a0; }
-  .ob-device > small.ob-ok { color: #b5cc84; }
-  .ob-medal, .ob-ready-art { color: #dec086; }
-  .ob-warning { color: #e8b875; }
-  .ob-notice { background: #37462a; color: #cadcab; }
-  .ob-error { border-color: #754733; background: #4b2e23; color: #f0bd9e; }
+/* 深色由 <html data-theme="dark"> 驱动（lib/useTheme.ts 写入；跟随系统时同样解析后写入），
+   不再用 @media —— 主题有三态，手动选择与系统切换必须走同一条路。 */
+html[data-theme="dark"][data-page][data-page="onboarding"] { background: #27231d; }
+html[data-theme="dark"] main section.onboarding-page[data-page="onboarding"] {
+  --ob-paper: #27231d;
+  --ob-card: #353026;
+  --ob-ink: #f2e3c9;
+  --ob-muted: #bbaa8e;
+  --ob-line: #514534;
+  --ob-soft: #3b3226;
+  background: radial-gradient(ellipse at 95% 0, #9c681a20, transparent 38%), var(--ob-paper);
 }
+html[data-theme="dark"] .ob-steps > .done > span { border-color: #58663d; background: #3c462d; color: #c4d9a0; }
+html[data-theme="dark"] .ob-device > small.ob-ok { color: #b5cc84; }
+html[data-theme="dark"] .ob-medal, html[data-theme="dark"] .ob-ready-art { color: #dec086; }
+html[data-theme="dark"] .ob-warning { color: #e8b875; }
+html[data-theme="dark"] .ob-notice { background: #37462a; color: #cadcab; }
+html[data-theme="dark"] .ob-error { border-color: #754733; background: #4b2e23; color: #f0bd9e; }

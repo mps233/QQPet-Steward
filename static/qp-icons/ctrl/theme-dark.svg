@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <!-- 右列主题圆钮 · 深色（月亮）。
+       与 ctrl/theme-light.svg 同一套暖橙卡通描边；月牙开口朝右，缺口里放一颗星，
+       小尺寸下也能一眼区分太阳/月亮。
+       尺寸：月牙本体可见包围盒约 76%，与太阳的 80% 基本等重（CSS 两者的盒子同为 58%）。 -->
+  <defs>
+    <linearGradient id="moon-g" x1="0.2" y1="0" x2="0.85" y2="1">
+      <stop offset="0" stop-color="#FFE3A6"/>
+      <stop offset="0.55" stop-color="#FFB23E"/>
+      <stop offset="1" stop-color="#E08000"/>
+    </linearGradient>
+  </defs>
+  <!-- 月牙 = 外圆 r17 减去右侧内圆 r13.5（用两段圆弧拼出，避免 mask 把描边也切掉） -->
+  <path d="M33.34 10.5 A17 17 0 1 0 33.34 37.5 A13.5 13.5 0 0 1 33.34 10.5 Z"
+        fill="url(#moon-g)" stroke="#C9660A" stroke-width="2.4" stroke-linejoin="round"/>
+  <!-- 星星：四角星 + 一个小圆点 -->
+  <path d="M37.6 7.4l1 2.3 2.3 1-2.3 1-1 2.3-1-2.3-2.3-1 2.3-1Z"
+        fill="#FFC85C" stroke="#C9660A" stroke-width="1.1" stroke-linejoin="round"/>
+  <circle cx="40.4" cy="17.6" r="1.4" fill="#FFC85C" stroke="#C9660A" stroke-width=".9"/>
+  <!-- 月面高光 -->
+  <path d="M18.2 18.4q1.8-2.8 4.8-3.8" fill="none" stroke="#FFF8EA"
+        stroke-width="2.1" stroke-linecap="round" opacity=".45"/>
+</svg>

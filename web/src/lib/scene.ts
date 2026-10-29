@@ -94,8 +94,17 @@ export const SCENE_OF: Record<string, string> = {
   gift_bag: 'main',
 }
 
-export const isDarkTheme = (): boolean =>
-  !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches)
+/** 当前实际生效的深浅色：以 `<html data-theme>` 为准（lib/useTheme.ts 写入，
+ *  手动切换与跟随系统都走这个属性）；属性还没写时（首帧脚本被禁用等）退回系统偏好。
+ *  这样 sceneBgFile 等函数的默认参数不会绕过主题按钮，出现"手动切深色但背景不换"。 */
+export const isDarkTheme = (): boolean => {
+  const attr = typeof document !== 'undefined'
+    ? document.documentElement.getAttribute('data-theme')
+    : null
+  if (attr === 'dark') return true
+  if (attr === 'light') return false
+  return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches)
+}
 
 /** 自动模式下由"正在做的事"推导场景 */
 export function computeScene(curKey: string, etaKind: string): string {
