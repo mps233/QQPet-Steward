@@ -2,7 +2,7 @@
   "name": "qqpet-dashboard-macos-shell",
   "private": true,
   "type": "module",
-  "version": "0.8.8",
+  "version": "0.8.9",
   "scripts": {
     "tauri": "tauri",
     "build": "scripts/build-macos.sh",
