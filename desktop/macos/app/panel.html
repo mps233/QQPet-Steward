@@ -52,6 +52,19 @@
         </div>
       </section>
 
+      <section id="update-card" class="summary-card update-card" data-state="idle">
+        <div class="summary-head">
+          <span id="update-title">版本更新</span>
+          <span id="update-state" class="next-task">未检查</span>
+        </div>
+        <p id="update-detail" class="detail">点击「检查更新」查看新版本。</p>
+        <div id="update-progress" class="update-track" hidden><i></i></div>
+        <div class="update-actions">
+          <button id="update-action" class="secondary" type="button" hidden>打开发布页</button>
+          <button id="update-check" class="secondary" type="button">检查更新</button>
+        </div>
+      </section>
+
       <section class="actions">
         <button id="toggle-runner" type="button" disabled>启动托管</button>
         <button id="pause-runner" class="secondary" type="button" disabled>暂停</button>

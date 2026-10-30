@@ -6,10 +6,15 @@ DESKTOP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 ROOT="$(cd "$DESKTOP_DIR/../.." && pwd -P)"
 PYTHON="${QQPET_BUILD_PYTHON:-$ROOT/.venv/bin/python}"
 APP_NAME="QQPet-Steward.app"
+SKIP_UPDATER=0
+if [ "${1:-}" = "--no-updater" ]; then
+  SKIP_UPDATER=1
+  shift
+fi
 APP="${1:-$DESKTOP_DIR/target/release/bundle/macos/$APP_NAME}"
 
 if [ "$#" -gt 1 ] || [ "${1:-}" = "--help" ]; then
-  echo "usage: $0 [/absolute/path/to/QQPet-Steward.app]" >&2
+  echo "usage: $0 [--no-updater] [/absolute/path/to/QQPet-Steward.app]" >&2
   if [ "${1:-}" = "--help" ]; then exit 0; fi
   exit 1
 fi
@@ -71,7 +76,11 @@ esac
 
 OUTPUT_DIR="$DESKTOP_DIR/target/releases/v$VERSION"
 BASE_NAME="QQPet-Steward_${VERSION}_macos_${ARCH}"
-ATTACHMENTS=("$BASE_NAME.dmg" "$BASE_NAME.zip" "SHA256SUMS.txt")
+ARTIFACTS=("$BASE_NAME.dmg" "$BASE_NAME.zip")
+if [ "$SKIP_UPDATER" -eq 0 ]; then
+  ARTIFACTS+=("$BASE_NAME.app.tar.gz" "$BASE_NAME.app.tar.gz.sig")
+fi
+ATTACHMENTS=("${ARTIFACTS[@]}" "SHA256SUMS.txt")
 for name in "${ATTACHMENTS[@]}"; do
   if [ -e "$OUTPUT_DIR/$name" ] || [ -L "$OUTPUT_DIR/$name" ]; then
     echo "附件已存在，拒绝覆盖：$OUTPUT_DIR/$name" >&2
@@ -113,9 +122,49 @@ codesign --verify --deep --strict "$UNZIP_STAGE/$APP_NAME"
   --destination "$UNZIP_STAGE/$APP_NAME/Contents/Resources/backend" \
   --check
 
+if [ "$SKIP_UPDATER" -eq 0 ]; then
+  TAURI_CLI="$DESKTOP_DIR/node_modules/.bin/tauri"
+  if [ ! -x "$TAURI_CLI" ]; then
+    echo "找不到 Tauri CLI：$TAURI_CLI；无法生成 updater 产物。" >&2
+    exit 1
+  fi
+  SIGN_KEY_PATH="${TAURI_SIGNING_PRIVATE_KEY_PATH:-$HOME/.tauri/qqpet-updater.key}"
+  if [ ! -f "$SIGN_KEY_PATH" ]; then
+    echo "找不到签名私钥：$SIGN_KEY_PATH。请设置 TAURI_SIGNING_PRIVATE_KEY_PATH，或先用 tauri signer generate 生成。" >&2
+    exit 1
+  fi
+  if [ -z "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" ] \
+      && [ -f "$HOME/.tauri/qqpet-updater.key.password" ]; then
+    TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$(cat "$HOME/.tauri/qqpet-updater.key.password")"
+    export TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+  fi
+
+  APP_TAR="$BASE_NAME.app.tar.gz"
+  COPYFILE_DISABLE=1 tar -czf "$WORK_DIR/$APP_TAR" -C "$(dirname "$APP")" "$APP_NAME"
+  ROOT_ENTRIES="$(tar -tzf "$WORK_DIR/$APP_TAR" | awk -F/ 'NF {print $1}' | sort -u)"
+  if [ "$ROOT_ENTRIES" != "$APP_NAME" ]; then
+    echo "updater 归档的根条目异常：$ROOT_ENTRIES" >&2
+    exit 1
+  fi
+  TAR_STAGE="$WORK_DIR/tarcheck"
+  mkdir "$TAR_STAGE"
+  tar -xzf "$WORK_DIR/$APP_TAR" -C "$TAR_STAGE"
+  codesign --verify --deep --strict "$TAR_STAGE/$APP_NAME"
+  "$PYTHON" "$DESKTOP_DIR/restore_runtime_symlinks.py" \
+    --source "$DESKTOP_DIR/target/runtime/QQPetRuntime" \
+    --destination "$TAR_STAGE/$APP_NAME/Contents/Resources/backend" \
+    --check
+  "$TAURI_CLI" signer sign --app-version "$VERSION" \
+    --private-key-path "$SIGN_KEY_PATH" "$WORK_DIR/$APP_TAR"
+  if [ ! -f "$WORK_DIR/$APP_TAR.sig" ]; then
+    echo "updater 签名没有生成 .sig 文件。" >&2
+    exit 1
+  fi
+fi
+
 (
   cd "$WORK_DIR"
-  shasum -a 256 "$BASE_NAME.dmg" "$BASE_NAME.zip" > SHA256SUMS.txt
+  shasum -a 256 "${ARTIFACTS[@]}" > SHA256SUMS.txt
 )
 
 # Hard links publish atomically without replacing another run's attachments.
@@ -125,7 +174,7 @@ for name in "${ATTACHMENTS[@]}"; do
     exit 1
   fi
 done
-printf '%s\n' \
-  "$OUTPUT_DIR/$BASE_NAME.dmg" \
-  "$OUTPUT_DIR/$BASE_NAME.zip" \
-  "$OUTPUT_DIR/SHA256SUMS.txt"
+for name in "${ARTIFACTS[@]}"; do
+  printf '%s\n' "$OUTPUT_DIR/$name"
+done
+printf '%s\n' "$OUTPUT_DIR/SHA256SUMS.txt"

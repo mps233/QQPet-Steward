@@ -162,17 +162,33 @@ def create_windows_icon() -> Path:
     return ICON_PATH
 
 
-def build_tauri() -> Path:
+def build_tauri(*, updater: bool = False) -> Path:
     nsis_directory = target_directory() / "release" / "bundle" / "nsis"
     expected = nsis_directory / f"QQPet-Steward_{build_portable.read_version()}_x64-setup.exe"
     expected.unlink(missing_ok=True)
-    run([
+    command = [
         shutil.which("node") or "node", str(TAURI_CLI), "build", "--ci",
-        "--config", str(CONFIG), "--bundles", "nsis", "--", "--locked",
-    ], cwd=DESKTOP_DIR)
+        "--config", str(CONFIG),
+    ]
+    if updater:
+        command.extend(["--config", '{"bundle":{"createUpdaterArtifacts":true}}'])
+    command.extend(["--bundles", "nsis", "--", "--locked"])
+    run(command, cwd=DESKTOP_DIR)
     if not expected.is_file():
         raise ValueError(f"Tauri did not produce the expected installer: {expected}")
     return expected
+
+
+def updater_artifacts(installer: Path) -> tuple[Path, Path]:
+    candidates = [
+        installer,
+        installer.with_name(installer.name.replace("-setup.exe", "-setup.nsis.zip")),
+    ]
+    for artifact in candidates:
+        signature = artifact.with_name(artifact.name + ".sig")
+        if artifact.is_file() and signature.is_file():
+            return artifact, signature
+    raise ValueError("Tauri did not produce the expected updater artifact and .sig")
 
 
 def checksum_file(path: Path) -> Path:
@@ -195,7 +211,9 @@ def prepare_native_directory() -> Path:
     return release
 
 
-def publish_outputs(installer: Path, release: Path, *, native_zip: bool) -> list[Path]:
+def publish_outputs(
+    installer: Path, release: Path, *, native_zip: bool, updater: bool = False,
+) -> list[Path]:
     with installer.open("rb") as stream:
         if stream.read(2) != b"MZ":
             raise ValueError("the generated NSIS installer is not a Windows executable")
@@ -204,6 +222,25 @@ def publish_outputs(installer: Path, release: Path, *, native_zip: bool) -> list
     destination = DIST_ROOT / f"{name}-setup.exe"
     shutil.copy2(installer, destination)
     outputs = [destination, checksum_file(destination)]
+    if updater:
+        artifact, signature = updater_artifacts(installer)
+        if artifact == installer:
+            signature_destination = destination.with_name(destination.name + ".sig")
+            shutil.copy2(signature, signature_destination)
+            outputs.extend((
+                signature_destination, checksum_file(signature_destination),
+            ))
+        else:
+            archive_destination = DIST_ROOT / f"{name}-setup.nsis.zip"
+            shutil.copy2(artifact, archive_destination)
+            signature_destination = archive_destination.with_name(
+                archive_destination.name + ".sig"
+            )
+            shutil.copy2(signature, signature_destination)
+            outputs.extend((
+                archive_destination, checksum_file(archive_destination),
+                signature_destination, checksum_file(signature_destination),
+            ))
     if native_zip:
         directory = DIST_ROOT / f"{name}-native"
         shutil.rmtree(directory, ignore_errors=True)
@@ -224,6 +261,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--skip-runtime-build", action="store_true", help="verify and reuse an existing Python build")
     parser.add_argument("--no-fetch", action="store_true", help="require existing Python runtime resources")
     parser.add_argument("--no-native-zip", action="store_true", help="produce only the NSIS installer download")
+    parser.add_argument("--updater", action="store_true", help="also produce the signed updater artifact")
     args = parser.parse_args(argv)
     try:
         problems = validate_inputs()
@@ -232,6 +270,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.check:
             print("Windows native build input validation passed.")
             return 0
+        if args.updater and not os.environ.get("TAURI_SIGNING_PRIVATE_KEY"):
+            raise ValueError("--updater requires TAURI_SIGNING_PRIVATE_KEY (and its password)")
         if os.name != "nt" or sysconfig.get_platform() != "win-amd64":
             raise ValueError("the native Windows release must be built with Windows x64 Python")
         directory = prepare_python(build=not args.skip_runtime_build, fetch=not args.no_fetch)
@@ -240,9 +280,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.prepare_only:
             print(f"native Windows resources ready: {RUNTIME_STAGE}")
             return 0
-        installer = build_tauri()
+        installer = build_tauri(updater=args.updater)
         release = prepare_native_directory()
-        for output in publish_outputs(installer, release, native_zip=not args.no_native_zip):
+        for output in publish_outputs(
+            installer, release, native_zip=not args.no_native_zip, updater=args.updater,
+        ):
             print(f"native Windows output: {output}")
         return 0
     except (OSError, ValueError, VerificationError, subprocess.SubprocessError) as exc:

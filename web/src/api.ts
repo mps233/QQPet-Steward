@@ -179,8 +179,8 @@ export const TASK_GROUP: Record<string, '循环' | '每日' | '主线'> = {
 }
 
 /** 任务名（中文）→ 任务键。后端 `queue.current` 存的是 TaskQueueRunner 写的
- *  `task.name`（中文，如「PK」「护理」「福袋」），而前端多处（自动换背景、任务行
- *  高亮）要的是任务键（`pk` / `care` / `gift_bag`）—— 直接拿中文名查键表永远命中不了。 */
+ *  `task.name`（中文，如「PK」「护理」「福袋」），而任务行高亮等地方要的是任务键
+ *  （`pk` / `care` / `gift_bag`）—— 直接拿中文名查键表永远命中不了。 */
 export const keyOfTaskName = (name: string | undefined): string =>
   name ? (KEY_OF_NAME[name] ?? '') : ''
 

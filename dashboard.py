@@ -34,6 +34,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 from src.config import APP_ROOT, RESOURCE_ROOT
+from src.build_info import build_fingerprint
 from src.client_protocol import (PROTOCOL_VERSION, ClientProtocolStore,
                                  InvalidPairingTicket, PairingAttemptLimiter,
                                  ProtocolStoreError, candidate_base_urls,
@@ -1951,6 +1952,7 @@ class Handler(BaseHTTPRequestHandler):
         meta['runtime'] = {
             'packaged': bool(getattr(sys, 'frozen', False)),
             'desktop_session': True,
+            'build_fingerprint': build_fingerprint(),
         }
         return meta
 

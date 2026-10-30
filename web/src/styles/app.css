@@ -568,11 +568,57 @@ html[data-sheet="open"]{background-color:var(--qp-sheet-statusbar,#000)}
   border-radius:calc(var(--u) * 8);box-shadow:var(--sh-1);background:#E9E2D4;
 }
 #bgSheet .bgtile.on .bgthumb{box-shadow:0 0 0 calc(var(--u) * 2) var(--accent)}
-#bgSheet .autothumb{
-  display:flex;align-items:center;justify-content:center;
-  background:linear-gradient(160deg,#F7E4BC,#E9C98D);color:var(--text);
-  font-size:calc(var(--u) * 13);font-weight:600;
+/* 「随机」封面：三张背景小卡扇形摊开 + 中间「换一换」图标。
+   用户要求封面里不放字（名字写在下面 .bgname），所以这里纯装饰。
+   小卡是 <img>、图标是 SVG，旋转不会踩 iOS 文字被合成层糊掉那条（见 FRONTEND_PITFALLS）。 */
+#bgSheet .randomthumb{
+  position:relative;overflow:hidden;
+  background:
+    radial-gradient(90% 55% at 15% 0%, #FFF7E6 0%, rgba(255,247,230,0) 70%),
+    radial-gradient(90% 60% at 95% 100%, #F9DFB6 0%, rgba(249,223,182,0) 72%),
+    linear-gradient(168deg,#FFF9ED 0%,#F5E2C3 100%);
 }
+/* 稀稀拉拉的彩色小圆点：给"随机"一点跳脱感，密度/透明度都压低，不抢小卡 */
+#bgSheet .randomthumb::before{
+  content:'';position:absolute;inset:0;
+  background-image:
+    radial-gradient(circle, rgba(255,153,15,.34) 0 1.3px, transparent 1.6px),
+    radial-gradient(circle, rgba(214,166,255,.30) 0 1.1px, transparent 1.4px),
+    radial-gradient(circle, rgba(120,200,170,.28) 0 1.1px, transparent 1.4px);
+  background-size:20px 24px, 26px 30px, 30px 22px;
+  background-position:2px 3px, 11px 7px, 17px 15px;
+}
+#bgSheet .rt-card{
+  position:absolute;top:9%;width:46%;height:58%;object-fit:cover;
+  border-radius:calc(var(--u) * 7);
+  border:calc(var(--u) * 1.5) solid rgba(255,255,255,.94);
+  box-shadow:0 calc(var(--u) * 3) calc(var(--u) * 8) rgba(110,65,10,.22);
+}
+#bgSheet .rt-card-1{left:-5%;transform:rotate(-11deg);z-index:1}
+#bgSheet .rt-card-2{right:-5%;transform:rotate(11deg);z-index:1}
+#bgSheet .rt-card-3{
+  left:0;right:0;margin-left:auto;margin-right:auto;top:6%;width:48%;height:60%;
+  z-index:2;transform:rotate(-1.5deg);
+}
+#bgSheet .rt-badge{
+  position:absolute;left:0;right:0;bottom:calc(var(--u) * 14);
+  margin-left:auto;margin-right:auto;
+  width:calc(var(--u) * 30);height:calc(var(--u) * 30);border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  color:var(--accent);background:#FFFDF7;
+  box-shadow:0 calc(var(--u) * 4) calc(var(--u) * 10) rgba(120,70,10,.26),
+             0 0 0 calc(var(--u) * 2) rgba(255,255,255,.6);
+  z-index:3;
+}
+#bgSheet .rt-badge svg{width:56%;height:56%}
+#bgSheet .rt-spark{
+  position:absolute;width:calc(var(--u) * 6);height:calc(var(--u) * 6);
+  background:#FFD98A;opacity:.9;pointer-events:none;z-index:3;
+  clip-path:polygon(50% 0,61% 39%,100% 50%,61% 61%,50% 100%,39% 61%,0 50%,39% 39%);
+}
+#bgSheet .rt-spark-1{left:7%;top:5%}
+#bgSheet .rt-spark-2{right:8%;top:34%;width:calc(var(--u) * 5);height:calc(var(--u) * 5);background:#FFB9C9}
+#bgSheet .rt-spark-3{left:10%;bottom:13%;width:calc(var(--u) * 4.5);height:calc(var(--u) * 4.5);background:#A9D8FF}
 /* 「动态」角标：压在缩略图右上角。缩略图是 15/32 的竖图，用 absolute 定位到图内，
    所以 .bgtile 要 relative —— 定位基准是整张 tile，角标靠 `top:3u + right:3u` 贴图角。 */
 #bgSheet .bgtile{position:relative}
@@ -1877,12 +1923,12 @@ pre#logbox{
 }
 
 /* 房间背景由 JS 按 `html[data-scene]` 内联写到 html 上（见 setSceneAttr）：
-   键 = SCENE_INFO 的键（5 套场景 room-* + 18 款官方家居背景 home-*）。
+   键 = SCENE_INFO 的键（4 套房间场景 room-* + 20 款官方家居背景 home-*）。
    注意：**必须写在 html 上** —— 背景图作用在 html 元素，而 CSS 变量只向下继承，
    写在 body 上的覆写对父级 html 无效（曾踩坑：data-scene 变了但背景不动）。
    下面这 4 条只是"JS 还没跑"的首帧兜底（早期版本靠它们切换）；
    JS 一旦跑起来，内联的 --qp-room/--qp-statusbar 优先级更高、覆盖它们。
-   17 款家居背景 + 8 个职业/毕业主题都有官方夜间版（--qp-room-* 的深色值在
+   20 款家居背景 + 8 个职业/毕业主题都有官方夜间版（--qp-room-* 的深色值在
    `:root[data-theme="dark"]` 里换成 *-dark 图，见 SCENE_INFO 的 dark 字段）。 */
 html[data-scene="feed"]{--qp-room:var(--qp-room-feed);--qp-statusbar:var(--qp-sb-feed)}
 html[data-scene="shower"]{--qp-room:var(--qp-room-shower);--qp-statusbar:var(--qp-sb-shower)}

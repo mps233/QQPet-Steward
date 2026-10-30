@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { TASK_GROUP, TASK_NAME, isLoopTask, keyOfTaskName, runnerStart, runnerStop, saveSettings, type Data } from './api'
+import { TASK_GROUP, TASK_NAME, isLoopTask, runnerStart, runnerStop, saveSettings, type Data } from './api'
 import { Overview, type PageKey } from './components/Overview'
 import { OverviewV2 } from './components/OverviewV2'
 import { AdvPage } from './components/AdvPage'
@@ -501,16 +501,9 @@ function DashboardApp({ onLoginRequired }: { onLoginRequired: () => void }) {
     leaveTimer.current = window.setTimeout(finishTransition, ms > 0 ? ms + 80 : 0)
   }, [leaving, guideVisible, finishTransition])
 
-  // 自动换背景要跟着「当前任务 + 进行中的活动」走
-  // 场景键统一用**任务键**：pending 时后端给的就是键（pending_key），平时
-  // queue.current 是中文任务名（TaskQueueRunner 写 task.name）要反查回来 ——
-  // 直接把中文名交给 SCENE_OF（键是 care/school/pk…）永远命中不了，
-  // 会让"按任务自动换背景"只在 pending 期间生效。
-  const curKey = data?.queue.pending
-    ? data.queue.pending_key || ''
-    : keyOfTaskName(data?.queue.current)
-  const etaKind = data?.work_eta?.kind ?? ''
-  const scene = useScene(curKey, etaKind, theme.dark)
+  // 房间背景默认「随机」：每 10 分钟从全部背景里抽一张；手动选定某张后固定不动。
+  // 轮换/抽签都在 useScene 内部，这里只把主题解析结果传进去（换图要跟主题同源）。
+  const scene = useScene(theme.dark)
 
   // 切页/换背景时同步两件「旧版有、迁移时漏掉」的东西：
   //

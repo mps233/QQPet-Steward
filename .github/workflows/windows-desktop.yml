@@ -65,9 +65,15 @@ jobs:
         run: .venv/Scripts/python.exe desktop/windows/build_native.py --prepare-only
       - name: Build the native App and per-user installer
         id: build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
-          .venv/Scripts/python.exe desktop/windows/build_native.py --skip-runtime-build
+          if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
+            throw "TAURI_SIGNING_PRIVATE_KEY is not configured"
+          }
+          .venv/Scripts/python.exe desktop/windows/build_native.py --skip-runtime-build --updater
           $Version = (Get-Content desktop/macos/tauri.conf.json -Raw | ConvertFrom-Json).version
           "version=$Version" >> $env:GITHUB_OUTPUT
       - name: Upload unverified Windows build candidate
@@ -75,10 +81,9 @@ jobs:
         with:
           name: windows-desktop-candidate-v${{ steps.build.outputs.version }}
           path: |
-            dist/QQPet-Steward_*_windows_x64-setup.exe
-            dist/QQPet-Steward_*_windows_x64-setup.exe.sha256
-            dist/QQPet-Steward_*_windows_x64-native.zip
-            dist/QQPet-Steward_*_windows_x64-native.zip.sha256
+            dist/QQPet-Steward_*_windows_x64-setup.exe*
+            dist/QQPet-Steward_*_windows_x64-setup.nsis.zip*
+            dist/QQPet-Steward_*_windows_x64-native*
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
@@ -135,10 +140,9 @@ jobs:
         with:
           name: windows-desktop-v${{ steps.build.outputs.version }}
           path: |
-            dist/QQPet-Steward_*_windows_x64-setup.exe
-            dist/QQPet-Steward_*_windows_x64-setup.exe.sha256
-            dist/QQPet-Steward_*_windows_x64-native.zip
-            dist/QQPet-Steward_*_windows_x64-native.zip.sha256
+            dist/QQPet-Steward_*_windows_x64-setup.exe*
+            dist/QQPet-Steward_*_windows_x64-setup.nsis.zip*
+            dist/QQPet-Steward_*_windows_x64-native*
             build/windows-native-backend-verification.json
             build/windows-installed-backend-verification.json
             build/windows-native-verification.json

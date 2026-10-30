@@ -26,6 +26,14 @@ on:
         description: "SHA-256 of the already-uploaded versioned Mac ZIP"
         required: true
         type: string
+      mac_app_tar_gz_sha256:
+        description: "SHA-256 of the already-uploaded Mac .app.tar.gz updater bundle"
+        required: true
+        type: string
+      mac_app_tar_gz_sig_sha256:
+        description: "SHA-256 of the already-uploaded Mac .app.tar.gz.sig"
+        required: true
+        type: string
 permissions:
   contents: write
   actions: read
@@ -35,7 +43,7 @@ concurrency:
 jobs:
   upload-verified-assets:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: mps233/QQPet-Steward
@@ -46,6 +54,8 @@ jobs:
       RELEASE_ID: ${{ inputs.release_id }}
       MAC_DMG_SHA256: ${{ inputs.mac_dmg_sha256 }}
       MAC_ZIP_SHA256: ${{ inputs.mac_zip_sha256 }}
+      MAC_APP_TAR_GZ_SHA256: ${{ inputs.mac_app_tar_gz_sha256 }}
+      MAC_APP_TAR_GZ_SIG_SHA256: ${{ inputs.mac_app_tar_gz_sig_sha256 }}
     steps:
       - name: Validate successful full-build evidence and upload draft assets
         shell: bash
@@ -54,6 +64,7 @@ jobs:
           python3 - <<'PY'
           """Upload a successful native Windows build to an existing release draft."""
           from __future__ import annotations
+          from datetime import datetime, timezone
           import hashlib
           import json
           import os
@@ -157,16 +168,35 @@ jobs:
               release_id = int(checked_input("RELEASE_ID", r"[1-9][0-9]{0,19}"))
               dmg_sha = checked_input("MAC_DMG_SHA256", r"[0-9a-fA-F]{64}").lower()
               zip_sha = checked_input("MAC_ZIP_SHA256", r"[0-9a-fA-F]{64}").lower()
+              mac_tar_sha = checked_input("MAC_APP_TAR_GZ_SHA256", r"[0-9a-fA-F]{64}").lower()
+              mac_sig_sha = checked_input("MAC_APP_TAR_GZ_SIG_SHA256", r"[0-9a-fA-F]{64}").lower()
               tag, artifact_name = "v" + version, "windows-desktop-v" + version
+              mac_tar_name = f"QQPet-Steward_{version}_macos_arm64.app.tar.gz"
+              mac_sig_name = mac_tar_name + ".sig"
               mac = {
                   f"QQPet-Steward_{version}_macos_arm64.dmg": dmg_sha,
                   f"QQPet-Steward_{version}_macos_arm64.zip": zip_sha,
+                  mac_tar_name: mac_tar_sha,
+                  mac_sig_name: mac_sig_sha,
               }
-              windows = (f"QQPet-Steward_{version}_windows_x64-setup.exe",
-                         f"QQPet-Steward_{version}_windows_x64-native.zip")
-              upload_names = {*windows, "SHA256SUMS.txt"}
-              allowed_files = {*windows, *(name + ".sha256" for name in windows),
-                               *REPORTS, "windows-native-app.png"}
+              setup_name = f"QQPet-Steward_{version}_windows_x64-setup.exe"
+              native_name = f"QQPet-Steward_{version}_windows_x64-native.zip"
+              nsis_zip_name = f"QQPet-Steward_{version}_windows_x64-setup.nsis.zip"
+              base_files = {
+                  setup_name, setup_name + ".sha256",
+                  native_name, native_name + ".sha256",
+                  *REPORTS, "windows-native-app.png",
+              }
+              raw_updater = {setup_name + ".sig", setup_name + ".sig.sha256"}
+              zipped_updater = {
+                  nsis_zip_name, nsis_zip_name + ".sha256",
+                  nsis_zip_name + ".sig", nsis_zip_name + ".sig.sha256",
+              }
+              upload_names = {
+                  setup_name, setup_name + ".sig",
+                  nsis_zip_name, nsis_zip_name + ".sig",
+                  native_name, "latest.json", "SHA256SUMS.txt",
+              }
 
               def trusted_run():
                   run = api(f"repos/{REPO}/actions/runs/{run_id}")
@@ -192,10 +222,15 @@ jobs:
                   return artifact["id"]
 
               artifact_id = trusted_run()
+              release = api(f"repos/{REPO}/releases/{release_id}")
+              require(release.get("id") == release_id and release.get("draft") is True
+                      and release.get("tag_name") == tag,
+                      "The fixed numeric release ID must still identify the exact requested draft tag")
+              notes = (release.get("body") or "")[:4000]
               before = release_assets(release_id, tag)
               require(not (set(before) & upload_names),
                       "A new Windows/checksum filename already exists; refusing every upload")
-              require(set(before) == set(mac), "The draft must contain only the two exact versioned Mac assets")
+              require(set(before) == set(mac), "The draft must contain only the four exact versioned Mac assets")
               validate_remote(before, mac)
               with tempfile.TemporaryDirectory(prefix="qqpet-release-upload-", dir=os.environ.get("RUNNER_TEMP")) as temporary:
                   work = Path(temporary)
@@ -207,8 +242,9 @@ jobs:
                   require(all(not path.is_symlink() for path in entries), "Artifact contains an unexpected link")
                   files = [path for path in entries if path.is_file()]
                   names = [path.name for path in files]
-                  require(len(names) == len(set(names)) and set(names) == allowed_files,
-                          "Artifact must contain exactly four deliverable/sidecar files, three reports, and one PNG")
+                  require(len(names) == len(set(names))
+                          and set(names) in (base_files | raw_updater, base_files | zipped_updater),
+                          "Artifact must contain exactly one signed Windows updater form, its sidecars, three reports, and one PNG")
                   by_name = {path.name: path for path in files}
                   for name in REPORTS:
                       report = json.loads(by_name[name].read_text(encoding="utf-8-sig"))
@@ -217,8 +253,27 @@ jobs:
                               and isinstance(checks, list) and bool(checks)
                               and all(isinstance(check, dict) and check.get("ok") is True for check in checks),
                               "A required Windows native/backend verification report did not pass: " + name)
+                  if set(names) == base_files | raw_updater:
+                      updater_name = setup_name
+                      updater_sig_name = setup_name + ".sig"
+                      windows_upload = (setup_name, native_name, setup_name + ".sig")
+                  else:
+                      updater_name = nsis_zip_name
+                      updater_sig_name = nsis_zip_name + ".sig"
+                      windows_upload = (setup_name, native_name, nsis_zip_name, nsis_zip_name + ".sig")
+
+                  # The Mac updater bundle is already in the draft; fetch it to
+                  # embed its signature and prove the uploaded bytes match.
+                  for name in (mac_tar_name, mac_sig_name):
+                      gh("release", "download", tag, "--repo", REPO, "--pattern", name,
+                         "--dir", str(work), "--clobber")
+                      require((work / name).is_file(), "Missing Mac release asset: " + name)
+                      require(digest(work / name) == mac[name], "Mac asset digest mismatch: " + name)
+                  mac_signature = (work / mac_sig_name).read_text(encoding="utf-8").strip()
+                  require(bool(mac_signature), "The Mac updater signature is empty")
+
                   expected = dict(mac)
-                  for name in windows:
+                  for name in windows_upload:
                       require(by_name[name].stat().st_size > 0, "Windows deliverable is empty: " + name)
                       sidecar = by_name[name + ".sha256"].read_text(encoding="utf-8-sig").strip()
                       match = re.fullmatch(r"([0-9a-fA-F]{64})[ \t]+\*?" + re.escape(name), sidecar)
@@ -226,25 +281,46 @@ jobs:
                       require(match is not None and match.group(1).lower() == actual,
                               "Windows payload SHA-256 does not match its exact sidecar: " + name)
                       expected[name] = actual
+                  windows_signature = by_name[updater_sig_name].read_text(encoding="utf-8").strip()
+                  require(bool(windows_signature), "The Windows updater signature is empty")
+
+                  mac_url = f"https://github.com/{REPO}/releases/download/{tag}/{mac_tar_name}"
+                  windows_url = f"https://github.com/{REPO}/releases/download/{tag}/{updater_name}"
+                  latest = work / "latest.json"
+                  latest.write_text(json.dumps({
+                      "version": version,
+                      "notes": notes,
+                      "pub_date": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                      "platforms": {
+                          "darwin-aarch64": {"signature": mac_signature, "url": mac_url},
+                          "darwin-aarch64-app": {"signature": mac_signature, "url": mac_url},
+                          "windows-x86_64": {"signature": windows_signature, "url": windows_url},
+                          "windows-x86_64-nsis": {"signature": windows_signature, "url": windows_url},
+                      },
+                  }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                  expected[latest.name] = digest(latest)
+
                   manifest = work / "SHA256SUMS.txt"
                   manifest.write_text("".join(f"{expected[name]}  {name}\n" for name in sorted(expected)), encoding="ascii")
                   expected[manifest.name] = digest(manifest)
+                  upload_paths = [*(by_name[name] for name in windows_upload), latest, manifest]
                   # Recheck all immutable source and draft gates before the first write.
                   require(trusted_run() == artifact_id, "Verified artifact identity changed during validation")
                   current = release_assets(release_id, tag)
                   require(set(current) == set(mac) and not (set(current) & upload_names),
                           "Draft assets changed during validation; refusing every upload")
                   validate_remote(current, mac)
-                  for path in [*(by_name[name] for name in windows), manifest]:
+                  for path in upload_paths:
                       current = release_assets(release_id, tag)
                       require(path.name not in current, "Asset appeared concurrently; refusing overwrite: " + path.name)
                       validate_remote(current, mac)
                       # The only mutation adds an asset to the checked numeric draft ID.
                       upload_to_fixed_release(path, release_id)
                   final = release_assets(release_id, tag)
-                  require(set(final) == set(expected), "Final draft must contain exactly the five expected assets")
+                  require(set(final) == set(expected),
+                          "Final draft must contain exactly the expected release assets")
                   validate_remote(final, expected)
-                  for path in [*(by_name[name] for name in windows), manifest]:
+                  for path in upload_paths:
                       require(final[path.name].get("size") == path.stat().st_size,
                               "Uploaded asset size mismatch: " + path.name)
                   summary = {"ok": True, "repository": REPO, "releaseId": release_id, "tag": tag,
@@ -254,7 +330,7 @@ jobs:
                   destination = os.environ.get("GITHUB_STEP_SUMMARY")
                   if destination:
                       with open(destination, "a", encoding="utf-8") as stream:
-                          stream.write(f"Uploaded and verified five assets on existing **draft** `{tag}`.\n\n")
+                          stream.write(f"Uploaded and verified {len(expected)} assets on existing **draft** `{tag}`.\n\n")
                           stream.write(f"Full build run: `{run_id}`; commit: `{head}`. Publication remains manual.\n")
 
 

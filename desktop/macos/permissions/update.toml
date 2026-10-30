@@ -1,0 +1,9 @@
+[[permission]]
+identifier = "update"
+description = "Check for app updates from the menu bar panel."
+commands.allow = [
+  "panel_update_status",
+  "panel_update_check",
+  "panel_update_install",
+  "panel_update_open_release"
+]

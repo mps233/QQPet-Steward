@@ -8,7 +8,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{Arc, Mutex},
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tauri::{
     image::Image,
@@ -16,6 +16,7 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
+use tauri_plugin_updater::{Update, UpdaterExt};
 
 #[cfg(target_os = "windows")]
 #[path = "../../windows/native_backend.rs"]
@@ -31,12 +32,424 @@ const MAX_REDIRECTS: usize = 5;
 const TRAY_ICON_BYTES: &[u8] = include_bytes!("../icons/tray-icon.png");
 const WINDOW_CHROME_SCRIPT: &str = include_str!("../app/window-chrome.js");
 const BACKGROUND_LABEL: &str = "ai.qqpet.dashboard.app";
+const RELEASE_PAGE: &str = "https://github.com/mps233/QQPet-Steward/releases/latest";
+const UPDATE_CHECK_INTERVAL_SECONDS: u64 = 6 * 60 * 60;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct StartupStatus {
     phase: String,
     message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateStatus {
+    phase: String,
+    current: String,
+    latest: String,
+    notes: String,
+    url: String,
+    error: String,
+    last_checked: Option<u64>,
+    installable: bool,
+    done: u64,
+    total: Option<u64>,
+}
+
+struct UpdateState {
+    status: Mutex<UpdateStatus>,
+    pending: Mutex<Option<Update>>,
+    checking: Mutex<bool>,
+    installing: Mutex<bool>,
+}
+
+impl UpdateState {
+    fn new(current: String) -> Self {
+        Self {
+            status: Mutex::new(UpdateStatus {
+                phase: "idle".to_owned(),
+                current,
+                latest: String::new(),
+                notes: String::new(),
+                url: String::new(),
+                error: String::new(),
+                last_checked: None,
+                installable: false,
+                done: 0,
+                total: None,
+            }),
+            pending: Mutex::new(None),
+            checking: Mutex::new(false),
+            installing: Mutex::new(false),
+        }
+    }
+}
+
+fn app_is_installed() -> bool {
+    let Ok(executable) = std::env::current_exe() else {
+        return false;
+    };
+    let path = executable.to_string_lossy();
+    #[cfg(target_os = "macos")]
+    {
+        path.contains(".app/Contents/MacOS/")
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let lower = path.to_ascii_lowercase();
+        !lower.contains("\\target\\") && !lower.contains("\\dist\\")
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        true
+    }
+}
+
+fn backend_is_packaged(server: &str) -> Option<bool> {
+    request_json(server, "GET", "/api/client/meta", None, None)
+        .ok()
+        .and_then(|value| value.get("runtime")?.get("packaged")?.as_bool())
+}
+
+fn now_epoch() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
+}
+
+fn update_endpoint_override() -> Option<tauri::Url> {
+    let raw = std::env::var("QQPET_UPDATE_ENDPOINT").ok()?;
+    let url = tauri::Url::parse(raw.trim()).ok()?;
+    (url.scheme() == "https").then_some(url)
+}
+
+fn build_updater(
+    app: &tauri::AppHandle,
+) -> Result<tauri_plugin_updater::Updater, tauri_plugin_updater::Error> {
+    let mut builder = app.updater_builder().timeout(Duration::from_secs(20));
+    if let Some(endpoint) = update_endpoint_override() {
+        builder = builder.endpoints(vec![endpoint])?;
+    }
+    builder.build()
+}
+
+async fn check_for_update(app: &tauri::AppHandle, force: bool) -> Result<UpdateStatus, String> {
+    let state = app.state::<ShellState>();
+    let now = now_epoch();
+    let installing = *state
+        .update
+        .installing
+        .lock()
+        .map_err(|_| "更新状态不可用".to_owned())?;
+    if installing {
+        return state
+            .update
+            .status
+            .lock()
+            .map(|status| status.clone())
+            .map_err(|_| "更新状态不可用".to_owned());
+    }
+    let checking = *state
+        .update
+        .checking
+        .lock()
+        .map_err(|_| "更新状态不可用".to_owned())?;
+    if checking {
+        return state
+            .update
+            .status
+            .lock()
+            .map(|status| status.clone())
+            .map_err(|_| "更新状态不可用".to_owned());
+    }
+    {
+        let mut status = state
+            .update
+            .status
+            .lock()
+            .map_err(|_| "更新状态不可用".to_owned())?;
+        status.installable = app_is_installed() && !state.transient;
+        if !force
+            && status
+                .last_checked
+                .is_some_and(|last| now.saturating_sub(last) < UPDATE_CHECK_INTERVAL_SECONDS)
+        {
+            return Ok(status.clone());
+        }
+        status.phase = "checking".to_owned();
+        status.error.clear();
+        status.done = 0;
+        status.total = None;
+    }
+    *state
+        .update
+        .checking
+        .lock()
+        .map_err(|_| "更新状态不可用".to_owned())? = true;
+
+    let result = match build_updater(app) {
+        Ok(updater) => updater.check().await,
+        Err(error) => Err(error),
+    };
+
+    let mut status = state
+        .update
+        .status
+        .lock()
+        .map_err(|_| "更新状态不可用".to_owned())?;
+    status.last_checked = Some(now);
+    match result {
+        Ok(Some(update)) => {
+            status.phase = "available".to_owned();
+            status.current = update.current_version.clone();
+            status.latest = update.version.clone();
+            status.notes = update.body.clone().unwrap_or_default();
+            status.url = update.download_url.to_string();
+            status.error.clear();
+            drop(status);
+            *state
+                .update
+                .pending
+                .lock()
+                .map_err(|_| "更新状态不可用".to_owned())? = Some(update);
+        }
+        Ok(None) => {
+            status.phase = "latest".to_owned();
+            status.latest = status.current.clone();
+            status.notes.clear();
+            status.url.clear();
+            status.error.clear();
+            drop(status);
+            *state
+                .update
+                .pending
+                .lock()
+                .map_err(|_| "更新状态不可用".to_owned())? = None;
+        }
+        Err(error) => {
+            if matches!(
+                error,
+                tauri_plugin_updater::Error::ReleaseNotFound
+                    | tauri_plugin_updater::Error::TargetsNotFound(_)
+            ) {
+                status.phase = "latest".to_owned();
+                status.latest = status.current.clone();
+                status.notes.clear();
+                status.url.clear();
+                status.error.clear();
+            } else {
+                status.phase = "error".to_owned();
+                status.error = error.to_string();
+            }
+            drop(status);
+            *state
+                .update
+                .pending
+                .lock()
+                .map_err(|_| "更新状态不可用".to_owned())? = None;
+        }
+    }
+    *state
+        .update
+        .checking
+        .lock()
+        .map_err(|_| "更新状态不可用".to_owned())? = false;
+    state
+        .update
+        .status
+        .lock()
+        .map(|status| status.clone())
+        .map_err(|_| "更新状态不可用".to_owned())
+}
+
+#[tauri::command]
+fn panel_update_status(state: tauri::State<'_, ShellState>) -> Result<UpdateStatus, String> {
+    state
+        .update
+        .status
+        .lock()
+        .map(|status| status.clone())
+        .map_err(|_| "更新状态不可用".to_owned())
+}
+
+#[tauri::command]
+async fn panel_update_check(
+    app: tauri::AppHandle,
+    force: Option<bool>,
+) -> Result<UpdateStatus, String> {
+    check_for_update(&app, force.unwrap_or(false)).await
+}
+
+#[tauri::command]
+fn panel_update_open_release() -> Result<(), String> {
+    open::that(RELEASE_PAGE).map_err(|error| format!("无法打开发布页：{error}"))
+}
+
+fn update_resume_signal(app: &tauri::AppHandle) -> Option<PathBuf> {
+    app.try_state::<ShellState>()
+        .map(|state| state.data_root.join("runs/update_resume.signal"))
+}
+
+async fn run_update_install(app: tauri::AppHandle, update: Update) -> Result<(), String> {
+    // Download first: a failed download must not stop the scheduler.
+    let app_for_progress = app.clone();
+    let bytes = update
+        .download(
+            move |chunk, total| {
+                if let Some(state) = app_for_progress.try_state::<ShellState>() {
+                    if let Ok(mut status) = state.update.status.lock() {
+                        status.done = status.done.saturating_add(chunk as u64);
+                        if total.is_some() {
+                            status.total = total;
+                        }
+                    }
+                }
+            },
+            || {},
+        )
+        .await
+        .map_err(|error| format!("下载更新失败：{error}"))?;
+
+    if let Some(state) = app.try_state::<ShellState>() {
+        if let Ok(mut status) = state.update.status.lock() {
+            status.phase = "installing".to_owned();
+            status.done = status.total.unwrap_or(status.done);
+            status.error.clear();
+        }
+    }
+
+    // Capture the scheduler state right before stopping it; the user may have
+    // started or stopped hosting while the download was running.
+    let was_running = scheduler_was_active(&app);
+    let app_for_stop = app.clone();
+    let stop_result =
+        tauri::async_runtime::spawn_blocking(move || stop_scheduler_for_update(&app_for_stop))
+            .await
+            .map_err(|error| format!("停止调度器失败：{error}"))
+            .and_then(|result| result);
+    if let Err(error) = stop_result {
+        if was_running {
+            let _ = start_scheduler_for_update(&app);
+        }
+        return Err(error);
+    }
+
+    let update_for_install = update.clone();
+    let install_result =
+        tauri::async_runtime::spawn_blocking(move || update_for_install.install(bytes))
+            .await
+            .map_err(|error| format!("安装更新失败：{error}"))
+            .and_then(|result| result.map_err(|error| format!("安装更新失败：{error}")));
+    if let Err(error) = install_result {
+        // The old backend was never stopped; put the scheduler back to work.
+        if was_running {
+            let _ = start_scheduler_for_update(&app);
+        }
+        return Err(error);
+    }
+
+    if was_running {
+        if let Some(signal) = update_resume_signal(&app) {
+            if let Some(parent) = signal.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            let _ = fs::write(signal, b"1\n");
+        }
+    }
+
+    if let Some(state) = app.try_state::<ShellState>() {
+        if let Ok(mut status) = state.update.status.lock() {
+            status.phase = "restarting".to_owned();
+            status.done = status.total.unwrap_or(status.done);
+        }
+        if let Ok(mut exit_requested) = state.exit_requested.lock() {
+            *exit_requested = true;
+        }
+        if let Ok(mut installing) = state.update.installing.lock() {
+            *installing = false;
+        }
+    }
+    tauri_plugin_single_instance::destroy(&app);
+    app.request_restart();
+    Ok(())
+}
+
+#[tauri::command]
+async fn panel_update_install(app: tauri::AppHandle) -> Result<UpdateStatus, String> {
+    let state = app.state::<ShellState>();
+    let already_installing = *state
+        .update
+        .installing
+        .lock()
+        .map_err(|_| "更新状态不可用".to_owned())?;
+    if already_installing {
+        return state
+            .update
+            .status
+            .lock()
+            .map(|status| status.clone())
+            .map_err(|_| "更新状态不可用".to_owned());
+    }
+    let snapshot = state
+        .update
+        .status
+        .lock()
+        .map(|status| status.clone())
+        .map_err(|_| "更新状态不可用".to_owned())?;
+    if snapshot.phase != "available" {
+        return Err("当前没有可安装的更新".to_owned());
+    }
+    if !snapshot.installable {
+        return Err("当前是开发/源码模式，不能自动安装；请打开发布页手动更新".to_owned());
+    }
+    let update = state
+        .update
+        .pending
+        .lock()
+        .map_err(|_| "更新状态不可用".to_owned())?
+        .clone()
+        .ok_or_else(|| "没有待安装的更新".to_owned())?;
+    *state
+        .update
+        .installing
+        .lock()
+        .map_err(|_| "更新状态不可用".to_owned())? = true;
+    {
+        let mut status = state
+            .update
+            .status
+            .lock()
+            .map_err(|_| "更新状态不可用".to_owned())?;
+        status.phase = "downloading".to_owned();
+        status.done = 0;
+        status.total = None;
+        status.error.clear();
+    }
+    let started = state
+        .update
+        .status
+        .lock()
+        .map(|status| status.clone())
+        .map_err(|_| "更新状态不可用".to_owned())?;
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) = run_update_install(app_handle.clone(), update).await {
+            if let Some(state) = app_handle.try_state::<ShellState>() {
+                if let Ok(mut status) = state.update.status.lock() {
+                    status.phase = "error".to_owned();
+                    status.error = error;
+                    status.done = 0;
+                    status.total = None;
+                }
+                if let Ok(mut installing) = state.update.installing.lock() {
+                    *installing = false;
+                }
+            }
+        }
+    });
+    Ok(started)
 }
 
 struct PrimaryWindowIntent {
@@ -102,6 +515,8 @@ struct ShellState {
     dashboard_child: Mutex<Option<u32>>,
     exit_requested: Mutex<bool>,
     primary_window: Mutex<PrimaryWindowIntent>,
+    backend_verified: Mutex<bool>,
+    update: UpdateState,
 }
 
 fn find_project_root(candidates: impl IntoIterator<Item = PathBuf>) -> Option<PathBuf> {
@@ -308,8 +723,7 @@ fn launch_agent_plist(runtime: &Path, data_root: &Path, port: u16) -> String {
     )
 }
 
-#[cfg(not(target_os = "windows"))]
-fn install_background_runtime(state: &ShellState) -> Result<PathBuf, String> {
+fn bundled_backend_fingerprint(state: &ShellState) -> Result<String, String> {
     let bundled = state
         .runtime
         .parent()
@@ -320,6 +734,81 @@ fn install_background_runtime(state: &ShellState) -> Result<PathBuf, String> {
     if fingerprint.len() != 64 || !fingerprint.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err("应用后台组件版本信息无效".to_owned());
     }
+    Ok(fingerprint.to_ascii_lowercase())
+}
+
+fn managed_runtime_fingerprint(runtime: &Path) -> Option<String> {
+    runtime
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+        .map(|name| name.to_ascii_lowercase())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn managed_backend_registered() -> bool {
+    let service = format!("gui/{}/{BACKGROUND_LABEL}", current_uid());
+    Command::new("launchctl")
+        .args(["print", &service])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn bootout_managed_backend() {
+    let service = format!("gui/{}/{BACKGROUND_LABEL}", current_uid());
+    let _ = Command::new("launchctl")
+        .args(["bootout", &service])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
+#[cfg(not(target_os = "windows"))]
+fn wait_for_backend_unload() {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if !managed_backend_registered() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn install_and_bootstrap_backend(state: &ShellState, port: u16) -> Result<(), String> {
+    let runtime = install_background_runtime(state)?;
+    if let Some(parent) = state.launch_agent.parent() {
+        fs::create_dir_all(parent).map_err(|error| format!("无法创建后台配置目录：{error}"))?;
+    }
+    fs::write(
+        &state.launch_agent,
+        launch_agent_plist(&runtime, &state.data_root, port),
+    )
+    .map_err(|error| format!("无法保存后台配置：{error}"))?;
+    let output = Command::new("launchctl")
+        .args(["bootstrap", &format!("gui/{}", current_uid())])
+        .arg(&state.launch_agent)
+        .output()
+        .map_err(|error| format!("无法启动应用后台：{error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "无法启动应用后台：{}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn install_background_runtime(state: &ShellState) -> Result<PathBuf, String> {
+    let bundled = state
+        .runtime
+        .parent()
+        .ok_or_else(|| "应用后台组件路径无效".to_owned())?;
+    let fingerprint = bundled_backend_fingerprint(state)?;
     let installed = state.runtime_store.join(fingerprint);
     let executable = installed.join("QQPetRuntime");
     if !installed.join(".ready").is_file() {
@@ -383,57 +872,40 @@ fn start_managed_backend(app: &tauri::AppHandle, port: u16) -> Result<(), String
     fs::create_dir_all(state.data_root.join("runs"))
         .map_err(|error| format!("无法创建应用数据目录：{error}"))?;
     let service = format!("gui/{}/{BACKGROUND_LABEL}", current_uid());
-    let registered = Command::new("launchctl")
-        .args(["print", &service])
+    let registered = managed_backend_registered();
+    if !registered {
+        return install_and_bootstrap_backend(&state, port);
+    }
+    let output = Command::new("/usr/bin/plutil")
+        .args(["-convert", "json", "-o", "-"])
+        .arg(&state.launch_agent)
+        .output()
+        .map_err(|error| format!("无法读取现有 App 后台配置：{error}"))?;
+    if !output.status.success() {
+        return Err("找不到现有 App 后台的有效配置，请检查应用日志".to_owned());
+    }
+    let plist: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|_| "现有 App 后台配置格式无效".to_owned())?;
+    let runtime = managed_backend_runtime(&plist, &state.data_root, port)?;
+    let bundled_fingerprint = bundled_backend_fingerprint(&state)?;
+    if managed_runtime_fingerprint(&runtime).as_deref() != Some(bundled_fingerprint.as_str())
+        || !runtime.is_file()
+    {
+        // The app was replaced by an update; the launchd job still points at
+        // the previous runtime. Stop it before swapping the plist so KeepAlive
+        // cannot resurrect the old backend.
+        bootout_managed_backend();
+        wait_for_backend_unload();
+        return install_and_bootstrap_backend(&state, port);
+    }
+    let status = Command::new("launchctl")
+        .args(["kickstart", &service])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .is_ok_and(|status| status.success());
-    if !registered {
-        let runtime = install_background_runtime(&state)?;
-        if let Some(parent) = state.launch_agent.parent() {
-            fs::create_dir_all(parent).map_err(|error| format!("无法创建后台配置目录：{error}"))?;
-        }
-        fs::write(
-            &state.launch_agent,
-            launch_agent_plist(&runtime, &state.data_root, port),
-        )
-        .map_err(|error| format!("无法保存后台配置：{error}"))?;
-        let output = Command::new("launchctl")
-            .args(["bootstrap", &format!("gui/{}", current_uid())])
-            .arg(&state.launch_agent)
-            .output()
-            .map_err(|error| format!("无法启动应用后台：{error}"))?;
-        if !output.status.success() {
-            return Err(format!(
-                "无法启动应用后台：{}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            ));
-        }
-    } else {
-        let output = Command::new("/usr/bin/plutil")
-            .args(["-convert", "json", "-o", "-"])
-            .arg(&state.launch_agent)
-            .output()
-            .map_err(|error| format!("无法读取现有 App 后台配置：{error}"))?;
-        if !output.status.success() {
-            return Err("找不到现有 App 后台的有效配置，请检查应用日志".to_owned());
-        }
-        let plist: serde_json::Value = serde_json::from_slice(&output.stdout)
-            .map_err(|_| "现有 App 后台配置格式无效".to_owned())?;
-        let runtime = managed_backend_runtime(&plist, &state.data_root, port)?;
-        if !runtime.is_file() {
-            return Err("现有 App 后台组件已被移动或删除，请检查应用日志".to_owned());
-        }
-        let status = Command::new("launchctl")
-            .args(["kickstart", &service])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map_err(|error| format!("无法唤醒应用后台：{error}"))?;
-        if !status.success() {
-            return Err("无法唤醒应用后台，请重试".to_owned());
-        }
+        .map_err(|error| format!("无法唤醒应用后台：{error}"))?;
+    if !status.success() {
+        return Err("无法唤醒应用后台，请重试".to_owned());
     }
     Ok(())
 }
@@ -450,6 +922,157 @@ fn start_managed_backend(app: &tauri::AppHandle, port: u16) -> Result<(), String
     let runtime = windows_backend::install_runtime(bundled, &state.runtime_store)?;
     let pid = windows_backend::spawn_dashboard(&runtime, &state.data_root, port)?;
     remember_dashboard_pid(&state, pid)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn stop_backend_for_update(app: &tauri::AppHandle) -> Result<(), String> {
+    let state = app
+        .try_state::<ShellState>()
+        .ok_or_else(|| "应用状态未初始化".to_owned())?;
+    if state.transient || !port_open(&state.server) {
+        return Ok(());
+    }
+    if backend_is_packaged(&state.server) == Some(false) {
+        return Err("检测到源码版仪表盘，请先手动停止后再更新".to_owned());
+    }
+    bootout_managed_backend();
+    let deadline = Instant::now() + Duration::from_secs(12);
+    while Instant::now() < deadline {
+        if !port_open(&state.server) {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    Err("旧后台没有停止，已取消更新；请退出 App 后重试".to_owned())
+}
+
+#[cfg(target_os = "windows")]
+fn stop_backend_for_update(app: &tauri::AppHandle) -> Result<(), String> {
+    let state = app
+        .try_state::<ShellState>()
+        .ok_or_else(|| "应用状态未初始化".to_owned())?;
+    if state.transient || !port_open(&state.server) {
+        return Ok(());
+    }
+    if backend_is_packaged(&state.server) == Some(false) {
+        return Err("检测到源码版仪表盘，请先手动停止后再更新".to_owned());
+    }
+    let pid_path = state.data_root.join("runs/dashboard.pid");
+    let pid = fs::read_to_string(&pid_path)
+        .ok()
+        .and_then(|value| value.trim().parse::<u32>().ok())
+        .ok_or_else(|| "找不到旧后台进程号，请退出 App 后重试".to_owned())?;
+    if !windows_backend::dashboard_pid_is_runtime(pid, &state.runtime_store) {
+        return Err("旧后台进程与当前应用不匹配，已取消更新".to_owned());
+    }
+    windows_backend::stop_dashboard(pid)?;
+    let deadline = Instant::now() + Duration::from_secs(12);
+    while Instant::now() < deadline {
+        if !port_open(&state.server) {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    Err("旧后台没有停止，已取消更新；请退出 App 后重试".to_owned())
+}
+
+fn scheduler_is_alive(app: &tauri::AppHandle) -> bool {
+    let Some(state) = app.try_state::<ShellState>() else {
+        return false;
+    };
+    if !port_open(&state.server) {
+        return false;
+    }
+    let Ok(token) = local_control_token(app) else {
+        return false;
+    };
+    request_json(&state.server, "GET", "/api/data", None, Some(&token))
+        .ok()
+        .and_then(|value| value.get("scheduler")?.get("alive")?.as_bool())
+        .unwrap_or(false)
+}
+
+fn scheduler_was_active(app: &tauri::AppHandle) -> bool {
+    let Some(state) = app.try_state::<ShellState>() else {
+        return false;
+    };
+    scheduler_is_alive(app) && !state.data_root.join("runs/pause.signal").is_file()
+}
+
+fn start_scheduler_for_update(app: &tauri::AppHandle) -> Result<(), String> {
+    let Some(state) = app.try_state::<ShellState>() else {
+        return Ok(());
+    };
+    if !port_open(&state.server) {
+        return Ok(());
+    }
+    let token = local_control_token(app)?;
+    request_json(
+        &state.server,
+        "POST",
+        "/api/runner/start",
+        None,
+        Some(&token),
+    )
+    .map(|_| ())
+}
+
+fn resume_scheduler_after_update(app: &tauri::AppHandle) {
+    let Some(signal) = update_resume_signal(app) else {
+        return;
+    };
+    if !signal.is_file() {
+        return;
+    }
+    let _ = fs::remove_file(&signal);
+    let _ = start_scheduler_for_update(app);
+}
+
+fn stop_scheduler_for_update(app: &tauri::AppHandle) -> Result<(), String> {
+    let state = app
+        .try_state::<ShellState>()
+        .ok_or_else(|| "应用状态未初始化".to_owned())?;
+    if state.transient {
+        return Ok(());
+    }
+    let server = state.server.clone();
+    if !port_open(&server) {
+        return Ok(());
+    }
+    let token = local_control_token(app)?;
+    let _ = request_json_timeout(
+        &server,
+        "POST",
+        "/api/runner/stop",
+        None,
+        Some(&token),
+        Duration::from_secs(30),
+    );
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline {
+        if !port_open(&server) {
+            return Ok(());
+        }
+        if let Ok(value) = request_json_timeout(
+            &server,
+            "GET",
+            "/api/data",
+            None,
+            Some(&token),
+            Duration::from_secs(4),
+        ) {
+            let alive = value
+                .get("scheduler")
+                .and_then(|scheduler| scheduler.get("alive"))
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+            if !alive {
+                return Ok(());
+            }
+        }
+        std::thread::sleep(Duration::from_millis(300));
+    }
+    Err("调度器仍在运行，已取消更新；请先在面板停止托管后重试".to_owned())
 }
 
 fn normalize_server(raw: &str) -> Result<String, String> {
@@ -959,6 +1582,52 @@ fn ensure_dashboard_running(app: &tauri::AppHandle, server: &str) -> Result<(), 
         request_json(server, "GET", "/api/data", None, Some(&token)).map_err(|_| {
             "本机服务与应用数据不匹配，端口可能被其他程序占用；请重试或查看应用日志".to_owned()
         })?;
+        if state.transient {
+            resume_scheduler_after_update(app);
+            return Ok(());
+        }
+        let verified = state
+            .backend_verified
+            .lock()
+            .map(|value| *value)
+            .unwrap_or(false);
+        if !verified {
+            let bundled_fingerprint = bundled_backend_fingerprint(&state)?;
+            let meta = request_json(server, "GET", "/api/client/meta", None, None).ok();
+            let packaged = meta
+                .as_ref()
+                .and_then(|value| value.get("runtime")?.get("packaged")?.as_bool());
+            if packaged == Some(false) {
+                eprintln!("[qqpet] 检测到源码版仪表盘，继续采用现有实例");
+            } else {
+                let running_fingerprint = meta
+                    .as_ref()
+                    .and_then(|value| value.get("runtime")?.get("build_fingerprint")?.as_str())
+                    .unwrap_or("");
+                if running_fingerprint != bundled_fingerprint {
+                    // Includes 0.8.4 and older, whose meta has no build fingerprint.
+                    let scheduler_alive = scheduler_is_alive(app);
+                    let scheduler_was_running =
+                        scheduler_alive && !state.data_root.join("runs/pause.signal").is_file();
+                    if scheduler_alive {
+                        // Bootout only stops the launchd job; the detached scheduler
+                        // has to be asked to exit or it keeps runs/runner.pid alive.
+                        let _ = stop_scheduler_for_update(app);
+                    }
+                    stop_backend_for_update(app)?;
+                    let port = local_startup_port(&url)?;
+                    start_managed_backend(app, port)?;
+                    wait_for_dashboard(server)?;
+                    if scheduler_was_running {
+                        let _ = start_scheduler_for_update(app);
+                    }
+                }
+            }
+            if let Ok(mut verified) = state.backend_verified.lock() {
+                *verified = true;
+            }
+        }
+        resume_scheduler_after_update(app);
         return Ok(());
     }
     let port = local_startup_port(&url)?;
@@ -967,7 +1636,12 @@ fn ensure_dashboard_running(app: &tauri::AppHandle, server: &str) -> Result<(), 
     } else {
         start_managed_backend(app, port)?;
     }
-    wait_for_dashboard(server)
+    wait_for_dashboard(server)?;
+    if let Ok(mut verified) = state.backend_verified.lock() {
+        *verified = true;
+    }
+    resume_scheduler_after_update(app);
+    Ok(())
 }
 
 async fn prepare_server(app: &tauri::AppHandle, server: &str) -> Result<CheckResult, String> {
@@ -1326,11 +2000,29 @@ fn request_json(
     cookie_header: Option<&str>,
     control_token: Option<&str>,
 ) -> Result<serde_json::Value, String> {
+    request_json_timeout(
+        server,
+        method,
+        path,
+        cookie_header,
+        control_token,
+        Duration::from_secs(4),
+    )
+}
+
+fn request_json_timeout(
+    server: &str,
+    method: &str,
+    path: &str,
+    cookie_header: Option<&str>,
+    control_token: Option<&str>,
+    timeout: Duration,
+) -> Result<serde_json::Value, String> {
     let url = local_backend_url(server)?;
     let host = url.host_str().ok_or_else(|| "地址缺少主机名".to_owned())?;
     let mut stream = connect_server(&url)?;
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(4)));
-    let _ = stream.set_write_timeout(Some(Duration::from_secs(4)));
+    let _ = stream.set_read_timeout(Some(timeout));
+    let _ = stream.set_write_timeout(Some(timeout));
     let host_header = match url.port() {
         Some(port) => format!("{host}:{port}"),
         None => host.to_owned(),
@@ -1557,6 +2249,7 @@ fn main() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             reopen_dashboard(app);
         }))
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             #[cfg(not(target_os = "windows"))]
             let config_dir = app.path().app_config_dir()?;
@@ -1580,13 +2273,14 @@ fn main() {
                 .or_else(|| existing_data_root(&server))
                 .or(saved_root)
                 .unwrap_or(default_root);
-            if override_root.is_none() {
-                let _ = fs::create_dir_all(&config_dir);
-                let _ = fs::write(
-                    config_dir.join("data-root.txt"),
-                    data_root.to_string_lossy().as_bytes(),
-                );
-            }
+            // Persist the resolved root even when QQPET_DATA_DIR was set:
+            // tauri's macOS restart uses `open -n`, which does not guarantee
+            // environment inheritance.
+            let _ = fs::create_dir_all(&config_dir);
+            let _ = fs::write(
+                config_dir.join("data-root.txt"),
+                data_root.to_string_lossy().as_bytes(),
+            );
             #[cfg(not(target_os = "windows"))]
             let runtime = app.path().resource_dir()?.join("backend/QQPetRuntime");
             #[cfg(target_os = "windows")]
@@ -1615,6 +2309,8 @@ fn main() {
                 dashboard_child: Mutex::new(None),
                 exit_requested: Mutex::new(false),
                 primary_window: Mutex::new(PrimaryWindowIntent::default()),
+                backend_verified: Mutex::new(false),
+                update: UpdateState::new(app.package_info().version.to_string()),
             });
             let toggle = MenuItem::with_id(app, "toggle", "打开状态面板", true, None::<&str>)?;
             let open = MenuItem::with_id(app, "open", "打开主界面", true, None::<&str>)?;
@@ -1708,17 +2404,21 @@ fn main() {
             panel_open_dashboard,
             panel_open_settings,
             panel_hide,
-            panel_quit
+            panel_quit,
+            panel_update_status,
+            panel_update_check,
+            panel_update_install,
+            panel_update_open_release
         ])
         .build(tauri::generate_context!())
         .expect("error while building QQPet-Steward")
         .run(|app, event| match event {
-            tauri::RunEvent::ExitRequested { api, .. } => {
+            tauri::RunEvent::ExitRequested { api, code, .. } => {
                 let explicit = app
                     .try_state::<ShellState>()
                     .and_then(|state| state.exit_requested.lock().ok().map(|flag| *flag))
                     .unwrap_or(false);
-                if !explicit {
+                if !explicit && code != Some(tauri::RESTART_EXIT_CODE) {
                     api.prevent_exit();
                 }
             }
@@ -1987,6 +2687,15 @@ mod tests {
         let mut wrong_service = plist.clone();
         wrong_service["Label"] = serde_json::json!("ai.qqpet.dashboard");
         assert!(managed_backend_runtime(&wrong_service, data, 8787).is_err());
+    }
+
+    #[test]
+    fn managed_runtime_fingerprint_reads_the_backend_directory() {
+        assert_eq!(
+            managed_runtime_fingerprint(Path::new("/store/ABC123/QQPetRuntime")).as_deref(),
+            Some("abc123")
+        );
+        assert_eq!(managed_runtime_fingerprint(Path::new("/")), None);
     }
 
     #[test]

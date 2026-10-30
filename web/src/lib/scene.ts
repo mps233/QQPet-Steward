@@ -1,7 +1,10 @@
 import { assetUrl } from './connection'
+import { normalizeManualScene, pickScene, RANDOM_KEY } from './scene-pick'
+
+export { RANDOM_KEY }
 
 /**
- * 房间背景库与推导逻辑（从旧版原生实现移植，含注释里的那些坑）。
+ * 房间背景库与「随机」轮换逻辑（从旧版原生实现移植，含注释里的那些坑）。
  *
  * file/dark：`static/qp-icons/bg/<file>.jpg`。深色模式**必须换图**——家居背景的暗版
  *   是官方的夜灯/月光版，不是同一张调暗。
@@ -11,9 +14,11 @@ import { assetUrl } from './connection'
 
 /** 背景图版本号：**换图后必须 +1**。`/qp-icons/*` 走 `Cache-Control: max-age=3600`，
  *  同名覆盖时浏览器一小时内仍显示旧图（踩过：素材已更新、页面还是旧的）。
+ *  9 = 「奇遇嘉年华」「魔女杂货铺」补上官方夜版（carnival/witchshop-night + 两个 loop.mp4）。
+ *  8 = 新增「奇遇嘉年华」「魔女杂货铺」两套灵动背景（pack70 / pack71）。
  *  7 = 新增「木屋奇遇」「梦幻糖果」两套家居背景（pack73 / pack72）。
  *  6 = 新增「花田诗意」动态背景（huatian-day/night + 两个 loop.mp4）。 */
-export const BG_VER = '7'
+export const BG_VER = '9'
 
 export interface SceneInfo {
   name: string
@@ -32,16 +37,38 @@ export interface SceneInfo {
 
 export const SCENE_INFO: Record<string, SceneInfo> = {
   // 官方那套房间场景里还有个「商店」（room-store）—— 用户要求去掉，已移除。
-  // 移除是安全的：SCENE_OF 里没有任何任务映射到 store，computeScene 也不会返回它；
-  // readManualScene 会校验值是否还在 SCENE_INFO 里，所以旧 localStorage 里留下的
-  // 'store' 会自动回落到「自动」，不会白屏。图片文件仍在磁盘上，随时可加回来。
-  // 官方「装扮 → 背景」18 款（顺序照官方页面从上到下、左到右）
+  // 移除是安全的：随机池只取 SCENE_INFO 的键、readManualScene 也会校验值是否还在
+  // SCENE_INFO 里，旧 localStorage 里留下的 'store' 会自动回落到「随机」，不会白屏。
+  // 图片文件仍在磁盘上，随时可加回来。
+  // 官方「装扮 → 背景」20 款（大体照官方页面顺序，最新上新的两套钉在最前方便找）
+  // 「奇遇嘉年华」「魔女杂货铺」是 2026-10-30 新上的两套**灵动背景**（背景 id 70 / 71，
+  // 列表带 S 徽标、抽奖获得）。夜版是官方真做的两套夜场景（烟花/月光），不是调暗；
+  // **夜版子包只有 QQ 处于夜间模式时点卡片才会下发**（切日间模式点只下白天包）——
+  // 抓取时漏掉别以为官方没做。素材见 qqpet_assets/_raw/pet_home_bg_dynamic/pack70|71/。
+  'home-carnival': {
+    name: '奇遇嘉年华',
+    file: 'carnival-day',
+    dark: 'carnival-night',
+    sb: '#9AADC5',
+    sbDark: '#6E506C',
+    video: 'carnival-day-loop',
+    videoDark: 'carnival-night-loop',
+  },
+  'home-witchshop': {
+    name: '魔女杂货铺',
+    file: 'witchshop-day',
+    dark: 'witchshop-night',
+    sb: '#56C2FB',
+    sbDark: '#411F72',
+    video: 'witchshop-day-loop',
+    videoDark: 'witchshop-night-loop',
+  },
   // 「木屋奇遇」「梦幻糖果」是 2026-10 底新上的两套（背景 id 73 / 72，列表带 NEW 角标），
   // 官方页面排在最前；暗版是官方夜灯版（与白天是两张不同的图）。
   'home-cabin': { name: '木屋奇遇', file: 'home-cabin', dark: 'home-cabin-dark', sb: '#712D13', sbDark: '#360E06' },
   'home-candy': { name: '梦幻糖果', file: 'home-candy', dark: 'home-candy-dark', sb: '#8DC3C6', sbDark: '#186E83' },
-  // 「花田诗意」是 2026-10 上新的**灵动背景**（背景 id 61），排在官方列表第三位。
-  // 它是唯一带视频层的：顶 820px 的 mp4 循环 + 全天候立绘叠层，只有 9.3.75+ 客户端能播。
+  // 「花田诗意」是 2026-10 上新的**灵动背景**（背景 id 61），也是第一套灵动背景。
+  // 结构：顶 820px 的 mp4 循环 + 全天候立绘叠层，只有 9.3.75+ 客户端能播。
   // 素材来源见 qqpet_assets/_raw/pet_home_bg_dynamic/（root 从 app 私有目录拉的原始包）。
   'home-huatian': {
     name: '花田诗意',
@@ -76,7 +103,7 @@ export const SCENE_INFO: Record<string, SceneInfo> = {
   'career-xingchen': { name: '星尘魔法塔', file: 'career-xingchen', dark: 'career-xingchen-dark', sb: '#4E3163', sbDark: '#2C2352' },
   'career-gulu': { name: '咕噜厨房', file: 'career-gulu', dark: 'career-gulu-dark', sb: '#E8CAAF', sbDark: '#A17559' },
   'career-graduate': { name: '高级学院毕业', file: 'career-graduate', dark: 'career-graduate-dark', sb: '#ECD4CB', sbDark: '#CEC9BA' },
-  // 官方 4 套房间场景放最后：它们主要是「自动」模式按任务用的，手动挑的人少
+  // 官方 4 套房间场景放最后：手动挑的人少（「随机」模式会从全部背景里抽）
   // （用户要求把主房间/喂食区/浴室/教室打工挪到列表末尾；SCENE_ORDER 即声明顺序）。
   main: { name: '主房间', file: 'room-main', dark: 'room-main-dark', sb: '#D5A758', sbDark: '#A9722D' },
   feed: { name: '喂食区', file: 'room-feed', dark: 'room-feed-dark', sb: '#CA9F5B', sbDark: '#C39145' },
@@ -87,18 +114,14 @@ export const SCENE_INFO: Record<string, SceneInfo> = {
 /** 长按循环顺序 + 选择面板顺序（= 上面声明顺序） */
 export const SCENE_ORDER: string[] = Object.keys(SCENE_INFO)
 
-/** 任务键 → 场景（自动模式） */
-export const SCENE_OF: Record<string, string> = {
-  care: 'feed',
-  friend_care: 'feed',
-  school: 'record',
-  work: 'record',
-  hire_friend: 'record',
-  adventure: 'main',
-  visit: 'main',
-  pk: 'main',
-  gift_bag: 'main',
-}
+/** 「随机」模式的抽取池 = 整个背景库（含动态「花田诗意」）。 */
+export const RANDOM_POOL: readonly string[] = Object.keys(SCENE_INFO)
+
+/** 随机模式每 N 分钟换一张。选择面板的文案也读这个数，别两处各写一个。 */
+export const RANDOM_ROTATE_MINUTES = 10
+
+/** 抽一张背景（排除 current，避免连续两次一样）。 */
+export const pickRandomScene = (current?: string): string => pickScene(RANDOM_POOL, current)
 
 /** 当前实际生效的深浅色：以 `<html data-theme>` 为准（lib/useTheme.ts 写入，
  *  手动切换与跟随系统都走这个属性）；属性还没写时（首帧脚本被禁用等）退回系统偏好。
@@ -110,15 +133,6 @@ export const isDarkTheme = (): boolean => {
   if (attr === 'dark') return true
   if (attr === 'light') return false
   return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches)
-}
-
-/** 自动模式下由"正在做的事"推导场景 */
-export function computeScene(curKey: string, etaKind: string): string {
-  const k = etaKind || ''
-  if (k.includes('洗澡') || k.includes('护理')) return 'shower'
-  if (k.includes('上课') || k.includes('学习') || k.includes('打工')) return 'record'
-  if (curKey) return SCENE_OF[curKey] || 'main'
-  return 'main'
 }
 
 export const sceneBgFile = (key: string, dark = isDarkTheme()): string => {
@@ -145,7 +159,7 @@ export const sceneVideoUrl = (key: string, dark = isDarkTheme()): string => {
 }
 
 export const sceneName = (key: string): string =>
-  key === 'auto' ? '自动' : (SCENE_INFO[key]?.name ?? key)
+  key === RANDOM_KEY ? '随机' : (SCENE_INFO[key]?.name ?? key)
 
 const VIDEO_EL_ID = 'qpRoomVideo'
 
@@ -219,8 +233,8 @@ function syncSceneVideo(key: string, dark: boolean): void {
 }
 
 /** 把背景与状态栏色写到 `html` 上（CSS 变量 + data-scene）。
- *  家居背景 17 套 × 明/暗 = 34 张，逐个写 CSS 规则会重复两份表，所以由 JS 内联写。
- *  带 `video` 的（目前只有「花田诗意」）另外同步视频层。 */
+ *  背景库几十张图 × 明/暗，逐个写 CSS 规则会重复两份表，所以由 JS 内联写。
+ *  带 `video` 的（花田诗意 / 奇遇嘉年华 / 魔女杂货铺）另外同步视频层。 */
 export function applyScene(key: string, dark = isDarkTheme()): void {
   const root = document.documentElement
   const info = SCENE_INFO[key]
@@ -239,12 +253,12 @@ const LS_KEY = 'qpet_scene'
 
 export function readManualScene(): string {
   try {
-    const v = localStorage.getItem(LS_KEY)
-    if (v === 'auto' || (v && SCENE_INFO[v])) return v
+    // 旧值归一化（'auto' = 从前的跟随任务、'store' = 已移除的场景）见 scene-pick.ts
+    return normalizeManualScene(localStorage.getItem(LS_KEY), RANDOM_POOL)
   } catch {
     /* 隐私模式下 localStorage 会抛，忽略 */
   }
-  return 'auto'
+  return RANDOM_KEY
 }
 
 export function writeManualScene(key: string): void {

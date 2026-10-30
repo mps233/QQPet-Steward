@@ -432,6 +432,57 @@ pub fn spawn_dashboard(_runtime: &Path, _data_root: &Path, _port: u16) -> Result
     Err("the native Windows dashboard backend requires Windows".into())
 }
 
+/// Whether `pid` still runs a dashboard from the managed backend cache.
+#[cfg(windows)]
+pub fn dashboard_pid_is_runtime(pid: u32, store: &Path) -> bool {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    if pid == 0 {
+        return false;
+    }
+    let Ok(store) = fs::canonicalize(store) else {
+        return false;
+    };
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if handle.is_null() {
+        return false;
+    }
+    let mut buffer = vec![0u16; 32768];
+    let mut size = buffer.len() as u32;
+    let ok = unsafe { QueryFullProcessImageNameW(handle, 0, buffer.as_mut_ptr(), &mut size) };
+    unsafe {
+        CloseHandle(handle);
+    }
+    if ok == 0 {
+        return false;
+    }
+    let image = PathBuf::from(String::from_utf16_lossy(&buffer[..size as usize]));
+    let Ok(image) = fs::canonicalize(image) else {
+        return false;
+    };
+    image.starts_with(&store)
+}
+
+/// Stop a dashboard started by `spawn_dashboard`, including its children.
+#[cfg(windows)]
+pub fn stop_dashboard(pid: u32) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let status = std::process::Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+        .map_err(|error| format!("cannot stop dashboard {pid}: {error}"))?;
+    if !status.success() {
+        return Err(format!("taskkill failed for dashboard {pid}"));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

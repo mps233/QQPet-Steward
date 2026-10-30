@@ -9,6 +9,7 @@
     "core:default",
     "panel-snapshot",
     "panel-control",
-    "panel-navigation"
+    "panel-navigation",
+    "update"
   ]
 }

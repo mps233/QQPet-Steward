@@ -21,6 +21,14 @@ const pauseRunner = $('#pause-runner');
 const notice = $('#notice');
 const panelCard = $('#panel-card');
 const scrim = $('#scrim');
+const updateCard = $('#update-card');
+const updateTitle = $('#update-title');
+const updateState = $('#update-state');
+const updateDetail = $('#update-detail');
+const updateAction = $('#update-action');
+const updateCheck = $('#update-check');
+const updateProgress = $('#update-progress');
+const updateBar = updateProgress?.firstElementChild;
 let snapshot = null;
 let sampledAt = 0;
 let connected = false;
@@ -142,7 +150,16 @@ const call = async (command, payload = {}) => {
   return invoke(command, payload);
 };
 
+const UPDATE_ACTIVE = new Set(['downloading', 'installing', 'restarting']);
+const UPDATE_POLL = new Set(['checking', ...UPDATE_ACTIVE]);
+let updateStatus = null;
+let updatePhase = 'idle';
+let updatePoll = 0;
+
 const refresh = async () => {
+  // Starting the dashboard while an update is being installed would bring the
+  // old backend back up; the update card owns the panel during this window.
+  if (UPDATE_ACTIVE.has(updatePhase)) return;
   try {
     const data = await call('panel_snapshot');
     paused = !!data?.paused;
@@ -154,8 +171,119 @@ const refresh = async () => {
 
 const refreshOnShow = () => {
   renderClocks();
+  if (UPDATE_ACTIVE.has(updatePhase)) {
+    void refreshUpdateStatus();
+    return;
+  }
   void refresh();
+  void checkForUpdate(false);
 };
+
+const firstNoteLine = (notes) => String(notes || '')
+  .split('\n')
+  .map((line) => line.replace(/^[#>*\-\s]+/, '').trim())
+  .find(Boolean) || '';
+
+const formatMb = (bytes) => `${((Number(bytes) || 0) / 1048576).toFixed(1)} MB`;
+
+const renderUpdate = (status) => {
+  const phase = status?.phase || 'idle';
+  const current = status?.current ? `v${status.current}` : '';
+  const latest = status?.latest ? `v${status.latest}` : '';
+  const done = Number(status?.done) || 0;
+  const total = Number(status?.total) || 0;
+  const percent = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : null;
+  const active = UPDATE_ACTIVE.has(phase);
+  updateStatus = status;
+  updatePhase = phase;
+  updateCard.dataset.state = phase;
+  updateTitle.textContent = phase === 'available' ? '发现新版本'
+    : phase === 'downloading' ? '正在下载更新'
+      : phase === 'installing' ? '正在安装更新'
+        : phase === 'restarting' ? '正在重启' : '版本更新';
+  updateState.textContent = phase === 'available' ? latest
+    : phase === 'checking' ? '检查中…'
+      : phase === 'latest' ? '已是最新'
+        : phase === 'downloading' ? (percent == null ? '下载中' : `${percent}%`)
+          : phase === 'installing' ? '安装中'
+            : phase === 'restarting' ? '重启中'
+              : phase === 'error' ? '更新失败' : '未检查';
+  const detail = phase === 'available'
+    ? (firstNoteLine(status?.notes) || (status?.installable
+      ? `当前 ${current}，点击「更新」下载并安装 ${latest}。`
+      : `当前 ${current}，请打开发布页下载 ${latest}。`))
+    : phase === 'latest' ? `当前 ${current}，已是最新版本。`
+      : phase === 'checking' ? '正在连接更新源…'
+        : phase === 'downloading' ? (done === 0 && total === 0
+          ? '正在准备更新…'
+          : percent == null
+            ? `下载中… ${formatMb(done)}`
+            : `下载中 ${percent}% · ${formatMb(done)} / ${formatMb(total)}`)
+          : phase === 'installing' ? '下载完成，正在安装…'
+            : phase === 'restarting' ? '正在重启以完成更新…'
+              : phase === 'error' ? (status?.error || '更新失败，请稍后重试。')
+                : '点击「检查更新」查看新版本。';
+  updateDetail.textContent = detail;
+  const showProgress = active;
+  updateProgress.hidden = !showProgress;
+  if (showProgress) {
+    const indeterminate = phase === 'downloading' && percent == null;
+    updateProgress.dataset.indeterminate = indeterminate ? 'true' : 'false';
+    updateBar.style.width = indeterminate ? '' : `${phase === 'downloading' ? (percent ?? 0) : 100}%`;
+  }
+  const canInstall = phase === 'available' && !!status?.installable;
+  updateAction.hidden = !(phase === 'available' || phase === 'error');
+  updateAction.dataset.action = canInstall ? 'install' : 'release';
+  updateAction.textContent = canInstall ? '更新' : '打开发布页';
+  updateAction.disabled = active;
+  updateCheck.hidden = active;
+  updateCheck.disabled = phase === 'checking';
+  updateCheck.textContent = phase === 'error' ? '重试' : '检查更新';
+  scheduleUpdatePoll();
+  place();
+};
+
+function scheduleUpdatePoll() {
+  window.clearTimeout(updatePoll);
+  if (!UPDATE_POLL.has(updatePhase)) return;
+  updatePoll = window.setTimeout(async () => {
+    try {
+      renderUpdate(await call('panel_update_status'));
+    } catch (error) {
+      renderUpdate({ ...(updateStatus || {}), phase: updatePhase, error: String(error) });
+    }
+  }, 600);
+}
+
+async function refreshUpdateStatus() {
+  if (!invoke) return;
+  try {
+    renderUpdate(await call('panel_update_status'));
+  } catch {
+    // The panel keeps its last state; the periodic snapshot will report errors.
+  }
+}
+
+async function checkForUpdate(force = false) {
+  if (!invoke || UPDATE_ACTIVE.has(updatePhase) || updatePhase === 'checking') return;
+  renderUpdate({ ...(updateStatus || {}), phase: 'checking' });
+  try {
+    renderUpdate(await call('panel_update_check', { force }));
+  } catch (error) {
+    renderUpdate({ ...(updateStatus || {}), phase: 'error', error: String(error) });
+  }
+}
+
+async function startUpdate() {
+  if (!invoke || updateAction.disabled) return;
+  updateAction.disabled = true;
+  try {
+    renderUpdate(await call('panel_update_install'));
+  } catch (error) {
+    notice.textContent = String(error);
+    await refreshUpdateStatus();
+  }
+}
 
 const act = async (command, successText) => {
   if (busy) return;
@@ -183,6 +311,16 @@ pauseRunner.addEventListener('click', () => {
 $('#open-dashboard').addEventListener('click', () => void call('panel_open_dashboard'));
 $('#open-settings').addEventListener('click', () => void call('panel_open_settings'));
 $('#quit-app').addEventListener('click', () => void call('panel_quit'));
+updateCheck.addEventListener('click', () => void checkForUpdate(true));
+updateAction.addEventListener('click', () => {
+  if (updateAction.dataset.action === 'install') {
+    void startUpdate();
+    return;
+  }
+  void call('panel_update_open_release').catch((error) => {
+    notice.textContent = String(error);
+  });
+});
 
 scrim.addEventListener('click', () => void call('panel_hide'));
 panelCard.addEventListener('pointerdown', (event) => {
@@ -198,6 +336,8 @@ window.__qpetRefresh = refreshOnShow;
 window.__qpetPlace = place;
 window.addEventListener('resize', place);
 void refresh();
+void refreshUpdateStatus();
+void checkForUpdate(false);
 window.addEventListener('qpet-panel-show', refreshOnShow);
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') refreshOnShow();

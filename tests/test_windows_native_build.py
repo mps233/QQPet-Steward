@@ -166,6 +166,53 @@ def test_tauri_command_uses_windows_override_and_locked_cargo(native_inputs, mon
     assert kwargs["cwd"] == native.DESKTOP_DIR
 
 
+def test_tauri_updater_adds_signing_overlay(native_inputs, monkeypatch):
+    commands = []
+    installer = native.target_directory() / "release/bundle/nsis/QQPet-Steward_0.8.2_x64-setup.exe"
+
+    def build(command, **kwargs):
+        commands.append(command)
+        write(installer, b"MZnew-installer")
+
+    monkeypatch.setattr(native, "run", build)
+    assert native.build_tauri(updater=True) == installer
+    command = commands[0]
+    configs = [command[index + 1] for index, argument in enumerate(command) if argument == "--config"]
+    assert configs[0] == str(native.CONFIG)
+    assert json.loads(configs[1]) == {"bundle": {"createUpdaterArtifacts": True}}
+
+
+def test_native_outputs_include_signed_updater_artifact(native_inputs):
+    native.stage_backend(native_inputs)
+    write(native.target_directory() / "release" / native.MAIN_EXECUTABLE, b"MZnative-app")
+    release = native.prepare_native_directory()
+    installer = write(native.BUILD_ROOT / "original-setup.exe", b"MZnsis-installer")
+    write(installer.with_name(installer.name + ".sig"), b"minisign-signature")
+    outputs = native.publish_outputs(installer, release, native_zip=True, updater=True)
+    names = {path.name for path in outputs}
+    assert "QQPet-Steward_0.8.2_windows_x64-setup.exe" in names
+    assert "QQPet-Steward_0.8.2_windows_x64-setup.exe.sig" in names
+    assert "QQPet-Steward_0.8.2_windows_x64-setup.exe.sig.sha256" in names
+
+
+def test_native_outputs_prefer_signed_nsis_zip(native_inputs):
+    native.stage_backend(native_inputs)
+    write(native.target_directory() / "release" / native.MAIN_EXECUTABLE, b"MZnative-app")
+    release = native.prepare_native_directory()
+    installer = write(
+        native.target_directory() / "release/bundle/nsis/QQPet-Steward_0.8.2_x64-setup.exe",
+        b"MZnsis-installer",
+    )
+    archive = installer.with_name(installer.name.replace("-setup.exe", "-setup.nsis.zip"))
+    write(archive, b"PKnsis-archive")
+    write(archive.with_name(archive.name + ".sig"), b"minisign-signature")
+    outputs = native.publish_outputs(installer, release, native_zip=False, updater=True)
+    names = {path.name for path in outputs}
+    assert "QQPet-Steward_0.8.2_windows_x64-setup.nsis.zip" in names
+    assert "QQPet-Steward_0.8.2_windows_x64-setup.nsis.zip.sig" in names
+    assert "QQPet-Steward_0.8.2_windows_x64-setup.nsis.zip.sig.sha256" in names
+
+
 def test_native_outputs_contain_one_user_entry_and_verified_backend(native_inputs):
     native.stage_backend(native_inputs)
     write(native.target_directory() / "release" / native.MAIN_EXECUTABLE, b"MZnative-app")
