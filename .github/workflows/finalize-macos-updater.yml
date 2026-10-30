@@ -54,8 +54,9 @@ jobs:
           name="QQPet-Steward_${VERSION}_macos_arm64.app.tar.gz"
           mv "$work/app.tar.gz" "$work/$name"
           gh release upload "$tag" "$work/$name" --repo "$GH_REPO" --clobber
-          gh release view "$tag" --repo "$GH_REPO" --json assets \
-            --jq '.assets[] | select(.name | startswith("qqpet-update-part-") or .name == "qqpet-gh-chunk-test.bin") | .id' \
+          release_id="$(gh release view "$tag" --repo "$GH_REPO" --json databaseId --jq .databaseId)"
+          gh api --paginate "repos/$GH_REPO/releases/$release_id/assets?per_page=100" \
+            --jq '.[] | select(.name | startswith("qqpet-update-part-") or .name == "qqpet-gh-chunk-test.bin") | .id' \
             | while read -r asset_id; do
                 gh api -X DELETE "repos/$GH_REPO/releases/assets/$asset_id" >/dev/null
               done
