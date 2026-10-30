@@ -281,9 +281,30 @@
   overflow-wrap: anywhere;
 }
 .set-update-state.err { color: #A63224; }
-.set-update-note { display: block; margin-top: 3px; color: #3D7A13; font-size: 11.5px; }
+.set-update-error { display: block; margin-top: 3px; color: #A63224; font-size: 11.5px; }
+.set-update-bar {
+  height: 4px; margin-top: 6px; overflow: hidden;
+  border-radius: 999px; background: rgba(120, 82, 36, .12);
+}
+.set-update-bar i {
+  display: block; height: 100%; border-radius: inherit;
+  background: linear-gradient(90deg, #FFB33A, #FF990F);
+  transition: width .2s ease;
+}
 .set-update-actions { display: flex; gap: 6px; flex: none; }
 .set-update-actions .set-primary {
+  display: inline-flex; align-items: center; gap: 6px;
   width: auto; height: 32px; margin: 0; padding: 0 12px;
   border-radius: 9px; font-size: 12px;
+}
+.set-update-actions .set-primary:disabled { cursor: default; }
+.set-update-spin {
+  width: 12px; height: 12px; flex: none;
+  border: 2px solid currentColor; border-right-color: transparent;
+  border-radius: 50%;
+  animation: set-update-spin .8s linear infinite;
+}
+@keyframes set-update-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .set-update-spin { animation-duration: 2.4s; }
 }

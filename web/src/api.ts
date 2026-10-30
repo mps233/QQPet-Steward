@@ -58,6 +58,8 @@ export interface RemoteUpdateStatus {
   installable: boolean
   done: number
   total: number | null
+  /** 最近一次真正联网检查的时间（epoch 秒） */
+  lastChecked: number | null
   /** 桌面壳最后一次心跳（epoch 秒）；过期说明 App 没在运行 */
   updated_at?: number
 }
