@@ -18,6 +18,7 @@ import {
 } from '../lib/settings-schema'
 import { Switch } from './form'
 import { NavHead } from './NavHead'
+import { RemoteUpdate } from './RemoteUpdate'
 import { PairingPreview, RemoteSettingsPanel } from './ConnectionGate'
 
 const strOf = (ed: Record<string, unknown>, k: string): string => {
@@ -595,6 +596,7 @@ function TgbotStatus({ editable }: { editable: Record<string, unknown> }) {
 export function SettingsPage({
   editable,
   access,
+  version,
   onSave,
   onExit,
   grp,
@@ -605,6 +607,8 @@ export function SettingsPage({
   editable: Record<string, unknown>
   /** 访问权限状态（设置 → 仪表盘访问码 用） */
   access?: AccessInfo
+  /** 应用版本（只读）。手机端没有 App 壳的更新入口，只能在这里看版本号 */
+  version?: string
   onSave: (u: Record<string, unknown>) => Promise<void>
   onExit: () => void
   /** 当前二级分组（null = 一级菜单列表） */
@@ -701,6 +705,16 @@ export function SettingsPage({
               </section>
             )
           })}
+          <section className="set-sec">
+            <h3>版本与更新</h3>
+            <div className="set-card">
+              <div className="set-version">
+                <span>QQPet-Steward</span>
+                <b>{version ? `v${version}` : '版本未知'}</b>
+              </div>
+              <RemoteUpdate />
+            </div>
+          </section>
         </div>
       </>
     )

@@ -43,6 +43,28 @@ export interface Data {
   /** 访问权限状态（设置 → 访问码 用；不含访问码本身） */
   access?: AccessInfo
   onboarding?: OnboardingStatus
+  /** 应用版本（设置页底部显示；手机端只能从这里看版本号） */
+  app?: { version?: string }
+}
+
+/** GET /api/update —— 电脑端 App 的更新器状态（手机远程更新用） */
+export interface RemoteUpdateStatus {
+  phase: 'idle' | 'checking' | 'latest' | 'available'
+    | 'downloading' | 'installing' | 'restarting' | 'error'
+  current: string
+  latest: string
+  notes: string
+  error: string
+  installable: boolean
+  done: number
+  total: number | null
+  /** 桌面壳最后一次心跳（epoch 秒）；过期说明 App 没在运行 */
+  updated_at?: number
+}
+
+export interface RemoteUpdateState {
+  running: boolean
+  status: RemoteUpdateStatus | null
 }
 
 export interface OnboardingStatus {
@@ -238,6 +260,15 @@ async function requestJSONWithoutAuth<T>(path: string): Promise<T> {
 }
 
 export const fetchData = (): Promise<Data> => getJSON<Data>('/api/data')
+
+/** 电脑端更新桥：状态由桌面壳每 2 秒镜像，请求由桌面壳轮询执行。 */
+export const fetchRemoteUpdate = (): Promise<RemoteUpdateState> =>
+  getJSON<RemoteUpdateState>('/api/update')
+
+export const requestRemoteUpdate = (
+  action: 'check' | 'install',
+): Promise<{ ok: boolean; msg?: string }> =>
+  requestJSON('/api/update', { method: 'POST', body: JSON.stringify({ action }) })
 
 export const completeOnboarding = (): Promise<{ ok: boolean; onboarding: OnboardingStatus }> =>
   requestJSON('/api/onboarding', {

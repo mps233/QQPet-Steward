@@ -34,7 +34,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 from src.config import APP_ROOT, RESOURCE_ROOT
-from src.build_info import build_fingerprint
+from src.build_info import app_version, build_fingerprint
 from src.client_protocol import (PROTOCOL_VERSION, ClientProtocolStore,
                                  InvalidPairingTicket, PairingAttemptLimiter,
                                  ProtocolStoreError, candidate_base_urls,
@@ -1836,12 +1836,55 @@ def build_data() -> dict:
         'today_duration': today_duration(log_lines, efficiency_tiers_of(sched_cfg)),
         'last_line': log_lines[-1] if log_lines else '',
         'editable': editable_snapshot(),
+        # 设置页底部显示；手机端没有 App 壳的更新入口，只能从这里看版本
+        'app': {'version': app_version()},
         'friends': list_friends(),
         'onboarding': onboarding_status(),
         # 访问权限卡（设置 → 访问码）用；不回传访问码本身
         'access': {'custom': is_custom_key(key_file),
                    'min_length': MIN_KEY_LENGTH},
     }
+
+
+# ---------------------------------------------------------------- 远程更新桥
+
+UPDATE_REQUEST_FILE = 'update_request.json'
+UPDATE_STATUS_FILE = 'update_status.json'
+# 桌面壳每 2 秒重写一次状态文件；超过这个时间说明 App 没在运行。
+UPDATE_STATUS_MAX_AGE = 15
+
+
+def update_bridge_state() -> dict:
+    """电脑端 App 的更新器状态（手机通过它远程检查/安装更新）。
+
+    只有 Tauri 壳里有 updater，手机浏览器只能走 HTTP，所以壳把状态镜像到
+    runs/update_status.json；文件过期说明 App 没开，界面据此隐藏更新按钮。
+    """
+    try:
+        status = json.loads((RUNS / UPDATE_STATUS_FILE).read_text('utf-8'))
+    except (OSError, ValueError, TypeError):
+        return {'running': False, 'status': None}
+    if not isinstance(status, dict):
+        return {'running': False, 'status': None}
+    updated = status.get('updated_at')
+    fresh = (isinstance(updated, (int, float))
+             and time.time() - updated <= UPDATE_STATUS_MAX_AGE)
+    return {'running': fresh, 'status': status if fresh else None}
+
+
+def request_update(action: str) -> dict:
+    """把一次更新请求写进 runs/update_request.json，由桌面壳轮询执行。"""
+    if action not in ('check', 'install'):
+        return {'ok': False, 'msg': '未知的更新操作'}
+    if not update_bridge_state()['running']:
+        return {'ok': False, 'msg': '电脑端 App 未运行，无法远程更新'}
+    payload = {'id': str(time.time_ns()), 'action': action,
+               'requested_at': time.time()}
+    try:
+        write_text_atomic(RUNS / UPDATE_REQUEST_FILE, json.dumps(payload))
+    except OSError as exc:
+        return {'ok': False, 'msg': f'无法写入更新请求：{exc}'}
+    return {'ok': True, 'action': action, 'msg': '已通知电脑端 App'}
 
 
 # ---------------------------------------------------------------- HTTP
@@ -2369,6 +2412,9 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/data':
                 body = json.dumps(build_data(), ensure_ascii=False).encode('utf-8')
                 self._send(200, 'application/json; charset=utf-8', body)
+            elif path == '/api/update':
+                body = json.dumps(update_bridge_state(), ensure_ascii=False).encode('utf-8')
+                self._send(200, 'application/json; charset=utf-8', body)
             elif path == '/api/runner/pause':
                 body = json.dumps({
                     'ok': True,
@@ -2628,6 +2674,18 @@ class Handler(BaseHTTPRequestHandler):
                         pass
                 body = json.dumps(result, ensure_ascii=False).encode('utf-8')
                 self._send(200 if result['ok'] else 400,
+                           'application/json; charset=utf-8', body)
+            elif u.path == '/api/update':
+                length = int(self.headers.get('Content-Length') or 0)
+                if length < 0 or length > 4096:
+                    raise ValueError('Invalid update request')
+                payload = json.loads(self.rfile.read(length).decode('utf-8') or '{}')
+                action = str(payload.get('action') or '').strip()
+                result = request_update(action)
+                audit(f'远程更新请求(来自 {self.client_address[0]}): {action or "空"} → '
+                      f'{"已登记" if result.get("ok") else result.get("msg")}')
+                body = json.dumps(result, ensure_ascii=False).encode('utf-8')
+                self._send(200 if result.get('ok') else 400,
                            'application/json; charset=utf-8', body)
             elif u.path == '/api/adb/connect':
                 length = int(self.headers.get('Content-Length') or 0)

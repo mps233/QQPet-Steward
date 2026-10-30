@@ -8,6 +8,14 @@ PYTHON="${QQPET_BUILD_PYTHON:-$ROOT/.venv/bin/python}"
 OUTPUT_DIR="$DESKTOP_DIR/target/runtime"
 RUNTIME="$OUTPUT_DIR/QQPetRuntime/QQPetRuntime"
 FINGERPRINT_FILE="$OUTPUT_DIR/.runtime-fingerprint"
+APP_VERSION="$("$PYTHON" - "$DESKTOP_DIR/tauri.conf.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    print(json.load(handle)["version"])
+PY
+)"
 
 if [ "$(uname -s)" != "Darwin" ]; then
   echo "macOS runtime 必须在 macOS 上构建。" >&2
@@ -56,7 +64,7 @@ files = {
     root / "dashboard.py", root / "config.example.yaml", root / "requirements.txt",
     root / "tools/career_sync.py", desktop / "runtime_launcher.py",
     desktop / "QQPetRuntime.spec", desktop / "requirements-build.txt",
-    desktop / "scripts/build-runtime.sh", adb.resolve(),
+    desktop / "scripts/build-runtime.sh", desktop / "tauri.conf.json", adb.resolve(),
 }
 for relative in ("src", "scenarios", "web/dist", "static", "resources/minitouch", "resources/frida-server"):
     folder = root / relative
@@ -83,6 +91,7 @@ if [ -x "$RUNTIME" ] && [ -f "$FINGERPRINT_FILE" ] \
   echo "本机 runtime 源码、依赖与资源未变，验证现有构建…"
   if "$RUNTIME" self-test; then
     printf '%s\n' "$build_fingerprint" > "$OUTPUT_DIR/QQPetRuntime/.build-fingerprint"
+printf '%s\n' "$APP_VERSION" > "$OUTPUT_DIR/QQPetRuntime/.build-version"
     echo "$OUTPUT_DIR/QQPetRuntime"
     exit 0
   fi
@@ -95,6 +104,7 @@ fi
   "$DESKTOP_DIR/QQPetRuntime.spec"
 "$RUNTIME" self-test
 printf '%s\n' "$build_fingerprint" > "$OUTPUT_DIR/QQPetRuntime/.build-fingerprint"
+printf '%s\n' "$APP_VERSION" > "$OUTPUT_DIR/QQPetRuntime/.build-version"
 if [ "$(fingerprint)" = "$build_fingerprint" ]; then
   printf '%s\n' "$build_fingerprint" > "$FINGERPRINT_FILE"
 else

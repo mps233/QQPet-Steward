@@ -787,6 +787,7 @@ function DashboardApp({ onLoginRequired }: { onLoginRequired: () => void }) {
         <section className="card" data-page="set">
           <SettingsPage
             editable={d.editable ?? {}}
+            version={d.app?.version ?? ''}
             access={d.access}
             onSave={saveOne}
             onExit={() => go('main')}

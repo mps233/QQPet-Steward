@@ -34,6 +34,12 @@ const WINDOW_CHROME_SCRIPT: &str = include_str!("../app/window-chrome.js");
 const BACKGROUND_LABEL: &str = "ai.qqpet.dashboard.app";
 const RELEASE_PAGE: &str = "https://github.com/mps233/QQPet-Steward/releases/latest";
 const UPDATE_CHECK_INTERVAL_SECONDS: u64 = 6 * 60 * 60;
+/// Phone → desktop update bridge. The dashboard writes a request file (the
+/// browser has no Tauri IPC); this shell executes it and mirrors its updater
+/// state back to `runs/update_status.json` on every tick.
+const UPDATE_REQUEST_FILE: &str = "runs/update_request.json";
+const UPDATE_STATUS_FILE: &str = "runs/update_status.json";
+const UPDATE_BRIDGE_INTERVAL: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -500,6 +506,82 @@ async fn panel_update_install(app: tauri::AppHandle) -> Result<UpdateStatus, Str
         }
     });
     Ok(started)
+}
+
+/// Bridge the dashboard's HTTP clients to the updater that lives in this
+/// shell. A phone browser cannot call Tauri commands, so it asks the dashboard
+/// for an update and the dashboard drops a request file in the data root.
+fn start_update_bridge(app: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        // A request left over from before a restart must not run again.
+        let mut handled = fs::read_to_string(
+            app.state::<ShellState>()
+                .data_root
+                .join(UPDATE_REQUEST_FILE),
+        )
+        .ok()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .and_then(|request| request["id"].as_str().map(str::to_string))
+        .unwrap_or_default();
+        loop {
+            std::thread::sleep(UPDATE_BRIDGE_INTERVAL);
+            let Some(state) = app.try_state::<ShellState>() else {
+                continue;
+            };
+            let request_path = state.data_root.join(UPDATE_REQUEST_FILE);
+            if let Ok(raw) = fs::read_to_string(&request_path) {
+                if let Ok(request) = serde_json::from_str::<serde_json::Value>(&raw) {
+                    let id = request["id"].as_str().unwrap_or_default();
+                    let action = request["action"].as_str().unwrap_or_default();
+                    if !id.is_empty() && id != handled {
+                        handled = id.to_string();
+                        let app_for_task = app.clone();
+                        match action {
+                            "check" => {
+                                tauri::async_runtime::spawn(async move {
+                                    let _ = check_for_update(&app_for_task, true).await;
+                                });
+                            }
+                            "install" => {
+                                tauri::async_runtime::spawn(async move {
+                                    let _ = panel_update_install(app_for_task).await;
+                                });
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            write_update_status(&state);
+        }
+    });
+}
+
+/// Mirror the updater state for the dashboard. `updated_at` doubles as the
+/// heartbeat: when the App is not running the file goes stale and the phone
+/// hides the controls instead of queuing requests nobody will read.
+fn write_update_status(state: &ShellState) {
+    let Ok(status) = state.update.status.lock().map(|status| status.clone()) else {
+        return;
+    };
+    let Ok(mut payload) = serde_json::to_value(&status) else {
+        return;
+    };
+    if let Some(object) = payload.as_object_mut() {
+        object.insert("pid".to_string(), serde_json::json!(std::process::id()));
+        object.insert("updated_at".to_string(), serde_json::json!(now_epoch()));
+    }
+    let path = state.data_root.join(UPDATE_STATUS_FILE);
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let temporary = path.with_extension("json.tmp");
+    let Ok(bytes) = serde_json::to_vec(&payload) else {
+        return;
+    };
+    if fs::write(&temporary, bytes).is_ok() {
+        let _ = fs::rename(&temporary, &path);
+    }
 }
 
 struct PrimaryWindowIntent {
@@ -2362,6 +2444,7 @@ fn main() {
                 backend_verified: Mutex::new(false),
                 update: UpdateState::new(app.package_info().version.to_string()),
             });
+            start_update_bridge(app.handle().clone());
             let toggle = MenuItem::with_id(app, "toggle", "打开状态面板", true, None::<&str>)?;
             let open = MenuItem::with_id(app, "open", "打开主界面", true, None::<&str>)?;
             let separator = PredefinedMenuItem::separator(app)?;

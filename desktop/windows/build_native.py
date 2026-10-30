@@ -139,6 +139,12 @@ def stage_backend(source: Path) -> str:
         shutil.copytree(source / "_internal", temporary / "_internal")
         for name in BACKEND_EXECUTABLES:
             shutil.copy2(source / name, temporary / name)
+        # Written before the fingerprint on purpose: the version is part of the
+        # backend identity, so a version-only release still gets a fresh copy
+        # instead of reusing the previous backends/<fingerprint> directory.
+        (temporary / ".build-version").write_text(
+            build_portable.read_version() + "\n", encoding="ascii"
+        )
         fingerprint = backend_fingerprint(temporary)
         (temporary / ".build-fingerprint").write_text(fingerprint + "\n", encoding="ascii")
         if RUNTIME_STAGE.exists():

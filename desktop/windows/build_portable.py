@@ -320,6 +320,10 @@ def merge_onedir_outputs(portable_dir: Path) -> None:
         shutil.copy2(ROOT / "config.example.yaml", staging / "config.example.yaml")
         for name in PORTABLE_FILES:
             shutil.copy2(WINDOWS_DIR / name, staging / name)
+        # Source of truth for the version shown in Settings on a phone.
+        (staging / ".build-version").write_text(
+            read_version() + "\n", encoding="ascii"
+        )
         if portable_dir.exists():
             shutil.rmtree(portable_dir)
         staging.replace(portable_dir)
