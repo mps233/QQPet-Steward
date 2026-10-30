@@ -1,6 +1,6 @@
 [package]
 name = "qqpet-dashboard-desktop"
-version = "0.8.7"
+version = "0.8.8"
 description = "Desktop App for the QQ Pet dashboard"
 authors = ["QQ Pet Copilot contributors"]
 edition = "2021"
