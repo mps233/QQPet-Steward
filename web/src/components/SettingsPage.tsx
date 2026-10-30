@@ -708,11 +708,7 @@ export function SettingsPage({
           <section className="set-sec">
             <h3>版本与更新</h3>
             <div className="set-card">
-              <div className="set-version">
-                <span>QQPet-Steward</span>
-                <b>{version ? `v${version}` : '版本未知'}</b>
-              </div>
-              <RemoteUpdate />
+              <RemoteUpdate fallbackVersion={version} />
             </div>
           </section>
         </div>

@@ -15,7 +15,7 @@ const CHECK_TIMEOUT_MS = 30_000
  *  手机浏览器没有 Tauri IPC，更新动作必须由电脑端的桌面壳执行：这里只写
  *  `runs/update_request.json`，壳轮询执行后再把状态镜像回来
  *  （`runs/update_status.json`，读不到/过期 = 电脑端 App 没开）。 */
-export function RemoteUpdate() {
+export function RemoteUpdate({ fallbackVersion }: { fallbackVersion?: string }) {
   const [state, setState] = useState<{
     running: boolean
     status: RemoteUpdateStatus | null
@@ -147,38 +147,51 @@ export function RemoteUpdate() {
   const showInstall = running && !checkingNow && canInstall
   const hasActions = showInstall || checkingNow || showCheck
 
+  // 版本号必须显示「正在运行的 App」的版本：源码模式下仪表盘读的是仓库里的
+  // tauri.conf.json（可能已经是下一版），不能代表桌面壳实际运行在哪个版本。
+  // 只有 App 没在运行（桥状态缺失/过期）时才退回仪表盘自己的版本。
+  const shownVersion = running && status?.current
+    ? `v${status.current}`
+    : (fallbackVersion ? `v${fallbackVersion}` : '版本未知')
+
   return (
-    <div className="set-update">
-      <div className="set-update-main">
-        <span className="set-update-label">电脑端更新</span>
-        <span className={`set-update-state${phase === 'error' ? ' err' : ''}`}>{text}</span>
-        {phase === 'downloading' && percent != null ? (
-          <div className="set-update-bar" aria-hidden="true">
-            <i style={{ width: `${percent}%` }} />
+    <>
+      <div className="set-version">
+        <span>QQPet-Steward</span>
+        <b>{shownVersion}</b>
+      </div>
+      <div className="set-update">
+        <div className="set-update-main">
+          <span className="set-update-label">电脑端更新</span>
+          <span className={`set-update-state${phase === 'error' ? ' err' : ''}`}>{text}</span>
+          {phase === 'downloading' && percent != null ? (
+            <div className="set-update-bar" aria-hidden="true">
+              <i style={{ width: `${percent}%` }} />
+            </div>
+          ) : null}
+          {error && running ? <span className="set-update-error">{error}</span> : null}
+        </div>
+        {hasActions ? (
+          <div className="set-update-actions">
+            {showInstall ? (
+              <button className="set-primary" type="button" disabled={busy}
+                onClick={() => void act('install')}>更新</button>
+            ) : null}
+            {checkingNow ? (
+              <button className="set-primary" type="button" disabled>
+                <span className="set-update-spin" aria-hidden="true" />
+                检查更新
+              </button>
+            ) : null}
+            {showCheck ? (
+              <button className="set-primary" type="button" disabled={busy}
+                onClick={() => void act('check')}>
+                {phase === 'error' ? '重试' : '检查更新'}
+              </button>
+            ) : null}
           </div>
         ) : null}
-        {error && running ? <span className="set-update-error">{error}</span> : null}
       </div>
-      {hasActions ? (
-        <div className="set-update-actions">
-          {showInstall ? (
-            <button className="set-primary" type="button" disabled={busy}
-              onClick={() => void act('install')}>更新</button>
-          ) : null}
-          {checkingNow ? (
-            <button className="set-primary" type="button" disabled>
-              <span className="set-update-spin" aria-hidden="true" />
-              检查更新
-            </button>
-          ) : null}
-          {showCheck ? (
-            <button className="set-primary" type="button" disabled={busy}
-              onClick={() => void act('check')}>
-              {phase === 'error' ? '重试' : '检查更新'}
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
+    </>
   )
 }
