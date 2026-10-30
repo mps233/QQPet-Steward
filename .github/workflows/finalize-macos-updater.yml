@@ -42,8 +42,15 @@ jobs:
           tag="v${VERSION}"
           work="$RUNNER_TEMP/updater"
           mkdir -p "$work/parts"
-          gh release download "$tag" --repo "$GH_REPO" \
-            --pattern 'qqpet-update-part-*' --dir "$work/parts"
+          release_id="$(gh release view "$tag" --repo "$GH_REPO" --json databaseId --jq .databaseId)"
+          gh api --paginate "repos/$GH_REPO/releases/$release_id/assets?per_page=100" \
+            --jq '.[] | select(.name | startswith("qqpet-update-part-")) | [.id, .name] | @tsv' \
+            | sort -k2 > "$work/parts.tsv"
+          test "$(wc -l < "$work/parts.tsv")" -gt 0
+          while IFS=$'\t' read -r asset_id asset_name; do
+            gh api -H 'Accept: application/octet-stream' \
+              "repos/$GH_REPO/releases/assets/$asset_id" > "$work/parts/$asset_name"
+          done < "$work/parts.tsv"
           mapfile -t parts < <(find "$work/parts" -maxdepth 1 -type f \
             -name 'qqpet-update-part-*' | sort)
           test "${#parts[@]}" -gt 0
@@ -54,7 +61,6 @@ jobs:
           name="QQPet-Steward_${VERSION}_macos_arm64.app.tar.gz"
           mv "$work/app.tar.gz" "$work/$name"
           gh release upload "$tag" "$work/$name" --repo "$GH_REPO" --clobber
-          release_id="$(gh release view "$tag" --repo "$GH_REPO" --json databaseId --jq .databaseId)"
           gh api --paginate "repos/$GH_REPO/releases/$release_id/assets?per_page=100" \
             --jq '.[] | select(.name | startswith("qqpet-update-part-") or .name == "qqpet-gh-chunk-test.bin") | .id' \
             | while read -r asset_id; do
