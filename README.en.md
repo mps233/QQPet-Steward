@@ -97,11 +97,29 @@ The macOS app is written to `desktop/macos/target/release/bundle/macos/QQPet-Ste
 4. For source installs, the dashboard listens on port 8787. The first visit asks for the access code stored in `runs/dashboard_access.token`.
 5. To debug the scheduler in a terminal, run `./run.sh` (Ctrl+C stops it). Do not run it at the same time as the dashboard's Start button.
 
-The dashboard has seven pages: Overview, Adventure, Career, Logs, Notifications, Settings and Live. The overview page is mapped below.
+The dashboard has seven pages: Overview, Adventure, Career, Logs, Notifications, Settings and Live. The current overview page is shown below; the interface is Chinese-only.
 
-![Annotated dashboard overview](docs/overview-guide.png)
+<img src="docs/screens/overview.png" alt="Overview page: profile card, today's stats, task list and run controls" width="360">
 
-*An annotated walkthrough of the overview page. The interface is Chinese-only, so the callouts are in Chinese as well.*
+*Overview: profile card, today's stats, task list and run controls.*
+
+### Screens
+
+<img src="docs/screens/adventure.png" alt="Adventure log page: totals, earnings chart and per-run history" width="360">
+
+*Adventure log: totals, earnings chart and per-run history.*
+
+<img src="docs/screens/career.png" alt="Career tree page: attribute values and career routes by tier" width="360">
+
+*Career tree: attribute values and career routes by tier.*
+
+<img src="docs/screens/logs.png" alt="Earnings page: per-session study and work rewards, with pet and owner names redacted" width="360">
+
+*Earnings: per-session study and work rewards; names are redacted.*
+
+<img src="docs/screens/settings.png" alt="Settings page: entries for study and careers, work and hiring, quotas and adventure, care, friend interactions, system and phone remote" width="360">
+
+*Settings: tasks, care, system and phone remote entries.*
 
 Telegram: configure a bot token and the allowed chats under **Settings → TG bot**. The bot answers `/help`, `/status`, `/get`, `/set`, `/attrs`, `/log`, `/run`, `/halt`, `/pause` and `/resume`; messages from chats outside the allowlist are ignored.
 
