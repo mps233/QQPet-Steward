@@ -1,0 +1,64 @@
+name: Finalize macOS updater asset
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version without v, for example 0.8.6"
+        required: true
+        type: string
+      sha256:
+        description: "SHA-256 of the assembled .app.tar.gz"
+        required: true
+        type: string
+      publish:
+        description: "Publish the draft after the bundle is verified"
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: qqpet-finalize-macos-updater
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: mps233/QQPet-Steward
+      VERSION: ${{ inputs.version }}
+      EXPECTED_SHA256: ${{ inputs.sha256 }}
+      PUBLISH: ${{ inputs.publish }}
+    steps:
+      - name: Merge chunks, verify, upload and publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="v${VERSION}"
+          work="$RUNNER_TEMP/updater"
+          mkdir -p "$work/parts"
+          gh release download "$tag" --repo "$GH_REPO" \
+            --pattern 'qqpet-update-part-*' --dir "$work/parts"
+          mapfile -t parts < <(find "$work/parts" -maxdepth 1 -type f \
+            -name 'qqpet-update-part-*' | sort)
+          test "${#parts[@]}" -gt 0
+          cat "${parts[@]}" > "$work/app.tar.gz"
+          echo "${EXPECTED_SHA256}  $work/app.tar.gz" | sha256sum -c -
+          tar -tzf "$work/app.tar.gz" > "$work/list.txt"
+          test "$(head -1 "$work/list.txt")" = "QQPet-Steward.app/"
+          name="QQPet-Steward_${VERSION}_macos_arm64.app.tar.gz"
+          mv "$work/app.tar.gz" "$work/$name"
+          gh release upload "$tag" "$work/$name" --repo "$GH_REPO" --clobber
+          gh release view "$tag" --repo "$GH_REPO" --json assets \
+            --jq '.assets[] | select(.name | startswith("qqpet-update-part-") or .name == "qqpet-gh-chunk-test.bin") | .id' \
+            | while read -r asset_id; do
+                gh api -X DELETE "repos/$GH_REPO/releases/assets/$asset_id" >/dev/null
+              done
+          if [ "$PUBLISH" = "true" ]; then
+            gh release edit "$tag" --repo "$GH_REPO" --draft=false --latest
+          fi
