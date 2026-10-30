@@ -544,3 +544,31 @@ html[data-page="adv"] .page-slot.page-enter::-webkit-scrollbar {
 验证：打开/关闭瞬间采样槽位 class 与 `getComputedStyle().animationName`
 （应为 `qp-enter-fwd` / `qp-leave-back`，时长 `0.32s`），且**离场动画期间**
 `.ob-kicker` 仍停在"第 N 步"。
+
+## 十五、桌面壳的"拖拽条"会吃掉右上角的点击（2026-10-30，更新药丸点了没反应）
+
+Tauri 仪表盘窗口里，`desktop/macos/app/window-chrome.js` 会往 `body` 注入一条
+**全宽、`z-index: 2147483647`、高 28px** 的 `#qpet-window-drag-region`（窗口拖动区）。
+任何 `position:fixed` 放在顶部 28px 里的元素（更新药丸 `.upd-fab` 就在 `top:8px`）
+**看得见但点不到** —— 点击全被拖拽条接走，表现为"药丸在，点了弹层不出来"。
+
+**修法**：`update.css` 把拖拽条的右边界按**药丸实际宽度**收进去
+（`right: calc(12px + var(--upd-pill-w, 96px)) !important`）。`--upd-pill-w` 由
+`UpdateBadge` 的 `ResizeObserver` 写在 `html` 上，标签变长（`v1.0.0-beta.12` → 102px）
+自动跟着变；**不要写死 110px/96px 这种数字**，长了就会被拖拽条吃掉一截。
+必须带 `!important` 且用 `html #id` 提高特异性：拖拽条的样式是 JS 运行时注入的
+`<style>`，普通规则压不住。
+
+| 规则 | 作用 |
+| --- | --- |
+| `html #qpet-window-drag-region { right: calc(12px + var(--upd-pill-w, 96px)) }` | 给药丸留出可点区域（96px 只是首帧兜底） |
+| `body:not(:has(.upd-fab)) #qpet-window-drag-region { right: 0 }` | 没药丸时把整个标题栏还给拖拽区（否则右上角是拖不动的死区）；`:has()` 不支持的 WebView 会忽略它，自动退回上一条 |
+
+**别在弹层打开时把拖拽条 `display:none`**：macOS 仪表盘窗口是
+`TitleBarStyle::Overlay + hidden_title`，**没有原生标题栏**，拖拽条是唯一能拖动窗口的地方
+（下载要跑几分钟）。代价只是遮罩最顶上 28px 点下去是拖窗口而不是关弹层 —— 有 × 和 Esc，可接受。
+
+**以后再往仪表盘窗口右上角加东西**：同样用 CSS 变量把宽度算进去，别再加魔数。
+
+**验证**（必须在 App 窗口里点，headless 没有拖拽条）：点药丸 → 弹层打开；
+拖标题栏其它位置 → 窗口移动；下载中拖顶部 → 窗口仍能动。

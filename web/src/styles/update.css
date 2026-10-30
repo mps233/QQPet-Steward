@@ -1,21 +1,40 @@
 /* 总览右上角的更新入口 + 更新日志弹层。
    只由 UpdateBadge 使用；放在 .app 下、main 外，position:fixed 不参与高度链。 */
 
+/* window-chrome.js injects a full-width, maximum-z-index drag strip over the
+   top 28px. The update pill lives inside that strip, so the strip swallowed
+   its clicks (the pill was visible but the modal never opened). Keep the
+   top-right corner out of the drag region; the rest of the title bar still
+   drags the window. `--upd-pill-w` is measured by UpdateBadge (ResizeObserver)
+   so a long version label can never slide under the strip; 96px is only the
+   first-paint fallback. */
+html #qpet-window-drag-region {
+  right: calc(12px + var(--upd-pill-w, 96px)) !important;
+}
+/* No pill on screen? Give the whole title bar back to the drag region. */
+body:not(:has(.upd-fab)) #qpet-window-drag-region {
+  right: 0 !important;
+}
+
+/* Top-right of the desktop window's title bar, vertically centered with the
+   macOS traffic lights (the title bar inset is 28px, so its center is 14px).
+   The drag strip leaves exactly this pill's measured width free. */
 .upd-fab {
   position: fixed;
-  top: calc(env(safe-area-inset-top, 0px) + 4px);
-  right: calc(env(safe-area-inset-right, 0px) + 12px);
+  top: 8px;
+  right: 12px;
+  left: auto;
   z-index: 25;
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  height: 24px;
-  padding: 0 9px;
-  border: 1px solid rgba(255, 255, 255, .18);
+  height: 20px;
+  padding: 0 8px;
+  border: 1px solid rgba(255, 255, 255, .22);
   border-radius: 999px;
-  background: rgba(0, 0, 0, .26);
+  background: rgba(0, 0, 0, .30);
   color: #fff;
-  font: 600 11px/1 "Avenir Next", "PingFang SC", sans-serif;
+  font: 600 10px/1 "Avenir Next", "PingFang SC", sans-serif;
   cursor: pointer;
   -webkit-backdrop-filter: blur(6px);
   backdrop-filter: blur(6px);
@@ -26,7 +45,16 @@
   color: #4d2c08;
   box-shadow: 0 2px 8px rgba(0, 0, 0, .18);
 }
-.upd-spark { font-size: 13px; font-weight: 800; line-height: 1; }
+.upd-ico {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
 
 .upd-mask {
   position: fixed;

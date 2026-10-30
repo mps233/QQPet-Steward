@@ -135,7 +135,43 @@ fn build_updater(
     builder.build()
 }
 
+/// A failed update check is retried once, and only when the failure is cheap
+/// to repeat: GitHub access on some networks resets the first request, which
+/// fails fast. A timeout already spent the whole 20s budget (retrying costs
+/// another 20s and is more likely to time out again), and decode / builder /
+/// redirect / status errors are deterministic — retrying them only doubles
+/// the wait before the same error.
+fn update_error_is_transient(error: &tauri_plugin_updater::Error) -> bool {
+    matches!(
+        error,
+        tauri_plugin_updater::Error::Reqwest(error)
+            if !error.is_timeout()
+                && !error.is_decode()
+                && !error.is_builder()
+                && !error.is_redirect()
+                && !error.is_status()
+    )
+}
+
+/// Diagnostics for the updater. A Finder-launched `.app` (and a Windows GUI
+/// build without a console) has no stdout/stderr sink, so an update failure
+/// would leave no trace; append to `runs/desktop.log` instead. Best-effort:
+/// a diagnostic must never break a check.
+fn log_update(app: &tauri::AppHandle, message: &str) {
+    let Some(state) = app.try_state::<ShellState>() else {
+        return;
+    };
+    let path = state.data_root.join("runs/desktop.log");
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = writeln!(file, "[{}] {message}", now_epoch());
+    }
+}
+
 async fn check_for_update(app: &tauri::AppHandle, force: bool) -> Result<UpdateStatus, String> {
+    log_update(app, &format!("update check requested (force={force})"));
     let state = app.state::<ShellState>();
     let now = now_epoch();
     let installing = *state
@@ -190,7 +226,13 @@ async fn check_for_update(app: &tauri::AppHandle, force: bool) -> Result<UpdateS
         .map_err(|_| "更新状态不可用".to_owned())? = true;
 
     let result = match build_updater(app) {
-        Ok(updater) => updater.check().await,
+        Ok(updater) => {
+            let first = updater.check().await;
+            match first {
+                Err(error) if update_error_is_transient(&error) => updater.check().await,
+                result => result,
+            }
+        }
         Err(error) => Err(error),
     };
 
@@ -256,12 +298,20 @@ async fn check_for_update(app: &tauri::AppHandle, force: bool) -> Result<UpdateS
         .checking
         .lock()
         .map_err(|_| "更新状态不可用".to_owned())? = false;
-    state
+    let final_status = state
         .update
         .status
         .lock()
         .map(|status| status.clone())
-        .map_err(|_| "更新状态不可用".to_owned())
+        .map_err(|_| "更新状态不可用".to_owned())?;
+    log_update(
+        app,
+        &format!(
+            "update check result: phase={} current={} latest={} error={}",
+            final_status.phase, final_status.current, final_status.latest, final_status.error
+        ),
+    );
+    Ok(final_status)
 }
 
 #[tauri::command]
@@ -2687,6 +2737,43 @@ mod tests {
         let mut wrong_service = plist.clone();
         wrong_service["Label"] = serde_json::json!("ai.qqpet.dashboard");
         assert!(managed_backend_runtime(&wrong_service, data, 8787).is_err());
+    }
+
+    #[test]
+    fn dashboard_capability_covers_local_dashboard_urls() {
+        use tauri::utils::acl::RemoteUrlPattern;
+
+        let capability: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/dashboard.json"))
+                .expect("capabilities/dashboard.json must be valid JSON");
+        let patterns: Vec<RemoteUrlPattern> = capability["remote"]["urls"]
+            .as_array()
+            .expect("the dashboard capability must list remote urls")
+            .iter()
+            .map(|url| {
+                url.as_str()
+                    .expect("remote url entries must be strings")
+                    .parse()
+                    .expect("remote url patterns must parse")
+            })
+            .collect();
+
+        // The dashboard window always navigates to the IPv4 loopback origin.
+        let dashboard: tauri::Url = "http://127.0.0.1:8787/".parse().unwrap();
+        assert!(
+            patterns.iter().any(|pattern| pattern.test(&dashboard)),
+            "capabilities/dashboard.json does not allow the dashboard origin {dashboard}"
+        );
+
+        // Every declared pattern must match its own host. The IPv6 entry is
+        // escaped (`[\\:\\:1]`); an unescaped [::1] fails to parse.
+        for probe in ["http://localhost:8787/", "http://[::1]:8787/"] {
+            let url: tauri::Url = probe.parse().unwrap();
+            assert!(
+                patterns.iter().any(|pattern| pattern.test(&url)),
+                "no pattern in capabilities/dashboard.json allows {probe}"
+            );
+        }
     }
 
     #[test]

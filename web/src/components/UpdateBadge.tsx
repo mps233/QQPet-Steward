@@ -39,7 +39,17 @@ function tauriInvoke(): Invoke | null {
 }
 
 const ACTIVE = new Set<UpdatePhase>(['downloading', 'installing', 'restarting'])
+// `checking` also needs polling: the menu-bar panel may already be checking,
+// in which case panel_update_check returns the current `checking` snapshot
+// immediately instead of waiting for the newer result.
+const POLL = new Set<UpdatePhase>(['checking', ...ACTIVE])
 const DENIED = /not allowed|not permitted|unknown command|command .* not found/i
+/** While the pill is hidden (up to date), ask again this often. Rust still
+ *  throttles real network checks to one every six hours, so this only decides
+ *  how soon a release published meanwhile can surface. */
+const IDLE_RECHECK_MS = 30 * 60 * 1000
+/** A failed background check (app launched before Wi-Fi) retries on its own. */
+const ERROR_RETRY_MS = 5 * 60 * 1000
 
 const formatMb = (bytes: number) => `${(bytes / 1048576).toFixed(1)} MB`
 
@@ -68,9 +78,25 @@ export function UpdateBadge() {
     return true
   }, [])
 
-  const check = useCallback(async (force: boolean) => {
+  /** `quiet` keeps background re-checks invisible: a pill that is already on
+   *  screen must not blink away while a timer-driven check is in flight. */
+  const check = useCallback(async (force: boolean, quiet = false) => {
     const call = invoke.current
     if (!call) return
+    // panel_update_check returns the in-flight snapshot only to a *second*
+    // caller; the call that starts the check stays pending for the whole
+    // network round trip (two timeouts at worst). Reflect it locally so the
+    // modal shows progress and the poll effect starts watching the result.
+    if (!quiet) {
+      setStatus((current) => current && ACTIVE.has(current.phase)
+        ? current
+        : current
+          ? { ...current, phase: 'checking', error: '' }
+          : {
+              phase: 'checking', current: '', latest: '', notes: '', url: '',
+              error: '', lastChecked: null, installable: false, done: 0, total: null,
+            })
+    }
     try {
       setStatus(await call('panel_update_check', { force }) as UpdateStatus)
     } catch (error) {
@@ -97,7 +123,7 @@ export function UpdateBadge() {
   // While a download/install is running, keep the badge and modal in sync with
   // the Rust state. The menu-bar panel polls the same commands independently.
   useEffect(() => {
-    if (!status || !ACTIVE.has(status.phase)) return
+    if (!status || !POLL.has(status.phase)) return
     const timer = window.setInterval(() => {
       const call = invoke.current
       if (!call) return
@@ -108,6 +134,25 @@ export function UpdateBadge() {
     return () => window.clearInterval(timer)
   }, [status?.phase])
 
+  // The pill is hidden while up to date, so without a slow re-check a release
+  // published while the app stays open would never surface on this page.
+  // Only re-check while up to date: a failed check clears the pending update
+  // in Rust, so it must never run while an update is already on offer.
+  useEffect(() => {
+    if (status?.phase !== 'latest' && status?.phase !== 'idle') return
+    const timer = window.setInterval(() => void check(false, true), IDLE_RECHECK_MS)
+    return () => window.clearInterval(timer)
+  }, [status?.phase, check])
+
+  // A check that fails in the background (for example the app auto-starts
+  // before Wi-Fi is up) must not leave a permanent orange "更新失败" pill.
+  // Quiet: the pill keeps its state until the retry actually resolves.
+  useEffect(() => {
+    if (status?.phase !== 'error') return
+    const timer = window.setInterval(() => void check(true, true), ERROR_RETRY_MS)
+    return () => window.clearInterval(timer)
+  }, [status?.phase, check])
+
   useEffect(() => {
     if (!open) return
     const onKey = (event: KeyboardEvent) => {
@@ -117,27 +162,46 @@ export function UpdateBadge() {
     return () => window.removeEventListener('keydown', onKey)
   }, [open, status?.phase])
 
+  const phase = status?.phase ?? 'idle'
+  const active = ACTIVE.has(phase)
+  // magpie's rule: the Update pill is hidden while checking or up to date.
+  // It appears only when a new version is available (or after the user has
+  // started downloading it, so the same pill can show progress).
+  const showPill = phase === 'available' || active || phase === 'error'
+
+  // The drag strip injected by window-chrome.js sits above the page; keep its
+  // reserved right edge exactly as wide as the pill (update.css reads
+  // `--upd-pill-w`). A fixed reserve would make longer version labels
+  // unclickable once the strip overlaps them.
+  const pillRef = useRef<HTMLButtonElement | null>(null)
+  useEffect(() => {
+    const pill = pillRef.current
+    if (!pill) return
+    const root = document.documentElement
+    const sync = () => root.style.setProperty('--upd-pill-w', `${pill.offsetWidth}px`)
+    sync()
+    const observer = new ResizeObserver(sync)
+    observer.observe(pill)
+    return () => {
+      observer.disconnect()
+      root.style.removeProperty('--upd-pill-w')
+    }
+  }, [showPill])
+
   if (!supported || !invoke.current) return null
 
-  const phase = status?.phase ?? 'idle'
   const latest = status?.latest ? `v${status.latest}` : ''
   const current = status?.current ? `v${status.current}` : ''
   const percent = status ? percentOf(status) : null
-  const active = ACTIVE.has(phase)
+  const showModal = open && !!status
+  if (!showPill && !showModal) return null
 
-  const label = phase === 'available' ? `升级 ${latest}`
+  const label = phase === 'available' ? latest
     : phase === 'downloading' ? (percent == null ? '更新中…' : `更新 ${percent}%`)
       : phase === 'installing' ? '正在安装…'
         : phase === 'restarting' ? '正在重启…'
-          : phase === 'checking' ? '检查中…'
-            : phase === 'error' ? '检查更新'
-              : '检查更新'
-  const hot = phase === 'available' || active
-
-  const openModal = () => {
-    setOpen(true)
-    if (phase === 'latest' || phase === 'idle' || phase === 'error') void check(true)
-  }
+          : '更新失败'
+  const hot = phase === 'available' || active || phase === 'error'
 
   const install = async () => {
     const call = invoke.current
@@ -170,18 +234,27 @@ export function UpdateBadge() {
 
   return (
     <>
-      <button
-        type="button"
-        className={`upd-fab${hot ? ' hot' : ''}`}
-        title={phase === 'available' ? `发现 ${latest}，点击查看更新日志` : '检查更新'}
-        aria-label={phase === 'available' ? `发现新版本 ${latest}` : '检查更新'}
-        onClick={openModal}
-      >
-        <span className="upd-spark" aria-hidden="true">↥</span>
-        {label}
-      </button>
+      {showPill ? (
+        <button
+          ref={pillRef}
+          type="button"
+          className={`upd-fab${hot ? ' hot' : ''}`}
+          title={phase === 'available' ? `发现 ${latest}，点击查看更新日志`
+            : phase === 'error' ? '更新检查失败，点击查看详情'
+              : '更新进度'}
+          aria-label={phase === 'available' ? `发现新版本 ${latest}`
+            : phase === 'error' ? '更新检查失败，点击重试'
+              : label}
+          onClick={() => setOpen(true)}
+        >
+          <svg className="upd-ico" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+            <path d="M8 2.2v6.6M5.4 6.4 8 9l2.6-2.6M3.4 11.4v1.1c0 .8.6 1.4 1.4 1.4h6.4c.8 0 1.4-.6 1.4-1.4v-1.1" />
+          </svg>
+          {label}
+        </button>
+      ) : null}
 
-      {open && status ? (
+      {showModal ? (
         <div
           className="upd-mask"
           role="presentation"

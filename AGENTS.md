@@ -545,3 +545,8 @@ Windows 原生 App 默认 `%LOCALAPPDATA%\QQPetCopilot`，开发用便携模式�
   CI 需要 `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`。
 - `tools/make_update_manifest.py` 可手工生成 `latest.json`（`--platform KEY URL SIG` 可重复）；
   `latest.json` 的 `signature` 是 `.sig` 文件内容，不是路径/哈希。
+- 更新检查的重试与日志：`check_for_update` 只在**快速失败**（连接重置/拒绝等 `Reqwest`
+  非超时错误）时重试一次——超时、JSON 解码、签名/状态错误重试也只是白等；单次超时保持 20s。
+  桌面壳没有 stdout/stderr 落点（Finder 启动的 `.app`、Windows GUI 构建），检查请求/结果
+  追加到 `runs/desktop.log`（`desktop/macos/src/main.rs` 的 `log_update`，行首为 epoch 秒）——
+  排查"检查更新失败"先看它。
