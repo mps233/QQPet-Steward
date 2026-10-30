@@ -16,10 +16,14 @@
 #  但**不能复用好友家的模板**——跨素材 + 通道错位会误判（实测把敞口判成"可领" 0.679）。
 #
 # 限时皮肤（2026-10 万圣节）：官方把福袋换成了「戴巫婆帽的南瓜」——
-#  未领 = 南瓜 + 紫色巫婆帽 + 四周光芒；已领 = 帽子消失、只剩发光南瓜。
-#  这是限时的，活动结束后米黄袋子还会回来，所以**两套模板都保留**（列表里逐个匹配取最高分），
-#  不要用新模板覆盖旧文件。素材：scenarios/assets/home_bag_{tied,open}_pumpkin.png，
-#  好友列表的「有福袋」徽章同理新增 friend_icon_bag_pumpkin.png（同位置 43x43、77x77 外扩）。
+#  未领 = 南瓜 + 紫色巫婆帽 + 四周光芒；已领 = 帽子消失只剩发光南瓜（10-30 版），
+#  10-31 起又变成**帽子倒在旁边**（用户截图确认），所以已领态两种模板都留着。
+#  这是限时的，活动结束后米黄袋子还会回来，所以**多套模板全部保留**（列表里逐个匹配
+#  取最高分），不要用新模板覆盖旧文件。素材：home_bag_{tied,open}_pumpkin*.png，
+#  好友列表的「有福袋」徽章同理新增 friend_icon_bag_pumpkin.png（同位置，节点 57x57、
+#  按 ±17 外扩裁 77x77）。
+#  ⚠ 模板带房间背景，跨房间分数会掉（实测同一张袋在紫色房间里 0.77、原来的木地板房间
+#  1.00）——所以同一个状态存了不同房间的两套，取最高分；新增模板时优先用暖色地板/房间截图。
 #
 # !! 模板通道：`screenshot()` 返回 **RGB**，而 `cv2.imread` 读回来是 **BGR**，
 #    偏偏 cv2.matchTemplate 是逐通道比对的 —— 通道错位会让分数虚低。新模板一律用
@@ -63,7 +67,8 @@ HOME_BAG_MIN_SCORE = 0.70
 HOME_BAG_MARGIN = 0.05
 
 # 好友列表里的「有可领福袋」图标（用户指出的判据）：位置固定、无 content-desc。
-# 实测 bounds 是 43x43、x=789..832（1080 基准），y 就是好友行；
+# 常规款 bounds 是 43x43、x=789..832；2026-10 万圣节南瓜徽章是 57x57、x=782..839
+# （1080 基准，中心同为 x≈810），y 就是好友行——所以节点宽度过滤要覆盖 40~70。
 # 模板裁的是 bounds 上下左右各外扩 17px 的 77x77，所以这里必须用同样的外扩量裁图。
 # 判定：福袋图标分（自匹配 0.99~1.00）要 >= 下限且高于另一个图标（粉爱心魔法棒，约 0.51）。
 FRIEND_ICON_PAD = 17
@@ -99,9 +104,11 @@ class GiftBagScenario(VisitScenario):
         # （限时皮肤结束后旧模板继续有效，新模板也不碍事）。
         # 必须按 RGB 读：screenshot() 是 RGB，而 cv2.imread 返回 BGR，通道错位会拉低分数。
         self._tpl_tied = self._load_tpls(
-            'home_bag_tied.png', 'home_bag_tied_pumpkin.png')
+            'home_bag_tied.png', 'home_bag_tied_pumpkin.png',
+            'home_bag_tied_pumpkin2.png')
         self._tpl_open = self._load_tpls(
-            'home_bag_open.png', 'home_bag_open_pumpkin.png')
+            'home_bag_open.png', 'home_bag_open_pumpkin.png',
+            'home_bag_open_pumpkin_hat.png')
         self._tpl_home_tied = self._tpl_tied
         self._tpl_home_open = self._tpl_open
         # 好友列表里的「有福袋」图标模板：用来筛出该去哪几家（见 scan_friend_list）
@@ -294,7 +301,11 @@ class GiftBagScenario(VisitScenario):
             desc = d.group(1) if d else ''
             if desc == '访问':
                 visits.append((x1, y1, x2, y2))
-            elif 'ImageView' in node and 40 <= x2 - x1 <= 50 and 780 <= x1 <= 840:
+            # 常规款图标节点是 43x43（x=789..832）；2026-10 万圣节南瓜徽章是
+            # **57x57**（实测 (782,2074)-(839,2131)），宽度上限必须放宽到 70，
+            # 否则新版图标一粒都进不来（真机实测：收紧到 50 时永远"0 个图标"）。
+            elif ('ImageView' in node and 40 <= x2 - x1 <= 70 and 760 <= x1 <= 840
+                  and y1 > 900):        # y>900：只收好友行区域，别把顶栏的 57px 图标算进来
                 icons.append((x1, y1, x2, y2))
         log(f'福袋: 好友列表 {len(icons)} 个图标 / {len(visits)} 个访问按钮')
         tgt_h, tgt_w = self._tpl_friend_bag[0].shape[:2]
