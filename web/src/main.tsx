@@ -25,6 +25,8 @@ import './styles/adv.css'
 import './styles/onboarding.css'
 // 全局轻提示（ToastHost）：暖可可气泡，独立命名空间 qp-toast-*
 import './styles/toast.css'
+// 总览右上角的更新入口与更新日志弹层（只在 Tauri 壳内显示）
+import './styles/update.css'
 
 installStageUnit()
 

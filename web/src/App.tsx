@@ -11,6 +11,7 @@ import { NotifyPage } from './components/NotifyPage'
 import { Onboarding } from './components/Onboarding'
 import { PlanPage } from './components/PlanPage'
 import { SettingsPage } from './components/SettingsPage'
+import { UpdateBadge } from './components/UpdateBadge'
 import { useData } from './lib/useData'
 import { useScene } from './lib/useScene'
 import { useTheme } from './lib/useTheme'
@@ -861,6 +862,9 @@ function DashboardApp({ onLoginRequired }: { onLoginRequired: () => void }) {
           </div>
         ) : null}
       </main>
+      {/* 右上角更新入口：只在总览页显示，且只在 Tauri 壳内（手机/普通浏览器不渲染）。
+          放在 main 外，避免 .page-slot 转场的 transform 把 fixed 定位改成相对 slot。 */}
+      {page === 'main' && !guideVisible ? <UpdateBadge /> : null}
     </div>
   )
 }
