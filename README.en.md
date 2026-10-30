@@ -25,6 +25,22 @@ QQPet-Steward plays QQ Pet for you. Connected to an Android phone over adb, it d
 
 It runs on a computer next to the phone. The macOS and Windows builds are native apps with Python, adb, OCR models and a local dashboard bundled, so there is no server URL or separate runtime to install. The same dashboard opens from a phone on the same network: pair once with a QR code, then start or stop the scheduler, edit settings, and follow logs, earnings and a live screenshot. The scenarios, locator registry and OCR layer derive from [qq-pet-copilot](https://github.com/490720818/qq-pet-copilot) (GPL-3.0); this repository adds the native apps, the React dashboard, a task-queue scheduler, notifications and daily reports, and adaptations to newer QQ releases. See [MAC-PORT.md](MAC-PORT.md) for the full list of differences.
 
+## Screenshots
+
+The dashboard in the current build; the interface is Chinese-only.
+
+<img src="docs/screens/overview-adventure.png" alt="Left: overview page; right: adventure log page" width="100%">
+
+*Left: Overview — profile card, today's stats, task list and run controls. Right: Adventure log — totals, earnings chart and per-run history.*
+
+<img src="docs/screens/career-logs.png" alt="Left: career tree page; right: earnings page" width="100%">
+
+*Left: Career tree — attribute values and career routes by tier. Right: Earnings — per-session study and work rewards; names are redacted.*
+
+<img src="docs/screens/notifications-settings.png" alt="Left: notifications page; right: settings page" width="100%">
+
+*Left: Notifications — delivery channels such as Feishu and Telegram. Right: Settings — tasks, care, system and phone remote entries.*
+
 ## Features
 
 - **Study and work** — enrolls in school courses and takes jobs at eight locations, with short/long course tiers and 10-minute, 45-minute and 2-hour jobs. Daily study and work hours are tracked against quotas, and each activity stops at its configured limit.
@@ -97,29 +113,7 @@ The macOS app is written to `desktop/macos/target/release/bundle/macos/QQPet-Ste
 4. For source installs, the dashboard listens on port 8787. The first visit asks for the access code stored in `runs/dashboard_access.token`.
 5. To debug the scheduler in a terminal, run `./run.sh` (Ctrl+C stops it). Do not run it at the same time as the dashboard's Start button.
 
-The dashboard has seven pages: Overview, Adventure, Career, Logs, Notifications, Settings and Live. The current overview page is shown below; the interface is Chinese-only.
-
-<img src="docs/screens/overview.png" alt="Overview page: profile card, today's stats, task list and run controls" width="360">
-
-*Overview: profile card, today's stats, task list and run controls.*
-
-### Screens
-
-<img src="docs/screens/adventure.png" alt="Adventure log page: totals, earnings chart and per-run history" width="360">
-
-*Adventure log: totals, earnings chart and per-run history.*
-
-<img src="docs/screens/career.png" alt="Career tree page: attribute values and career routes by tier" width="360">
-
-*Career tree: attribute values and career routes by tier.*
-
-<img src="docs/screens/logs.png" alt="Earnings page: per-session study and work rewards, with pet and owner names redacted" width="360">
-
-*Earnings: per-session study and work rewards; names are redacted.*
-
-<img src="docs/screens/settings.png" alt="Settings page: entries for study and careers, work and hiring, quotas and adventure, care, friend interactions, system and phone remote" width="360">
-
-*Settings: tasks, care, system and phone remote entries.*
+The dashboard has seven pages: Overview, Adventure, Career, Logs, Notifications, Settings and Live. See the Screenshots section above.
 
 Telegram: configure a bot token and the allowed chats under **Settings → TG bot**. The bot answers `/help`, `/status`, `/get`, `/set`, `/attrs`, `/log`, `/run`, `/halt`, `/pause` and `/resume`; messages from chats outside the allowlist are ignored.
 

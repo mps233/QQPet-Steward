@@ -25,6 +25,22 @@ QQPet-Steward 代你玩 QQ 宠物。它通过 adb 连接 Android 手机，用 ui
 
 程序跑在手机旁边的电脑上。macOS 与 Windows 版本都是原生 App，随包提供 Python、adb、OCR 模型和本机仪表盘，不需要填写服务器地址，也不用另装运行时。同一套仪表盘可以在同一局域网的手机上打开：扫码配对一次，之后就能启停调度器、修改设置，查看日志、收益和实时画面。各场景、定位注册表和 OCR 层来自 [qq-pet-copilot](https://github.com/490720818/qq-pet-copilot)（GPL-3.0）；本仓库增加了原生 App、React 仪表盘、任务队列调度、通知与日报，并适配了新版 QQ 界面，完整差异见 [MAC-PORT.md](MAC-PORT.md)。
 
+## 界面
+
+当前版本的仪表盘界面：
+
+<img src="docs/screens/overview-adventure.png" alt="左：总览页；右：冒险记录页" width="100%">
+
+*左：总览——宠物资料、今日数据、任务列表与运行控制。右：冒险记录——收益汇总、收益走势与逐次记录。*
+
+<img src="docs/screens/career-logs.png" alt="左：职业树页；右：收益记录页" width="100%">
+
+*左：职业树——属性数值与各阶段职业路线。右：收益记录——学习与打工的逐次收益，昵称已打码。*
+
+<img src="docs/screens/notifications-settings.png" alt="左：通知页；右：设置页" width="100%">
+
+*左：通知——飞书、Telegram 等推送渠道配置。右：设置——任务、护理、系统与手机遥控入口。*
+
 ## 核心特性
 
 - **学习与打工** — 自动进学园选课、去八个地点打工，支持短课/长课档位与 10 分钟、45 分钟、2 小时工时。每日学习与工作时长按配额累计，到达各自上限后停止。
@@ -97,29 +113,7 @@ macOS 产物位于 `desktop/macos/target/release/bundle/macos/QQPet-Steward.app`
 4. 源码部署的仪表盘监听 8787 端口，首次访问需要输入 `runs/dashboard_access.token` 中的访问码。
 5. 只在终端调试调度器时运行 `./run.sh`（Ctrl+C 停止），不要和仪表盘的「启动」同时开。
 
-仪表盘共七页：总览、冒险、职业、日志、通知、设置、实时画面。当前版本的总览页如下。
-
-<img src="docs/screens/overview.png" alt="总览页：宠物资料卡、今日数据、任务列表与右侧运行控制" width="360">
-
-*总览：宠物资料、今日数据、任务列表与运行控制。*
-
-### 其他界面
-
-<img src="docs/screens/adventure.png" alt="冒险记录页：收益汇总、收益走势与冒险足迹" width="360">
-
-*冒险记录：收益汇总、收益走势与逐次记录。*
-
-<img src="docs/screens/career.png" alt="职业树页：属性数值与各阶段职业路线" width="360">
-
-*职业树：属性数值与各阶段职业路线。*
-
-<img src="docs/screens/logs.png" alt="收益记录页：学习与打工的逐次收益，宠物与主人昵称已打码" width="360">
-
-*收益记录：学习与打工的逐次收益，昵称已打码。*
-
-<img src="docs/screens/settings.png" alt="设置页：学习与职业、打工与雇佣、限额与冒险、护理、好友互动、系统与手机遥控入口" width="360">
-
-*设置：任务、护理、系统与手机遥控入口。*
+仪表盘共七页：总览、冒险、职业、日志、通知、设置、实时画面。界面预览见上方「界面」一节。
 
 Telegram：在 **设置 → TG 机器人** 里配置机器人 token 和允许的会话。机器人响应 `/help`、`/status`、`/get`、`/set`、`/attrs`、`/log`、`/run`、`/halt`、`/pause`、`/resume`；白名单之外的会话不会收到回复。
 
