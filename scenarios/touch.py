@@ -242,7 +242,7 @@ class TouchScenario(DeviceScenario):
         """主页面 → 好友列表；选「互动」排序（火花好友连续排在最前面）。"""
         self.click_until_gone_or_see('main_friend_btn', 'visit', '打开好友列表')
         hit = None
-        for attempt in range(1, 4):
+        for attempt in range(1, 7):
             screen = self.screen()
             h = screen.shape[0]
             hit = self.see('friend_tab_interact', screen=screen)
@@ -250,19 +250,30 @@ class TouchScenario(DeviceScenario):
             if hit and 0.34 * h <= hit[1] <= 0.46 * h:
                 break
             hit = None
-            log(f'摸摸: 未找到好友列表的「互动」排序标签，等待重试 ({attempt}/3)')
-            time.sleep(0.6)
-        if not hit:
-            # 火花好友"连续排在前面"依赖互动排序；认不出排序时不猜顺序，
-            # 抛出交给执行器重试（否则可能按等级/战力顺序，第一位就没火花，
-            # 整轮直接停掉且一个人都没摸）。
-            raise RuntimeError('好友列表未找到「互动」排序标签，无法保证火花好友连续')
-        log('摸摸: 选择「互动」排序')
-        self.click(hit[0], hit[1])
+            log(f'摸摸: 未找到好友列表的「互动」排序标签，等待重试 ({attempt}/6)')
+            if attempt == 3:
+                # OCR 偶尔读不到筛选行（面板动画/反光），退回固定相对坐标：
+                # 好友列表筛选行「互动」在 1080x2412 实测 (166, 950)。
+                w, hh = screen.shape[1], screen.shape[0]
+                fallback = (round(w * 166 / 1080), round(hh * 950 / 2412))
+                log(f'摸摸: 改用固定坐标点「互动」{fallback}')
+                self.click(*fallback)
+                break
+            time.sleep(0.8)
+        if hit:
+            log('摸摸: 选择「互动」排序')
+            self.click(hit[0], hit[1])
         time.sleep(0.6)
 
     def _enter_first_friend(self) -> None:
-        hit = self.see('visit')
+        # 点「互动」后列表可能短暂重渲染，访问按钮不是立刻出现；等而不是只查一次
+        hit = None
+        for _ in range(NAV_TIMEOUT):
+            source = self.dev.hierarchy()
+            hit = self.see('visit', source=source)
+            if hit:
+                break
+            time.sleep(CLICK_INTERVAL)
         if not hit:
             raise RuntimeError('好友列表没有「访问」按钮（可能没有好友）')
         log('摸摸: 访问好友列表第一个')
