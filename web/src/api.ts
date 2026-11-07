@@ -187,6 +187,7 @@ export const TASK_NAME: Record<string, string> = {
   gift_bag: '福袋',
   adventure: '冒险',
   visit: '踩踩',
+  touch: '摸摸',
   pk: 'PK',
   work: '打工',
 }
@@ -196,6 +197,7 @@ export const TASK_GROUP: Record<string, '循环' | '每日' | '主线'> = {
   care: '循环',
   gift_bag: '循环',
   visit: '每日',
+  touch: '每日',
   pk: '每日',
   adventure: '主线',
   school: '主线',

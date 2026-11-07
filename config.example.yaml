@@ -133,6 +133,11 @@ visit:
   # 踩踩调度时间（HH:MM）：到达后开始处理；场景等待间隙（上课/打工进行中）也会插空处理
   start_time: "00:01"
 
+touch:
+  # 摸摸：只摸有火花的好友（访问对方宠物家点宠物），碰到没有火花（待重燃）的好友就停止。
+  # 金币彩蛋由服务端按火花关系随机下发，这个值只控制每个好友点几下宠物。
+  taps_per_friend: 3
+
 pk:
   # 每天 PK 次数，0 为不 PK；每个好友可 PK 3 次，打完自动切换下一个好友
   times_per_day: 15
@@ -196,10 +201,10 @@ runner:
   engine: task_queue
 
 # 任务调度：顺序（> 分隔，越靠前越优先，不在 order 里的任务不调度）+ 每任务调度设置
-# 可选任务名：care(护理) gift_bag(福袋) adventure(冒险) visit(踩踩) pk(PK)
-#   school(学习) work(打工)
+# 可选任务名：care(护理) gift_bag(福袋) adventure(冒险) visit(踩踩) touch(摸摸)
+#   pk(PK) school(学习) work(打工)
 tasks:
-  order: care>gift_bag>visit>pk>school>work>adventure
+  order: care>gift_bag>visit>touch>pk>school>work>adventure
   # 主任务组（冒险/学习/打工互斥，不能同时做）组内优先级：
   # > 分隔，越靠前越优先；没列出的主任务按默认顺序兜底排最后。
   # 注意：这里只是"逐个检查的顺序"，任务还要自身条件满足才会执行
@@ -232,6 +237,14 @@ tasks:
     enabled: true
     trigger: daily
     daily_times: ["00:01"]
+    enabled_time_range: 00:00:00-23:59:59
+    success_interval: 60
+  # 摸摸：一次完整扫描后 run() 返回 False，调度器标记“当天不可继续”；
+  # 明天跨天清 dead 后自动重开，所以这里用 interval 触发即可。
+  touch:
+    enabled: true
+    trigger: interval
+    interval_seconds: 60
     enabled_time_range: 00:00:00-23:59:59
     success_interval: 60
   pk:

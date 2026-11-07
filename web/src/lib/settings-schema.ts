@@ -197,13 +197,20 @@ export const GROUPS: Record<string, GroupDef> = {
   social: {
     id: 'social',
     title: '好友互动',
-    desc: '踩踩、PK、福袋',
+    desc: '踩踩、摸摸、PK、福袋',
     sections: [
       {
         title: '踩踩',
         fields: [
           { key: 'visit_enabled', label: '启用踩踩', kind: 'bool' },
           { key: 'visit_times', label: '每天次数', kind: 'int', unit: '次' },
+        ],
+      },
+      {
+        title: '摸摸',
+        fields: [
+          { key: 'touch_enabled', label: '启用摸摸', kind: 'bool', tip: '只摸有火花的好友，碰到没有火花（待重燃）的好友就停止' },
+          { key: 'touch_taps', label: '每个好友摸几下', kind: 'int', unit: '下', tip: '点好友家的宠物；金币彩蛋由服务端按火花关系随机下发' },
         ],
       },
       {
@@ -318,6 +325,7 @@ export const LEGACY_GROUP_ALIASES: Record<string, string> = {
   schedule: 'limits',
   friend_care: 'care',
   visit: 'social',
+  touch: 'social',
   pk: 'social',
   gift_bag: 'social',
   employed: 'work',

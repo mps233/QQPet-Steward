@@ -228,6 +228,13 @@ class VisitConfig:
 
 
 @dataclass
+class TouchConfig:
+    # 摸摸：只摸有火花的好友，遇到没有火花（待重燃）的好友就停止。
+    # 每个好友点几下宠物；金币彩蛋由服务端按火花关系随机下发。
+    taps_per_friend: int = 3
+
+
+@dataclass
 class PkConfig:
     # 每天 PK 次数，0 为不 PK；每个好友可 PK 3 次，打完自动切换下一个好友
     times_per_day: int = 15
@@ -305,7 +312,7 @@ class CareerConfig:
 # **friend_care 已并入 care**：护理任务每轮检查完自己之后，若好友护理到点就顺路去
 # 一趟（见 scenarios/runner.py 的 _friend_care_round）；它自己的开关/时间段/间隔/
 # 好友名都在 friend_care 段里原样保留，所以"单独开关"照旧生效。
-TASK_KEYS = ('care', 'adventure', 'visit', 'pk', 'gift_bag', 'school', 'work')
+TASK_KEYS = ('care', 'adventure', 'visit', 'touch', 'pk', 'gift_bag', 'school', 'work')
 # 主任务组：冒险/学习/打工互斥（共用"出门-进行中"一条线，不能同时做），
 # 由 TaskQueueRunner 按 tasks.main_order 统一调度。雇好友已并入打工，不再是独立主任务。
 MAIN_TASK_KEYS = ('adventure', 'school', 'work')
@@ -329,7 +336,7 @@ class TaskItemConfig:
 @dataclass
 class TasksConfig:
     # 执行顺序（> 分隔，越靠前越优先）；不在 order 里的任务不调度
-    order: str = "care>school>friend_care>gift_bag>hire_friend>adventure>visit>pk>work"
+    order: str = "care>gift_bag>visit>touch>pk>school>work>adventure"
     # 主任务组（冒险/学习/打工/雇佣好友，互斥）组内优先级（> 分隔，越靠前越优先）；
     # 没列出的主任务按默认顺序兜底排最后
     main_order: str = "school>hire_friend>adventure>work"
@@ -339,6 +346,7 @@ class TasksConfig:
     care: TaskItemConfig = field(default_factory=TaskItemConfig)
     adventure: TaskItemConfig = field(default_factory=TaskItemConfig)
     visit: TaskItemConfig = field(default_factory=TaskItemConfig)
+    touch: TaskItemConfig = field(default_factory=TaskItemConfig)
     pk: TaskItemConfig = field(default_factory=TaskItemConfig)
     hire_friend: TaskItemConfig = field(default_factory=TaskItemConfig)
     friend_care: TaskItemConfig = field(default_factory=TaskItemConfig)
@@ -466,6 +474,7 @@ class Config:
     adventure: AdventureConfig = field(default_factory=AdventureConfig)
     care: CareConfig = field(default_factory=CareConfig)
     visit: VisitConfig = field(default_factory=VisitConfig)
+    touch: TouchConfig = field(default_factory=TouchConfig)
     pk: PkConfig = field(default_factory=PkConfig)
     friend_care: FriendCareConfig = field(default_factory=FriendCareConfig)
     gift_bag: GiftBagConfig = field(default_factory=GiftBagConfig)
@@ -573,6 +582,8 @@ def load_config(config_path: str | Path | None = None) -> Config:
         adventure=AdventureConfig(**raw.get("adventure", {})),
         care=CareConfig(**raw.get("care", {})),
         visit=VisitConfig(**raw.get("visit", {})),
+        touch=TouchConfig(**{k: v for k, v in (raw.get("touch", {}) or {}).items()
+                             if k in TouchConfig.__dataclass_fields__}),
         pk=PkConfig(**raw.get("pk", {})),
         friend_care=FriendCareConfig(**raw.get("friend_care", {})),
         gift_bag=GiftBagConfig(**raw.get("gift_bag", {})),

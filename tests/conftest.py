@@ -37,6 +37,8 @@ _PATCH_MODULES = (
     'src.notification_outbox',
     'src.daily_summary',
     'src.career_watch',
+    # 摸摸的当天完成标记 runs/touch_progress.json
+    'scenarios.touch',
     # 客户端协议票据/设备令牌（runs/client_protocol.json）。鉴权测试必须
     # 使用临时 store，绝不能碰真实配对状态。
     'src.client_protocol',

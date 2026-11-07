@@ -20,6 +20,7 @@ const ICON: Record<string, string> = {
   护理: '/qp-icons/official/soap.png',
   好友护理: '/qp-icons/official/soap.png',
   踩踩: '/qp-icons/official/cap_paw.png',
+  摸摸: '/qp-icons/official/cap_paw.png',
   PK: '/qp-icons/official/pk_words.png',
   福袋: '/qp-icons/official/cap_coin.png',
 }

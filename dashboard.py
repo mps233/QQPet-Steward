@@ -679,6 +679,7 @@ def config_summary() -> dict:
     work = cfg.get('work') or {}
     adv = cfg.get('adventure') or {}
     visit = cfg.get('visit') or {}
+    touch = cfg.get('touch') or {}
     pk = cfg.get('pk') or {}
     care = cfg.get('care') or {}
     friend_care = cfg.get('friend_care') or {}
@@ -740,6 +741,7 @@ def config_summary() -> dict:
         ['结算补贴', '每次打工/雇佣好友结束自动领「看视频 +N」金币补贴'
                      if (sched.get('claim_ad_bonus', True)) else '已关闭'],
         ['踩踩', f"{visit.get('times_per_day', '-')} 次/天 @ {visit.get('start_time', '')}"],
+        ['摸摸', f"每个好友 {touch.get('taps_per_friend', 3)} 下（只摸有火花的好友，遇到没火花的停止）"],
         ['PK', f"{pk.get('times_per_day', '-')} 次/天 @ {pk.get('start_time', '')}"],
         ['冒险', f"{adv.get('times_per_day', '-')} 次/天 @ {adv.get('start_time', '')}"],
         ['护理', f"{care.get('method', '')} · 阈值 {care.get('energy_threshold', '-')}/{care.get('clean_threshold', '-')}"],
@@ -1295,9 +1297,12 @@ def editable_snapshot() -> dict:
     except Exception:
         locations = []
     tasks = cfg.get('tasks') or {}
+    task_order_keys = [x.strip() for x in str(tasks.get('order') or '').split('>')
+                       if x.strip()]
     sched = cfg.get('schedule') or {}
     work = cfg.get('work') or {}
     visit = cfg.get('visit') or {}
+    touch = cfg.get('touch') or {}
     pk = cfg.get('pk') or {}
     adv = cfg.get('adventure') or {}
     care = cfg.get('care') or {}
@@ -1321,6 +1326,10 @@ def editable_snapshot() -> dict:
         'work_enabled': bool((tasks.get('work') or {}).get('enabled', True)),
         'care_enabled': bool((tasks.get('care') or {}).get('enabled', True)),
         'visit_enabled': bool((tasks.get('visit') or {}).get('enabled', True)),
+        # 摸摸是后加的任务：不在 tasks.order 里时 runner 不会调度、任务列表也
+        # 不渲染，只有 order 里有它才算真正启用（设置页开关打开时 apply 会自动追加）
+        'touch_enabled': bool((tasks.get('touch') or {}).get('enabled', True))
+        and (not task_order_keys or 'touch' in task_order_keys),
         'pk_enabled': bool((tasks.get('pk') or {}).get('enabled', True)),
         'adventure_enabled': bool((tasks.get('adventure') or {}).get('enabled', True)),
         'school_attribute': str(school.get('attribute') or '力量'),
@@ -1351,6 +1360,7 @@ def editable_snapshot() -> dict:
         'efficiency_tier2_hours': sched.get('efficiency_tier2_hours', 12),
         'main_order': str(tasks.get('main_order') or ''),
         'visit_times': visit.get('times_per_day', 10),
+        'touch_taps': touch.get('taps_per_friend', 3),
         'pk_times': pk.get('times_per_day', 15),
         'pk_only': str(pk.get('only_names') or ''),
         'pk_skip': str(pk.get('skip_names') or ''),
@@ -1460,6 +1470,7 @@ def _apply_settings(updates: dict) -> dict:
         'care_enabled': ('tasks.care.enabled', 'bool'),
         'adventure_enabled': ('tasks.adventure.enabled', 'bool'),
         'visit_enabled': ('tasks.visit.enabled', 'bool'),
+        'touch_enabled': ('tasks.touch.enabled', 'bool'),
         'pk_enabled': ('tasks.pk.enabled', 'bool'),
         'work_enabled': ('tasks.work.enabled', 'bool'),
         # 复合任务主键（实际写入见 task_scene_pairs 的双写）
@@ -1493,6 +1504,7 @@ def _apply_settings(updates: dict) -> dict:
         'school_duration': ('school.duration', None),
         'school_times': ('school.times_per_day', 'int'),
         'visit_times': ('visit.times_per_day', 'int'),
+        'touch_taps': ('touch.taps_per_friend', 'int'),
         'pk_times': ('pk.times_per_day', 'int'),
         'pk_only': ('pk.only_names', None),
         'pk_skip': ('pk.skip_names', None),
@@ -1569,6 +1581,16 @@ def _apply_settings(updates: dict) -> dict:
             # 复合任务：任务级 + 场景级两个开关同时写，避免另一个残留 false
             for k in task_scene_pairs.get(field, (key,)):
                 S.set_value(data, k, value)
+            # 新任务「摸摸」：开关打开时如果 tasks.order 里没有它，自动追加。
+            # 否则开关写进去了、任务却永远不调度（runner 只按 order 建队列），
+            # 任务列表也看不到——用户会以为开关坏了。
+            if field == 'touch_enabled' and value:
+                tasks_map = data.get('tasks')
+                if isinstance(tasks_map, dict):
+                    keys = [k.strip() for k in
+                            str(tasks_map.get('order') or '').split('>') if k.strip()]
+                    if keys and 'touch' not in keys:
+                        S.set_value(data, 'tasks.order', '>'.join(keys + ['touch']))
             applied[field] = value
             continue
         ok, fixed = S.validate_field(key, value)

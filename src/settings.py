@@ -57,6 +57,8 @@ DEFAULTS = {
     'adventure.type': '附近走走',
     'visit.times_per_day': 10,
     'visit.start_time': '00:01',
+    # 摸摸：每个好友点几下宠物（只摸有火花的好友，碰到没火花的就停止）
+    'touch.taps_per_friend': 3,
     'pk.times_per_day': 15,
     'pk.start_time': '00:01',
     'pk.only_names': '',
@@ -79,7 +81,7 @@ DEFAULTS = {
     'hire_friend.friend_name': '',
     'hire_friend.times_per_day': 8,
     'runner.engine': 'task_queue',
-    'tasks.order': 'care>school>friend_care>hire_friend>adventure>visit>pk>work',
+    'tasks.order': 'care>gift_bag>visit>touch>pk>school>work>adventure',
     'tasks.main_order': 'school>hire_friend>adventure>work',
     'tasks.failure_interval': 1800,
     'care.energy_threshold': 60,
@@ -222,6 +224,12 @@ def validate_field(key: str, value):
         # 补货数量 1~99（游戏弹窗允许的上限 99）
         try:
             return (True, value) if 1 <= int(value) <= 99 else (False, default)
+        except (TypeError, ValueError):
+            return False, default
+    if key == 'touch.taps_per_friend':
+        # 每个好友摸几下：至少 1 下，最多 20 下（再多只是重复点同一个宠物）
+        try:
+            return (True, value) if 1 <= int(value) <= 20 else (False, default)
         except (TypeError, ValueError):
             return False, default
     if key == 'schedule.back_method':

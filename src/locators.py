@@ -288,6 +288,13 @@ LOCATORS: dict[str, dict] = {
     # 和入口按钮"好友"区分）；切换逻辑见 visit.py（累积名单、按顺序切换）
     'visit_friend_item': {'xpath': ['//*[starts-with(@content-desc, "好友 ")]']},
 
+    # ---- 摸摸（好友家的宠物） ----
+    # 好友宠物页右上角的火花状态按钮：有火花时里面显示 "54天"（N 天），
+    # 没有火花时显示 "待重燃"（scenarios/touch.py 裁它的 bounds 做 OCR）
+    'friend_spark': {'xpath': ['//*[@content-desc="火花"]']},
+    # 好友列表筛选行的「互动」排序标签（只有文字、无 content-desc / xpath）
+    'friend_tab_interact': {'ocr': ['互动']},
+
     # ---- PK（好友对战） ----
     'pk': {'xpath': ['//*[@content-desc="PK"]']},
     'pk_in': {'ocr': ['正在PK']},  # 进行中状态：全屏 OCR 关键词（PK 页 canvas 自绘）

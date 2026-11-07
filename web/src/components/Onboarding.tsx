@@ -17,6 +17,7 @@ const TASKS = [
   ['care', '护理', 'soap.png'],
   ['gift_bag', '福袋', 'cap_coin.png'],
   ['visit', '踩踩', 'cap_paw.png'],
+  ['touch', '摸摸', 'cap_paw.png'],
   ['pk', 'PK', 'pk_words.png'],
 ] as const
 const DEFAULTS: Record<string, unknown> = {
@@ -395,6 +396,7 @@ export function Onboarding({
                     key === 'care' ? '补充体力和清洁'
                       : key === 'gift_bag' ? '领取自己和好友的福袋'
                         : key === 'visit' ? `每天 ${data.config.visit_per_day ?? 10} 次`
+                          : key === 'touch' ? '只摸有火花的好友'
                           : key === 'pk' ? `每天 ${data.config.pk_per_day ?? 15} 次`
                             : key === 'adventure' ? `每天 ${data.config.adventure_times ?? 1} 次`
                               : key === 'school' ? '按科目和每日配额上课' : '按地点和每日配额打工'

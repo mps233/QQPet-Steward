@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import src.settings as S
 
-ALT_TASK_ORDER = 'care>friend_care>pk>gift_bag>visit>school>adventure>work'
+# friend_care 已并入 care（不再作为独立任务键）；触摸/踩踩都在 social 侧，
+# 放在 visit 后面。顺序必须是 TASK_KEYS 的合法子集，否则 validate_field 会拒。
+ALT_TASK_ORDER = 'care>pk>gift_bag>visit>touch>school>adventure>work'
 EMPLOYED_ACTION_YIELD = '让利雇主（不召回）'
 
 
@@ -26,6 +28,8 @@ def alt_preset(main_name: str) -> dict:
         # 任务集：供养相关 + 学习/冒险（空余时间攒学分赚金币）；雇佣好友不进 order = 不调度
         'tasks.order': ALT_TASK_ORDER,
         'tasks.school.enabled': True,
+        # 摸摸有火花好友拿金币彩蛋（不是独立资源，开启即可）
+        'tasks.touch.enabled': True,
         'adventure.times_per_day': 10,
         'hire_friend.enabled': False,
         # 到大号家护理（访客付费，花小号的金币）

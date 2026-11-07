@@ -118,6 +118,8 @@ LABELS: dict[str, str] = {
     'friend_care_method': '好友护理方式',
     'visit_enabled': '启用踩踩',
     'visit_times': '踩踩次数/天',
+    'touch_enabled': '启用摸摸',
+    'touch_taps': '每个好友摸几下',
     'pk_enabled': '启用PK',
     'pk_times': 'PK次数/天',
     'pk_only': '只打',

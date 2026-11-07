@@ -63,7 +63,7 @@ $PY -m pytest                    # 单元测试（tests/，依赖见 requirement
 | 路径 | 职责 |
 | --- | --- |
 | `scenarios/runner.py` | 统一调度器，两种引擎（`runner.engine`）：`task_queue`（默认，`TaskQueueRunner`：执行顺序由 `tasks.order` 配置，> 分隔越靠前越优先，不在 order 里不调度；每任务独立 enabled / trigger（interval 间隔 / daily 每日时间点窗口）/ enabled_time_range / success_interval / failure_interval，见 `tasks` 段）/ `legacy`（`Runner.run` 老主循环，顺序写死：护理 → 冒险 → 踩踩 → PK → 好友雇佣 → 好友护理 → 学习/打工）。共通：场景异常分级重试（回主页面重进 → `recover()` 重启恢复）；都失败时主任务（学习/打工）发告警通知（`src/notify.py`）并退出，支线任务延后重试（legacy 用 `SIDE_TASK_RETRY_DELAY`，队列用各任务 `failure_interval`）；**task_queue 启动实测** `_startup_activity_probe()`：每次启动先出门实测一次“现在到底有没有进行中的活动”（重启会丢内存里的 pending，实测是唯一真相）——命中进行中→登记 pending 延时收尾、撞结算页→点 quit 并按 `count_cross` 计数、被雇佣→交召回流程、空闲→记日志后按最新配置调度；队列状态额外写 `pid`/`started` 供消费端判新鲜度 |
-| `scenarios/school.py` `work.py` `adventure.py` `care.py` `visit.py` `pk.py` `friend_care.py` `hire_friend.py` `employed.py` | 各场景，均继承 `DeviceScenario`（`pk.py`/`friend_care.py` 继承 `visit.py` 复用好友导航；`hire_friend.py` 继承 `friend_care.py` 复用指定好友导航；`employed.py` 只做被雇佣检测，召回复用基类） |
+| `scenarios/school.py` `work.py` `adventure.py` `care.py` `visit.py` `touch.py` `pk.py` `friend_care.py` `hire_friend.py` `employed.py` | 各场景，均继承 `DeviceScenario`（`pk.py`/`friend_care.py` 继承 `visit.py` 复用好友导航；`hire_friend.py` 继承 `friend_care.py` 复用指定好友导航；`touch.py` 走好友列表+底部好友卡，只摸有火花的好友，遇到“待重燃”即停；`employed.py` 只做被雇佣检测，召回复用基类） |
 | `src/scenario.py` | 场景基类：截图/u2+OCR 定位点击/回主页面/等待结束（阻塞 `wait_end` / 非阻塞延时收尾 `defer_busy_end`+`finish_pending`，OCR 剩余时间登记 `pending`）/被雇佣召回/四种进行中状态检测；**结算收益记录** `record_session_reward`/`parse_session_reward`（学习「教师评语」/打工「工资明细+打工总结」结算页 OCR → `runs/session_rewards.jsonl`，页面自带时间戳当去重 `sig`，挂在 `finish_pending`/`wait_end`/`_detect_settlement` 三处；打工页实测字段：岗位「武馆教学助理(10分钟)」/「金币+28」/「工分+3」/「本金22，雇佣加成6」；**另解析** `pet`/`owner`（结算页头部「姓名杨萌萌」/「主人 Serena」；打工页宠物名没有标签 → 用「日期行之后、主人行之前」兜底并排除标题词）、`note`（「小提示」段原文）、`ad_coins`（「看视频+10」，官方文案是「看视频获得N金币」，独立一笔、不计进 `coins`，历史 23 条合计漏记 +589；`pay_detail` 兜底：官方工资构成标题（本金/限时补贴/基础工资）由**服务端下发**、客户端不硬编码，具体词没命中时用「标签+数字」整行兜底并排除已知标签，实测 23/23 命中）、**雇佣对象**（打工总结正文：「我雇佣了张二狗（主人：柠檬）」= 正向、我雇了别人 → `hired_pet`/`hired_owner`；「我被张二狗（主人：柠檬）雇佣了」= 反向、别人雇了我、加成被对方拿走 → `hired_by`/`hired_by_owner`；**两种句式语义相反必须分开**，实测 102 条打工记录正向 83 / 反向 4、互斥无冲突，合计恰好等于"有雇佣加成"的 87 条，可拿这个判据自校验；**主人名会被 OCR 按视觉行劈成两半**（「…（主人：放肆的青春诠释了悲」＋「伤）。…」），单 token 匹配整条失配 → 兜底做**相邻 2~3 项窗口合并**再匹配，修后 102/102 命中）；**两个坑**：① 结算页时间戳是 `2026 / 09 /27 11:44`（斜杠两侧带空格），日期正则不容忍空格时 `sig` 会退化成内容 md5（已修）；② 页面上除「金币+28」还有裸的「+28」「看视频+10」，金币只能取带标签的那个数，不能乱认数字；岗位/工分/工资构成/雇佣对象**只在 `kind=work` 时解析**，学习页不碰这几个字段；`_classify_busy_screen()` = 出门后一屏的状态判定（结算页优先，再 school/work/adventure/employed），`wait_busy_end()` 与**启动实测** `probe_activity_state()` 共用它——后者非阻塞（不 wait_end、被雇佣不等到分成比例），供调度器启动时实测当前状态） |
 | `src/recover.py` | 异常恢复链路：adb reboot → 等开机 → 启动 QQ → **先试官方 scheme 直开宠物主页**（`mqqapi://qpet/open`，JumpActivity 零点击零权限，`SCHEME_TRY_ROUNDS`=2 轮，平板身份 `ro.build.characteristics` 含 tablet 会被告门禁拦、跳过直开）→ 失败回退点 `Q宠-*` 入口（descriptionStartsWith 前缀匹配，后缀数字不固定；入口紧凑双击用 minitouch 两连击——`d.click` JSON-RPC 往返慢，0.3s 间隔会被识别成两次单击进单击页，点不进主页 back 退回重试）回宠物页，返回新 U2Device；模拟器模式"重启设备"改为重启模拟器整机（MuMu 不支持 adb reboot，会把 adb 服务卡死；**opener 失败但设备在线时先强停 QQ 重开一次**——冷启动 QQ 首启失败比整机重启便宜得多），优先级：配置的 `recover.emulator_restart_cmd` > 留空自动探测模拟器实例分步停/启（`src/emulator.py`，serial 匹配多个实例时依次用 `emulator.type/name/path`、端口实际监听进程命令行消歧）> 回退 adb reboot，随后 connect → 等开机（`_adb_back_online` **不默认 kill-server**——kill-server 会把所有设备（其它模拟器实例/USB 真机）踢下线且 host:port 不会自动恢复，只在 connect **连续 `CONNECT_TIMEOUT_KILL_AFTER`=3 次**超时（服务疑似卡死，单次/偶发超时只是开机慢）才 kill-server 兜底并恢复之前在线过的所有远程设备）；`launch_emulator_if_offline(adb, emulator_cfg)` 启动时目标设备不在线则自动探测并**启动**所属实例（只启动不重启，等开机完成；探测不到返回 False 由调用方按原逻辑报错）——模拟器模式下仪表盘启动链路与 `Runner.__init__`（U2Device 连接前）都会调用 |
 | `src/emulator.py` | 多模拟器实例自动探测（参考 ALAS module/device/platform）：MuMu 12/6/X、雷电 3/4/9、夜神、蓝叠 4/5、逍遥；exe→类型靠 `path_to_type`（exe 名+上级目录名），安装目录来源 = 卸载项注册表（子键名精确匹配）+ MuiCache/UserAssist（ROT13）+ 雷电 InstallDir 注册表；serial 算法 = vbox/nemu/memu 的 hostport→5555 转发正则（MuMu12 兜底 16384+32*index、雷电 5555+2*index、蓝叠4 固定 5555、蓝叠5 读 bluestacks.conf）；`find_instance(serial, type/name/path 消歧)`、`get_serial_pair()`（127.0.0.1:5555+X ↔ emulator-5554+X）、`restart_instance()` 按类型分步停/启 = stop 半边 + `launch_instance()`（仅启动半边，设备未运行时拉起用——模拟器模式启动链路 `launch_emulator_if_offline`，见 recover 行）（有控制台 exe 走控制台：MuMuManager/ldconsole/bsconsole/memuc，蓝叠5/MuMu6/X 杀进程再用主 exe 拉起）；serial 命中多个实例且配置消歧不够时，按端口实际监听进程命令行反查（`_match_by_listener`：MuMu12 每个实例的 .nemu 都转发 7555，MuMuVMMHeadless.exe 的 --comment 即实例名，0.0.0.0 通配与 127.0.0.1 精确绑定并存时精确绑定优先） |
@@ -207,7 +207,8 @@ $PY -m pytest                    # 单元测试（tests/，依赖见 requirement
   - **优先整体替换**，新增字段放进整体替换对象就不用逐个同步。当前已整体替换：
     各场景 `cfg.schedule`（`scen.cfg.schedule = sched`）、`cfg.employed`、
     `cfg.recover.*`、`cfg.emulator`，以及 `friend_care.cfg.friend_care`、
-    `hire_friend.cfg.hire_friend`、`care.cfg.care`、`hire_friend.cfg.work`；
+    `hire_friend.cfg.hire_friend`、`care.cfg.care`、`hire_friend.cfg.work`、
+    `touch.cfg.touch`；
   - 非场景 cfg 的共享层配置单独同步（如 `control.method`：reload_config 里
     `scen.dev.control_method = cfg.control.method`，minitouch 会话懒加载，
     切换方案后下次点击自动按新方案走）；
@@ -283,6 +284,19 @@ $PY -m pytest                    # 单元测试（tests/，依赖见 requirement
 - **踩踩/PK 调度**：执行器主循环在主页面按各自 `start_time` / 当天次数 / 失败延后期调度
   （`visit_due()` / `pk_due()`），跑对应场景 `run()` 完整流程；不做长等待插空
   （好友入口只在主页面，上课/打工/冒险等待页没有）。
+- **摸摸调度**（`scenarios/touch.py`，只接 task_queue）：主页面 → 好友列表（选「互动」排序）
+  → 第一个「访问」→ 读好友页右上角 `content-desc="火花"` 按钮的 OCR：`N天`/`火花点亮中`
+  = 有火花，点对方宠物 `touch.taps_per_friend` 下（默认 3）；`待重燃` = 没火花，**立即停止**
+  （官方规则：只有火花好友的宠物会给金币彩蛋，好友列表按互动排序、火花好友连续在前）。
+  之后用页面底部 `content-desc="好友 X"` 好友卡切到当前好友右边一位继续，直到“待重燃”
+  或没有下一位。一次完整扫描 `run()` 返回 False → 任务当天 dead，第二天跨天自动重开。
+  好友页/底部好友卡导航与 `visit.py` 同源；宠物无控件，点画面中央（720×1280 参考坐标
+  `PET_TAP_POINTS`），金币由服务端 `QQPET_RANDOM_COIN` push 下发，不做 OCR 计数。
+  **当前好友卡靠金色描边判定**（选中卡有金边，未选中 0px；昵称只作兜底）——好友昵称
+  可能是前缀关系（"凌晨"/"凌晨吃早饭~"）或 OCR 截断，按名字认会切错卡；本组已摸过的卡
+  用 content-desc 完整昵称**精确**去重（防来回切），另有 `MAX_FRIENDS_PER_RUN` 兜底。
+  火花 OCR/好友卡定位/切换超时等瞬时问题**抛异常**交给执行器重试，只有确认走完
+  （待重燃 / 最后一位 / 本次已摸过）才返回 False。
 - **护理调度**：每次护理检查（`check_and_care`，体力/清洁不足则喂食/洗澡）按
   `care.interval_seconds`（默认 60 秒，距上次检查起算，`care_due()`）节流，
   两种引擎共用（legacy 主循环每轮开头、队列引擎 care 任务）；场景上次检查时间
