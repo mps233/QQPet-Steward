@@ -286,12 +286,15 @@ $PY -m pytest                    # 单元测试（tests/，依赖见 requirement
   （好友入口只在主页面，上课/打工/冒险等待页没有）。
 - **摸摸调度**（`scenarios/touch.py`，只接 task_queue）：主页面 → 好友列表（选「互动」排序）
   → 第一个「访问」→ 读好友页右上角 `content-desc="火花"` 按钮的 OCR：`N天`/`火花点亮中`
-  = 有火花，点对方宠物 `touch.taps_per_friend` 下（默认 3）；`待重燃` = 没火花，**立即停止**
+  = 有火花，按住对方宠物抚摸 `touch.pet_seconds` 秒（默认 3）；`待重燃` = 没火花，**立即停止**
   （官方规则：只有火花好友的宠物会给金币彩蛋，好友列表按互动排序、火花好友连续在前）。
   之后用页面底部 `content-desc="好友 X"` 好友卡切到当前好友右边一位继续，直到“待重燃”
   或没有下一位。一次完整扫描 `run()` 返回 False → 任务当天 dead，第二天跨天自动重开。
-  好友页/底部好友卡导航与 `visit.py` 同源；宠物无控件，点画面中央（720×1280 参考坐标
-  `PET_TAP_POINTS`），金币由服务端 `QQPET_RANDOM_COIN` push 下发，不做 OCR 计数。
+  好友页/底部好友卡导航与 `visit.py` 同源；宠物无控件：**按住画面中央来回拖动**
+  （`PET_STROKE_TOP_PCT`/`PET_STROKE_BOTTOM_PCT`，按屏幕百分比取头部到身体），
+  游戏 PettingGesture 要求按住移动、平均速度 >=50dp/s 且仍在触摸区，**点按只算
+  singleClick，不产生抚摸记录/金币**；金币由服务端 `QQPET_RANDOM_COIN` push 下发，
+  不做 OCR 计数。
   **当前好友卡靠金色描边判定**（选中卡有金边，未选中 0px；昵称只作兜底）——好友昵称
   可能是前缀关系（"凌晨"/"凌晨吃早饭~"）或 OCR 截断，按名字认会切错卡；本组已摸过的卡
   用 content-desc 完整昵称**精确**去重（防来回切），另有 `MAX_FRIENDS_PER_RUN` 兜底。

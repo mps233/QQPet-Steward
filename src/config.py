@@ -230,8 +230,8 @@ class VisitConfig:
 @dataclass
 class TouchConfig:
     # 摸摸：只摸有火花的好友，遇到没有火花（待重燃）的好友就停止。
-    # 每个好友点几下宠物；金币彩蛋由服务端按火花关系随机下发。
-    taps_per_friend: int = 3
+    # 每个好友按住宠物来回抚摸的秒数；金币彩蛋由服务端按火花关系随机下发。
+    pet_seconds: int = 3
 
 
 @dataclass

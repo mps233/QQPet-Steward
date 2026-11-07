@@ -57,8 +57,8 @@ DEFAULTS = {
     'adventure.type': '附近走走',
     'visit.times_per_day': 10,
     'visit.start_time': '00:01',
-    # 摸摸：每个好友点几下宠物（只摸有火花的好友，碰到没火花的就停止）
-    'touch.taps_per_friend': 3,
+    # 摸摸：每个好友按住宠物抚摸几秒（只摸有火花的好友，碰到没火花的就停止）
+    'touch.pet_seconds': 3,
     'pk.times_per_day': 15,
     'pk.start_time': '00:01',
     'pk.only_names': '',
@@ -226,10 +226,10 @@ def validate_field(key: str, value):
             return (True, value) if 1 <= int(value) <= 99 else (False, default)
         except (TypeError, ValueError):
             return False, default
-    if key == 'touch.taps_per_friend':
-        # 每个好友摸几下：至少 1 下，最多 20 下（再多只是重复点同一个宠物）
+    if key == 'touch.pet_seconds':
+        # 每个好友抚摸几秒：至少 1 秒，最多 10 秒（更长只是同一姿势多拖几轮）
         try:
-            return (True, value) if 1 <= int(value) <= 20 else (False, default)
+            return (True, value) if 1 <= int(value) <= 10 else (False, default)
         except (TypeError, ValueError):
             return False, default
     if key == 'schedule.back_method':

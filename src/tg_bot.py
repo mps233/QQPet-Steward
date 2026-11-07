@@ -119,7 +119,7 @@ LABELS: dict[str, str] = {
     'visit_enabled': '启用踩踩',
     'visit_times': '踩踩次数/天',
     'touch_enabled': '启用摸摸',
-    'touch_taps': '每个好友摸几下',
+    'touch_seconds': '每个好友摸几秒',
     'pk_enabled': '启用PK',
     'pk_times': 'PK次数/天',
     'pk_only': '只打',

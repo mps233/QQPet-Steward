@@ -94,11 +94,11 @@ def test_gold_border_marks_selected_card():
     assert _gold_border_pixels(screen, (120, 10, 210, 100)) == 0
 
 
-def test_taps_clamped_to_sane_range():
+def test_pet_seconds_clamped_to_sane_range():
     scen = TouchScenario.__new__(TouchScenario)
-    for raw, expected in ((3, 3), (0, 3), (-2, 1), (99, 20), ('x', 3)):
-        scen.cfg = SimpleNamespace(touch=SimpleNamespace(taps_per_friend=raw))
-        assert scen._taps() == expected
+    for raw, expected in ((3, 3), (0, 3), (-2, 1), (99, 10), ('x', 3)):
+        scen.cfg = SimpleNamespace(touch=SimpleNamespace(pet_seconds=raw))
+        assert scen._pet_seconds() == expected
 
 
 def test_same_name_is_exact_after_normalization():

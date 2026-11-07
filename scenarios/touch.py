@@ -1,7 +1,8 @@
 """摸摸场景：只摸有火花的好友，碰到没有火花的好友就停止。
 
-玩法（2026-11 官方）：访问“火花好友”的宠物家，摸摸（点宠物）会触发
-金币彩蛋；火花关系越多，彩蛋越多。好友列表按互动排序，火花好友连续排在
+玩法（2026-11 官方）：访问“火花好友”的宠物家，**按住宠物来回抚摸**
+（跟洗澡搓洗一样是按住拖动，不是点按）会触发金币彩蛋；火花关系越多，
+彩蛋越多。好友列表按互动排序，火花好友连续排在
 前面，后面是没有火花的，所以从第一个好友开始沿底部好友卡依次往后走，
 一旦当前好友页右上角的「火花」按钮显示“待重燃”就停止，不再进后面的好友家。
 
@@ -9,7 +10,7 @@
 1. 主页面点「好友」开好友列表，并选「互动」排序（保证火花好友连续）
 2. 点第一个「访问」进好友家
 3. 读右上角「火花」按钮：
-   - “N天 / 火花点亮中” = 有火花 → 点宠物（默认 3 下）
+   - “N天 / 火花点亮中” = 有火花 → 按住宠物来回抚摸（默认 3 秒）
    - “待重燃” = 没火花 → 按规则停止
 4. 用页面底部的好友卡切到当前好友右边的下一个，重复第 3 步
 5. 回主页面
@@ -19,7 +20,9 @@
 - 好友页右上角「火花」按钮有 content-desc（friend_spark），
   按钮里的文字（N天 / 待重燃）用 OCR 读，已实测两种状态互斥
 - 底部好友卡 content-desc 形如 "好友 <主人昵称>"（visit_friend_item）
-- 好友家的宠物没有控件，点画面中央的宠物（720x1280 参考坐标）
+- 好友家的宠物没有控件：按住画面中央的宠物来回拖动（游戏判定
+  PettingGesture 需要按住移动、平均速度 >= 50dp/s，点按只算 singleClick，
+  不会产生抚摸记录/金币）
 
 只接 task_queue 引擎（与 gift_bag 相同）。一次完整扫描后 run() 返回 False，
 调度器会把任务标成“当天不可继续”，明天自动重开。
@@ -43,17 +46,21 @@ from src.progress import log
 from src.scenario import CLICK_INTERVAL, NAV_TIMEOUT, DeviceScenario
 
 # 当天完成标记：调度器重启会重建内存里的 task.dead，不落盘的话每次重启
-# 都会把 7 位火花好友重新摸一遍（一次完整扫描约 1 分钟、还会重复点宠物）。
+# 都会把 7 位火花好友重新摸一遍（一次完整扫描约 1 分钟、还会重复抚摸）。
 TOUCH_PROGRESS_FILE = PROJECT_ROOT / 'runs' / 'touch_progress.json'
 
 # 好友页底部好友卡（content-desc "好友 <主人昵称>"）
 FRIEND_ITEM_XPATH = LOCATORS['visit_friend_item']['xpath'][0]
 
-# 好友家宠物位置（720x1280 参考坐标）：宠物站在画面中央偏下的垫子上。
-# 体、头两个点交替点，兼容不同宠物/房间的站位差异；实测两个点都能触发摸摸动作。
-PET_TAP_POINTS = ((360, 700), (360, 630))
-# 每次点宠物后的等待（秒）：触摸动作有动画，连点太快容易被合并成一次
-PET_TAP_INTERVAL = 1.0
+# 好友家宠物位置（按屏幕百分比）：宠物站在画面中央偏下的垫子上。
+# **必须按住来回拖动**：游戏 PettingGesture 只在按住移动、平均速度 >=50dp/s
+# 且仍在宠物触摸区时才算抚摸；点按走的是 singleClick，不会产生抚摸记录/金币。
+# 范围取宠物头部到身体，短距离上下往返，确保不滑出触摸区。
+PET_STROKE_TOP_PCT = (0.50, 0.54)
+PET_STROKE_BOTTOM_PCT = (0.50, 0.60)
+# 每段抚摸路径分几步移动；步间短睡，速度远高于游戏要求的 50dp/s
+PET_STROKE_STEPS = 6
+PET_STROKE_STEP_SLEEP = 0.02
 # 切换好友后等页面渲染的时间（秒）
 FRIEND_SWITCH_SETTLE = 1.2
 # 火花按钮文字：有火花显示 "54天"（N 天）或 "火花点亮中"，没有火花显示 "待重燃"
@@ -221,13 +228,13 @@ class TouchScenario(DeviceScenario):
 
     # ---- 配置 ----
 
-    def _taps(self) -> int:
-        """每个好友点几下宠物：运行时重读 cfg.touch，设置页改完下一轮生效。"""
+    def _pet_seconds(self) -> int:
+        """每个好友抚摸几秒：运行时重读 cfg.touch，设置页改完下一轮生效。"""
         try:
-            n = int(getattr(self.cfg.touch, 'taps_per_friend', 3) or 3)
+            n = int(getattr(self.cfg.touch, 'pet_seconds', 3) or 3)
         except (TypeError, ValueError):
             n = 3
-        return max(1, min(20, n))
+        return max(1, min(10, n))
 
     # ---- 好友列表/好友页 ----
 
@@ -423,12 +430,39 @@ class TouchScenario(DeviceScenario):
 
     # ---- 摸宠物 / 切好友 ----
 
-    def _pet(self, taps: int) -> None:
-        for i in range(taps):
-            x, y = self.dev.rel(*PET_TAP_POINTS[i % len(PET_TAP_POINTS)])
-            self.click(x, y)
-            time.sleep(PET_TAP_INTERVAL)
-        # 金币是服务端 push 的彩蛋，留一点时间让动画/入账走完
+    def _pet_stroke(self, start, end) -> None:
+        """按住状态下从 start 匀速移动到 end（实际像素坐标）。"""
+        x1, y1 = start
+        x2, y2 = end
+        for i in range(1, PET_STROKE_STEPS + 1):
+            self.dev.touch_move(x1 + (x2 - x1) * i // PET_STROKE_STEPS,
+                                y1 + (y2 - y1) * i // PET_STROKE_STEPS)
+            time.sleep(PET_STROKE_STEP_SLEEP)
+
+    def _pet(self, seconds: int) -> None:
+        """按住好友宠物来回抚摸 seconds 秒（不是点按）。
+
+        游戏源码（pet_home 的 PettingGesture）：按住后移动的平均速度
+        >= 50dp/s 且仍在宠物触摸区，才进入 pettingStart；抬手时上报
+        caress 时长并产生抚摸记录/金币彩蛋。单次 click 只走 singleClick 分支，
+        所以必须用 down -> 多次 move -> up 的连续手势。
+        """
+        w, h = self.dev.window_size()
+        top = (round(w * PET_STROKE_TOP_PCT[0]), round(h * PET_STROKE_TOP_PCT[1]))
+        bottom = (round(w * PET_STROKE_BOTTOM_PCT[0]), round(h * PET_STROKE_BOTTOM_PCT[1]))
+        log(f'摸摸: 按住宠物抚摸 {seconds} 秒 {top}<->{bottom}')
+        self.dev.touch_down(*top)
+        last = top
+        try:
+            deadline = time.time() + max(1, int(seconds))
+            while time.time() < deadline:
+                self._pet_stroke(top, bottom)
+                self._pet_stroke(bottom, top)
+                last = top
+        finally:
+            # 抬手才会触发 caress 上报；异常也要抬手，避免触摸卡住
+            self.dev.touch_up(*last)
+        # 服务端 push 金币彩蛋/抚摸记录，留一点时间
         time.sleep(0.6)
 
     def _advance_to_next(self, cards, idx: int, visited: list[str]) -> bool:
@@ -478,7 +512,7 @@ class TouchScenario(DeviceScenario):
 
         **必须等资料卡内容更新**，不能只看底部卡的金色描边：点击卡片时游戏
         控制器会先移动金边、再异步加载新好友页，金边先到位时资料卡/火花条/
-        宠物还是上一位好友的，此时去读火花/点宠物会摸错页。
+        宠物还是上一位好友的，此时去读火花/抚摸宠物会摸错页。
         正常昵称以资料卡为准；只有重名好友（OCR 无法区分）才用金边兜底。
         """
         deadline = time.time() + timeout
@@ -511,11 +545,11 @@ class TouchScenario(DeviceScenario):
         火花 OCR、好友卡定位、切换超时等瞬时/结构问题抛异常，
         由执行器按支线任务分级重试，避免一次抖动就把任务判成“今天做完了”。
         """
-        taps = self._taps()
+        seconds = self._pet_seconds()
         today = _today_text()
         if touch_done_today(today=today):
             # 调度器重启/更新会重建内存里的 task.dead；没有落盘标记的话每次
-            # 重启都会把火花好友重新摸一遍（一轮约 1 分钟，重复点宠物）。
+            # 重启都会把火花好友重新摸一遍（一轮约 1 分钟，重复抚摸）。
             log('摸摸: 今天已经完整扫过一轮，跳过（次日自动重开）')
             self.ensure_main_page()
             return False
@@ -539,8 +573,8 @@ class TouchScenario(DeviceScenario):
                 break
             log(f'摸摸: 当前好友卡 #{idx + 1}/{len(cards)}（按{basis}）')
             name = self._profile_name() or current_name
-            log(f'摸摸: {name} 有火花，点宠物 {taps} 下')
-            self._pet(taps)
+            log(f'摸摸: {name} 有火花，按住抚摸 {seconds} 秒')
+            self._pet(seconds)
             petted += 1
             visited.append(current_name)
             if petted >= MAX_FRIENDS_PER_RUN:

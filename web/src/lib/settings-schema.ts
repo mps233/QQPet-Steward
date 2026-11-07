@@ -210,7 +210,7 @@ export const GROUPS: Record<string, GroupDef> = {
         title: '摸摸',
         fields: [
           { key: 'touch_enabled', label: '启用摸摸', kind: 'bool', tip: '只摸有火花的好友，碰到没有火花（待重燃）的好友就停止' },
-          { key: 'touch_taps', label: '每个好友摸几下', kind: 'int', unit: '下', tip: '点好友家的宠物；金币彩蛋由服务端按火花关系随机下发' },
+          { key: 'touch_seconds', label: '每个好友摸几秒', kind: 'int', unit: '秒', tip: '按住好友家的宠物来回拖动（像洗澡搓洗，不是点按）；金币彩蛋由服务端按火花关系随机下发' },
         ],
       },
       {

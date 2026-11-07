@@ -48,7 +48,7 @@ The dashboard in the current build; the interface is Chinese-only.
 - **Adventure** — runs adventures back to back in the configured type and records every run's rewards; with `adventure.skip_bad_weather` enabled, it recalls the pet when the weather turns bad.
 - **Care** — feeds and washes the pet when energy or cleanliness falls below the thresholds; when enabled, friend care runs as part of the same task.
 - **Friend interactions** — daily visits, PK with optional target rules, and care visits to specific friends.
-- **Petting** — visits friends with an active spark and pets their pet for coin easter eggs; stops at the first friend without a spark.
+- **Petting** — visits friends with an active spark, holds and strokes their pet for coin easter eggs, and stops at the first friend without a spark.
 - **Employed checks** — during a configured time window, goes out to check whether the pet has been hired and recalls it according to the chosen policy.
 - **Gift bags** — scans the pet's own bag and friends' bags, and claims the bags that are ready.
 - **Task-queue scheduling** — every task has its own switch, order, interval or daily time window, and failure backoff. Long activities are deferred: the scheduler records the remaining time, returns to the home screen, and runs other work until the activity finishes.
@@ -132,7 +132,7 @@ Settings can be changed in the dashboard (recommended) or in `config.yaml`. Chan
 | `schedule.study_quota_hours` / `work_quota_hours` | daily study and work quotas |
 | `schedule.daily_hour_limit` / `work_stop_hours` / `coin_threshold` | study stop point, combined stop point, coin threshold |
 | `adventure.*` / `employed.*` | adventure count, time window and type; employed-check window and recall policy |
-| `visit.*` / `touch.*` / `pk.*` | visit count and schedule; pets per spark friend; PK count and filters |
+| `visit.*` / `touch.*` / `pk.*` | visit count and schedule; petting seconds per spark friend; PK count and filters |
 | `care.*` / `friend_care.*` | care thresholds and method; friend-care target and interval |
 | `tasks.failure_interval` / `recover.method` | retry backoff for failed tasks / recovery method |
 | `notify.*` | alert channels and daily reports |

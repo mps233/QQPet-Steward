@@ -18,7 +18,7 @@ def test_load_config_touch(tmp_path):
     p = tmp_path / 'config.yaml'
     p.write_text(
         'touch:\n'
-        '  taps_per_friend: 5\n'
+        '  pet_seconds: 5\n'
         'tasks:\n'
         '  order: care>touch>work\n'
         '  touch:\n'
@@ -26,7 +26,7 @@ def test_load_config_touch(tmp_path):
         encoding='utf-8',
     )
     cfg = load_config(p)
-    assert cfg.touch.taps_per_friend == 5
+    assert cfg.touch.pet_seconds == 5
     assert cfg.tasks.touch.enabled is True
     assert cfg.tasks.order == 'care>touch>work'
 
@@ -35,10 +35,10 @@ def test_dashboard_apply_touch_settings(monkeypatch):
     fake: dict = {}
     monkeypatch.setattr(S, 'load_raw', lambda: fake)
     monkeypatch.setattr(S, 'save_raw', lambda data: None)
-    res = dashboard.apply_settings({'touch_enabled': True, 'touch_taps': 5})
+    res = dashboard.apply_settings({'touch_enabled': True, 'touch_seconds': 5})
     assert res['ok'], res
     assert fake['tasks']['touch']['enabled'] is True
-    assert fake['touch']['taps_per_friend'] == 5
+    assert fake['touch']['pet_seconds'] == 5
 
 
 def test_enabling_touch_appends_it_to_existing_order(monkeypatch):
@@ -52,11 +52,11 @@ def test_enabling_touch_appends_it_to_existing_order(monkeypatch):
     assert fake['tasks']['order'] == 'care>work>touch'
 
 
-def test_dashboard_rejects_bad_touch_taps(monkeypatch):
+def test_dashboard_rejects_bad_touch_seconds(monkeypatch):
     fake: dict = {}
     monkeypatch.setattr(S, 'load_raw', lambda: fake)
     monkeypatch.setattr(S, 'save_raw', lambda data: None)
-    res = dashboard.apply_settings({'touch_taps': 0})
+    res = dashboard.apply_settings({'touch_seconds': 0})
     assert not res['ok']
     assert fake == {}
 
@@ -68,13 +68,13 @@ def test_editable_snapshot_touch(monkeypatch, tmp_path):
         '  touch:\n'
         '    enabled: true\n'
         'touch:\n'
-        '  taps_per_friend: 4\n',
+        '  pet_seconds: 4\n',
         encoding='utf-8',
     )
     monkeypatch.setattr(dashboard, 'APP_ROOT', tmp_path)
     ed = dashboard.editable_snapshot()
     assert ed['touch_enabled'] is True
-    assert ed['touch_taps'] == 4
+    assert ed['touch_seconds'] == 4
 
 
 def test_editable_snapshot_touch_hidden_when_not_in_order(monkeypatch, tmp_path):
@@ -84,7 +84,7 @@ def test_editable_snapshot_touch_hidden_when_not_in_order(monkeypatch, tmp_path)
         '  touch:\n'
         '    enabled: true\n'
         'touch:\n'
-        '  taps_per_friend: 3\n',
+        '  pet_seconds: 3\n',
         encoding='utf-8',
     )
     monkeypatch.setattr(dashboard, 'APP_ROOT', tmp_path)
