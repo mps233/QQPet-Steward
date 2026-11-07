@@ -114,7 +114,7 @@ def save_touch_progress(petted: int, path=None, today: str | None = None) -> Non
     }, indent=1)
 
 
-_NAME_JUNK_RE = re.compile(r'[\s　…\.·•\-—~～]+')
+_NAME_JUNK_RE = re.compile(r'[\s　…\.·•\-—~～\[\]【】＜＞<>()（）{}｛｝]+')
 
 
 def _norm_name(text: str) -> str:
@@ -537,14 +537,26 @@ class TouchScenario(DeviceScenario):
                 same_name(t, prev_name) for t in profile)
             if matched and not still_prev:
                 return True
-            if same_name(name, prev_name):
+            cards = self._friend_cards()
+            gold_ok = False
+            if cards:
+                idx, _basis = self._current_card_index(cards, [])
+                gold_ok = (idx is not None
+                           and str(cards[idx][0]).strip() == str(name).strip())
+            if gold_ok and not still_prev and profile:
+                # 昵称带符号（如「小丑[Joker＞」）时 OCR 读成「小丑[...」，
+                # 归一化/前缀匹配可能对不上；只要金边已到目标卡、资料卡不再是
+                # 上一好友、好友页已加载（踩踩/火花条出现），就认为切换完成。
+                source = self.dev.hierarchy()
+                page_loaded = (self.see('friend_spark', source=source)
+                               or self.see('visit_step', source=source)
+                               or self.see('visit_stepped', source=source))
+                if page_loaded:
+                    log('摸摸: 昵称 OCR 有符号/截断，按金边+好友页已加载确认切换')
+                    return True
+            if same_name(name, prev_name) and gold_ok:
                 # 重名好友：资料卡名字完全相同，只能看金边是否移到目标卡
-                cards = self._friend_cards()
-                if cards:
-                    idx, _basis = self._current_card_index(cards, [])
-                    if (idx is not None
-                            and str(cards[idx][0]).strip() == str(name).strip()):
-                        return True
+                return True
         return False
 
     # ---- 入口 ----

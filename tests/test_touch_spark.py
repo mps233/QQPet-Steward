@@ -36,6 +36,9 @@ def test_names_match_truncated_ocr():
     assert names_match('喵帕…', '喵帕斯～')
     assert names_match('柠檬🍋', '柠檬..')
     assert names_match('明骏', '明骏')
+    # 带括号/符号的昵称：顶部 OCR "小丑[..."/"小丑【..." 也要能对上卡片全名
+    assert names_match('小丑[...', '小丑[Joker＞')
+    assert names_match('小丑【...', '小丑[Joker＞')
     assert not names_match('明骏', '小汤圆')
     assert not names_match('', '明骏')
 
