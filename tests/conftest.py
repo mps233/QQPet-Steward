@@ -39,6 +39,10 @@ _PATCH_MODULES = (
     'src.career_watch',
     # 摸摸的当天完成标记 runs/touch_progress.json
     'scenarios.touch',
+    # runner 在模块级 by-value 导入了各进度文件常量（ADVENTURE_PROGRESS_FILE 等）；
+    # 不 patch 它的话，test_task_done_consistency 会读到真实 runs/ 里的当天冒险次数
+    # （调度器跑到 5 次以上时该测试就会误判、与真实进度耦合）。
+    'scenarios.runner',
     # 客户端协议票据/设备令牌（runs/client_protocol.json）。鉴权测试必须
     # 使用临时 store，绝不能碰真实配对状态。
     'src.client_protocol',
