@@ -71,7 +71,7 @@ export function Capsules({ data }: { data: Data }) {
           <span className="cring" style={ring(visitP)} aria-hidden="true" />
           <div className="capbody">
             <span className="cval" id="visitTxt">
-              {visit != null ? visit : '--'}/{visitMax}
+              {visit != null ? visit : '--'}
             </span>
           </div>
         </div>
@@ -81,7 +81,7 @@ export function Capsules({ data }: { data: Data }) {
           <span className="cring" style={ring(pkP)} aria-hidden="true" />
           <div className="capbody">
             <span className="cval" id="pkTxt">
-              {pk != null ? pk : '--'}/{pkMax}
+              {pk != null ? pk : '--'}
             </span>
           </div>
         </div>
@@ -93,7 +93,7 @@ export function Capsules({ data }: { data: Data }) {
           <span className="cring" style={ring(advP)} aria-hidden="true" />
           <div className="capbody">
             <span className="cval" id="advTxt">
-              {adv}/{advMax}
+              {adv}
             </span>
           </div>
         </div>
@@ -103,7 +103,7 @@ export function Capsules({ data }: { data: Data }) {
           <span className="cring" style={ring(swP)} aria-hidden="true" />
           <div className="capbody">
             <span className="cval" id="swTxt" title={swTip}>
-              {totalHrs}h{targetHrs ? `/${targetHrs}h` : ''}
+              {totalHrs}h
             </span>
           </div>
         </div>
