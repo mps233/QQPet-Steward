@@ -934,7 +934,7 @@ class Runner:
         # 好友护理/好友雇佣配置整体替换（启用开关/时间段/好友名称/方式/次数下一轮即生效）
         self.friend_care.cfg.friend_care = cfg.friend_care
         self.gift_bag.cfg.gift_bag = cfg.gift_bag
-        # 摸摸：每个好友点几下（场景 run() 每轮重新读 cfg.touch）
+        # 摸摸：每个好友摸几秒（场景 run() 每轮重新读 cfg.touch）
         self.touch.cfg.touch = cfg.touch
         self.hire_friend.cfg.hire_friend = cfg.hire_friend
 
