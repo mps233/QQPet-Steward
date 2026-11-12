@@ -116,6 +116,7 @@ from src.u2dev import U2Device
 from PIL import Image
 from scenarios.adventure import AdventureScenario
 from scenarios.care import CareScenario
+from scenarios.daily_gift import DailyGiftScenario
 from scenarios.employed import EmployedScenario
 from scenarios.friend_care import FriendCareScenario, in_time_range, parse_time_range
 from scenarios.gift_bag import GiftBagScenario
@@ -225,6 +226,7 @@ class Runner:
         self.work = WorkScenario(dev)
         self.adventure = AdventureScenario(dev)
         self.care = CareScenario(dev)
+        self.daily_gift = DailyGiftScenario(dev)
         self.visit = VisitScenario(dev)
         self.touch = TouchScenario(dev)
         self.pk = PKScenario(dev)
@@ -242,7 +244,7 @@ class Runner:
         _care_fn = self._care_for_scenario.check_and_care
         for _scen in (self.school, self.work, self.adventure, self.care,
                       self.visit, self.touch, self.pk, self.friend_care, self.gift_bag,
-                      self.hire_friend, self.employed):
+                      self.daily_gift, self.hire_friend, self.employed):
             _scen.care_fn = _care_fn
         self.recoveries = 0  # 连续异常恢复次数（成功跑完一轮清零；距上次超过 RECOVERY_RESET_AFTER 也清零）
         self.last_recovery_at = 0.0  # 上次发起恢复的 monotonic 时间
@@ -888,7 +890,8 @@ class Runner:
             log(f'恢复失败: {e}')
             return False
         for scen in (self.school, self.work, self.adventure, self.care, self.visit, self.touch, self.pk,
-                     self.friend_care, self.gift_bag, self.hire_friend, self.employed):
+                     self.friend_care, self.gift_bag, self.daily_gift,
+                     self.hire_friend, self.employed):
             scen.dev = dev
         log('恢复完成，继续调度')
         return True
@@ -921,7 +924,8 @@ class Runner:
         # schedule 整体替换到各场景实例：check_interval / encourage_times /
         # main_page_checks / 金币阈值等全部热加载（设置页保存后下一轮即生效）
         for scen in (self.school, self.work, self.adventure, self.care, self.visit, self.touch, self.pk,
-                     self.friend_care, self.gift_bag, self.hire_friend, self.employed):
+                     self.friend_care, self.gift_bag, self.daily_gift,
+                     self.hire_friend, self.employed):
             scen.cfg.schedule = sched
             # 控制方案热加载（各场景共享同一个 dev，同步一次即全部生效；
             # minitouch 会话懒加载，切换方案后下次点击自动按新方案走）
@@ -1038,7 +1042,8 @@ class Runner:
             self._alert_and_exit(f'启动进入宠物页失败: {e}')
             return
         for scen in (self.school, self.work, self.adventure, self.care, self.visit, self.touch, self.pk,
-                     self.friend_care, self.gift_bag, self.hire_friend, self.employed):
+                     self.friend_care, self.gift_bag, self.daily_gift,
+                     self.hire_friend, self.employed):
             scen.dev = dev
         log('启动检查：已进入宠物主页面')
 
@@ -1317,13 +1322,14 @@ class Runner:
 # ---- 任务队列调度（engine: task_queue） ----
 
 TASK_NAMES = {'care': '护理', 'adventure': '冒险', 'visit': '踩踩', 'touch': '摸摸',
-              'pk': 'PK',
+              'pk': 'PK', 'daily_gift': '每日福利',
               'hire_friend': '雇佣好友', 'friend_care': '好友护理', 'gift_bag': '福袋',
               'school': '学习', 'work': '打工'}
 # 支线任务（异常重排期/主任务结束后可等待的任务）。
 # 注：雇佣好友属于主任务组（互斥统一调度），但失败处理仍按支线语义
 # （回主页面 + failure_interval 退避重试，不发告警不退出）
-SIDE_TASK_KEYS = ('adventure', 'visit', 'touch', 'pk', 'hire_friend', 'friend_care', 'gift_bag')
+SIDE_TASK_KEYS = ('adventure', 'visit', 'touch', 'pk', 'hire_friend', 'friend_care',
+                  'gift_bag', 'daily_gift')
 # 主任务组键定义在 src/config.py 的 MAIN_TASK_KEYS（GUI 设置校验也用）
 # 没有任务可执行且没有明确等待点时的短轮询间隔（秒），顺带热加载配置
 QUEUE_POLL_INTERVAL = 30
@@ -1861,6 +1867,10 @@ class TaskQueueRunner(Runner):
             return self.friend_care_due()
         if key == 'gift_bag':
             return self.gift_bag_due()
+        if key == 'daily_gift':
+            # 每日福利：daily 触发窗口一开就执行；场景自己判断两张卡领没领过，
+            # 处理完 run() 返回 False -> 标记当天不可继续（次日跨天自动重开）
+            return True
         return False
 
     # ---- 执行 ----
@@ -2174,7 +2184,7 @@ class TaskQueueRunner(Runner):
             task.next_at = self._success_at(cfg, now)
             return
         scen = {'adventure': self.adventure, 'visit': self.visit, 'touch': self.touch,
-                'pk': self.pk,
+                'pk': self.pk, 'daily_gift': self.daily_gift,
                 'hire_friend': self.hire_friend, 'friend_care': self.friend_care,
                 'gift_bag': self.gift_bag,
                 'school': self.school, 'work': self.work}[task.key]
@@ -2643,7 +2653,7 @@ def run_test(name: str) -> None:
                  'adventure': AdventureScenario, 'care': CareScenario,
                  'visit': VisitScenario, 'touch': TouchScenario, 'pk': PKScenario,
                  'friend_care': FriendCareScenario, 'hire_friend': FriendHireScenario,
-                 'gift_bag': GiftBagScenario}
+                 'gift_bag': GiftBagScenario, 'daily_gift': DailyGiftScenario}
     if scen_name not in scenarios or not method:
         raise ValueError(f'--test 参数无效: {name!r}，应为 coins / recover 或 school./work./adventure./care./friend_care. 开头的方法名')
     scen = scenarios[scen_name]()

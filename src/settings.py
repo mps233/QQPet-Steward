@@ -81,7 +81,7 @@ DEFAULTS = {
     'hire_friend.friend_name': '',
     'hire_friend.times_per_day': 8,
     'runner.engine': 'task_queue',
-    'tasks.order': 'care>gift_bag>visit>touch>pk>school>work>adventure',
+    'tasks.order': 'daily_gift>care>gift_bag>visit>touch>pk>school>work>adventure',
     'tasks.main_order': 'school>hire_friend>adventure>work',
     'tasks.failure_interval': 1800,
     'care.energy_threshold': 60,

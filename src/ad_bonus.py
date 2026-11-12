@@ -22,6 +22,12 @@
 
 广告有约 1/6 概率点完 X 仍是未领状态（平台没回执/加载失败）→ 重试一次；
 重试前先复查页面是否已变「已补贴」（变了说明上一次其实领到了，别重复看广告）。
+
+**通用广告流程**：`watch_ad()` / `confirm_reward()` 不只服务打工结算——衣橱
+「看广告礼包」（`scenarios/daily_gift.py`）复用同一套「倒计时 → 播完横幅 / 点 X
+→ 奖励弹层」处理。通用版额外认「恭喜已获得奖励」横幅、优先按 X 的
+content-desc 定位、奖励弹层优先按全屏节点 `关闭奖励弹窗` 关闭；没有倒计时文字
+的广告会一直等到播完横幅（或超时）再点 X，避免提前关掉白丢奖励。
 """
 from __future__ import annotations
 
@@ -40,14 +46,19 @@ _AD_WATCH_RE = re.compile(r'观看\s*(\d{1,3})\s*秒')
 # 奖励到账弹层
 REWARD_KEY = '恭喜获得'
 REWARD_DISMISS_KEY = '点击空白处关闭'
+# 广告播完时的横幅文案（点 X **之前**就出现；与点 X 之后的「恭喜获得」弹层不同）
+AD_DONE_KEY = '恭喜已获得奖励'
+# 广告页右上角 X / 衣橱奖励弹层的定位见 src/locators.py 的 'ad_close' /
+# 'reward_popup'（那边不能反向 import 本模块，字符串各写一份，注释互相指认）。
 # 关闭 X 的 x 比例（两机型实测一致）；y 取倒计时文案那行的 y
 AD_CLOSE_X_PCT = 0.9417
 # 倒计时文案识别不到时的 y 兜底比例
 AD_CLOSE_Y_PCT = 0.1057
-# 单条广告最长等待（秒）：正常 13~15 秒，留足缓冲
-AD_MAX_WAIT = 40
+# 单条广告最长等待（秒）：打工补贴的广告正常 13~16 秒；每日福利的广告实测约
+# 30 秒（用户记忆），留足缓冲。超时也会点 X，再按奖励是否到账判定成败。
+AD_MAX_WAIT = 60
 # 点开看视频后等广告出现的最长时间；等不到说明没进广告页（网络/无广告库存）
-AD_APPEAR_WAIT = 6
+AD_APPEAR_WAIT = 8
 # 同一条补贴最多试几次
 AD_RETRY = 2
 # 关掉奖励弹层时点的位置（弹层外的安全区：标题行一带，不碰"分享/继续打工"按钮）
@@ -94,7 +105,7 @@ def claim_ad_bonus(scen, *, tag: str = '', retry: int = AD_RETRY) -> int:
         last_bonus = bonus
         log(f'{prefix}点"看视频 +{bonus}"看广告领补贴（第 {attempt}/{retry} 次）')
         scen.click(x, y)
-        if _watch_ad(scen, prefix):
+        if watch_ad(scen, prefix):
             log(f'{prefix}领取成功，+{bonus} 金币')
             return bonus
         log(f'{prefix}第 {attempt} 次广告没拿到奖励'
@@ -103,30 +114,53 @@ def claim_ad_bonus(scen, *, tag: str = '', retry: int = AD_RETRY) -> int:
     return 0
 
 
-def _watch_ad(scen, prefix: str) -> bool:
-    """等广告倒计时走完 → 点右上角 X → 关掉奖励弹层。返回是否拿到奖励。"""
+def watch_ad(scen, prefix: str = '', *, max_wait: float = AD_MAX_WAIT,
+             appear_wait: float = AD_APPEAR_WAIT) -> bool:
+    """等广告倒计时走完 → 点右上角 X → 关掉奖励弹层。返回是否拿到奖励。
+
+    适用于所有激励视频（打工结算页的「看视频 +N」补贴、衣橱「看广告礼包」）：
+    点开广告后左上角是「观看 N 秒后即可获得奖励」倒计时；播完变成
+    「恭喜已获得奖励」（或直接弹奖励）。右上角 X 有 content-desc 时优先点控件，
+    没有才退回「倒计时那行的 y + 固定 x 比例」坐标。
+
+    scen 需要提供：`screen()`、`click(x, y)`、`see(name)`、`dev.window_size()`。
+    """
     w, h = scen.dev.window_size()
     close_y = int(AD_CLOSE_Y_PCT * h)
-    # 先等广告页出现（等不到说明点击没生效/没有广告库存，别白等 40 秒）
-    deadline = time.time() + AD_APPEAR_WAIT
+    # 先等广告页出现（等不到说明点击没生效/没有广告库存，别白等 max_wait 秒）。
+    # 少数广告不显示倒计时但有 X 按钮，兜底按 X 的 content-desc 认。
+    deadline = time.time() + appear_wait
     appeared = False
+    saw_countdown = False
     while time.time() < deadline:
         time.sleep(1.0)
         for t, _x, y, _s in ocr_screen(scen.screen()):
             if _AD_WATCH_RE.search(t):
                 close_y = y
+                saw_countdown = appeared = True
+                break
+            if AD_DONE_KEY in t:
                 appeared = True
                 break
         if appeared:
             break
+    if not appeared and scen.see('ad_close'):
+        appeared = True
     if not appeared:
         log(f'{prefix}没等到广告页（无广告库存/点击未生效）')
         return False
-    # 等倒计时走完：文案消失 = 播完（倒计时数字递减，不能只看首帧的 N）
-    deadline = time.time() + AD_MAX_WAIT
+    # 等倒计时走完：文案消失 = 播完（倒计时数字递减，不能只看首帧的 N）。
+    # 少数广告不显示倒计时文字（只靠 X 按钮认出来的）：不能"没看到倒计时"就
+    # 当成播完，必须等播完横幅/奖励弹层或超时，否则会提前点 X 白丢奖励。
+    saw_done = False
+    misses = 0  # 连续没识别到倒计时文案的次数
+    deadline = time.time() + max_wait
     while time.time() < deadline:
         time.sleep(1.2)
         texts = ocr_screen(scen.screen())
+        if any(AD_DONE_KEY in t for t, *_ in texts):
+            saw_done = True
+            break  # 播完横幅已出现（点 X 之后才会弹「恭喜获得」明细）
         if any(REWARD_KEY in t or REWARD_DISMISS_KEY in t for t, *_ in texts):
             break  # 奖励弹层已经出现（有的广告直接发奖）
         hit = None
@@ -136,27 +170,52 @@ def _watch_ad(scen, prefix: str) -> bool:
                 hit = (int(m.group(1)), y)
                 break
         if hit is None:
-            break  # 倒计时文案消失 = 广告播完
+            if saw_countdown:
+                # 连续两次认不到才当作播完：长广告（30 秒）里 OCR 偶尔漏读一行，
+                # 一次漏读就点 X 会提前关掉、白丢奖励。
+                misses += 1
+                if misses >= 2:
+                    break
+            continue   # 没出现过倒计时：继续等播完横幅/奖励弹层，别提前点 X
+        saw_countdown = True
+        misses = 0
         close_y = hit[1]
         if hit[0] <= 1:
             break
     log(f'{prefix}广告结束，点右上角关闭领奖励')
-    scen.click(int(AD_CLOSE_X_PCT * w), close_y)
+    hit = scen.see('ad_close')
+    if hit:
+        scen.click(hit[0], hit[1])
+    else:
+        scen.click(int(AD_CLOSE_X_PCT * w), close_y)
     time.sleep(1.8)
-    return _confirm_reward(scen, prefix)
+    # 有的广告播完横幅已经算成功（「恭喜已获得奖励」），即使奖励弹层 OCR 没抓到
+    return confirm_reward(scen, prefix) or saw_done
 
 
-def _confirm_reward(scen, prefix: str) -> bool:
-    """确认奖励到账并关掉弹层（「恭喜获得」+「点击空白处关闭」）。"""
+def confirm_reward(scen, prefix: str = '') -> bool:
+    """确认奖励到账并关掉弹层（「恭喜获得」+「点击空白处关闭」）。
+
+    「已补贴」/「恭喜已获得奖励」也算成功（OCR 偶尔漏掉弹层文字）。
+    弹层若是全屏节点 `关闭奖励弹窗`（衣橱每日福利/广告礼包），点它下沿的空白区
+    关闭；否则退回打工结算页实测的顶部安全点。
+    """
     deadline = time.time() + 8
     seen = False
+    checks = 0
     while time.time() < deadline:
         texts = [t for t, *_ in ocr_screen(scen.screen())]
-        if any(REWARD_KEY in t for t in texts):
+        if any(REWARD_KEY in t or AD_DONE_KEY in t or REWARD_DISMISS_KEY in t
+               for t in texts):
             seen = True
             break
         if any(SUBSIDIZED_KEY in t for t in texts):
             # 没抓到弹层文字但状态已变：也算领到了（OCR 偶尔漏「恭喜获得」）
+            seen = True
+            break
+        # 弹层可能只有节点描述、OCR 还没读出文字：隔一次查一下控件（dump 较慢）
+        checks += 1
+        if checks % 2 == 0 and scen.see('reward_popup'):
             seen = True
             break
         time.sleep(0.8)
@@ -164,6 +223,10 @@ def _confirm_reward(scen, prefix: str) -> bool:
         return False
     # 弹层挡住页面，点弹层外的安全区关掉它
     w, h = scen.dev.window_size()
-    scen.click(int(DISMISS_POINT[0] * w), int(DISMISS_POINT[1] * h))
+    if scen.see('reward_popup'):
+        # 全屏节点中心可能落在奖励卡片上，点它的下沿空白区（实测 0.83h 可关）
+        scen.click(w // 2, int(h * 0.83))
+    else:
+        scen.click(int(DISMISS_POINT[0] * w), int(DISMISS_POINT[1] * h))
     time.sleep(0.6)
     return True

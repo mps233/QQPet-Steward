@@ -51,6 +51,7 @@ The dashboard in the current build; the interface is Chinese-only.
 - **Petting** — visits friends with an active spark, holds and strokes their pet for coin easter eggs, and stops at the first friend without a spark.
 - **Employed checks** — during a configured time window, goes out to check whether the pet has been hired and recalls it according to the chosen policy.
 - **Gift bags** — scans the pet's own bag and friends' bags, and claims the bags that are ready.
+- **Daily gifts** — claims the free gift in the wardrobe's Items tab every day and watches the ad for the bonus gift.
 - **Task-queue scheduling** — every task has its own switch, order, interval or daily time window, and failure backoff. Long activities are deferred: the scheduler records the remaining time, returns to the home screen, and runs other work until the activity finishes.
 - **Self-healing and reporting** — a failed step re-enters the scene and retries; if it still fails, the scheduler recovers according to `recover.method` (restart the game, or reboot the device/emulator) and retries once more. A main task that still fails sends an alert with a phone screenshot and stops the scheduler; side tasks back off and retry instead.
 - **Dashboard and remote control** — a seven-page web dashboard, Telegram control, desktop notifications, Feishu, Telegram and OnePush channels, plus a daily study/work report and an adventure report.

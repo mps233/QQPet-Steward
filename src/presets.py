@@ -17,7 +17,7 @@ import src.settings as S
 
 # friend_care 已并入 care（不再作为独立任务键）；触摸/踩踩都在 social 侧，
 # 放在 visit 后面。顺序必须是 TASK_KEYS 的合法子集，否则 validate_field 会拒。
-ALT_TASK_ORDER = 'care>pk>gift_bag>visit>touch>school>adventure>work'
+ALT_TASK_ORDER = 'daily_gift>care>pk>gift_bag>visit>touch>school>adventure>work'
 EMPLOYED_ACTION_YIELD = '让利雇主（不召回）'
 
 
@@ -25,9 +25,12 @@ def alt_preset(main_name: str) -> dict:
     """小号工具人模式要写入的配置键值（dotted key → value）。"""
     name = (main_name or '').strip()
     return {
-        # 任务集：供养相关 + 学习/冒险（空余时间攒学分赚金币）；雇佣好友不进 order = 不调度
+        # 任务集：每日福利 + 供养相关 + 学习/冒险（空余时间攒学分赚金币）；
+        # 雇佣好友不进 order = 不调度
         'tasks.order': ALT_TASK_ORDER,
         'tasks.school.enabled': True,
+        # 每日福利：小号也顺手领衣橱的两份免费道具（不占工时预算）
+        'tasks.daily_gift.enabled': True,
         # 摸摸有火花好友拿金币彩蛋（不是独立资源，开启即可）
         'tasks.touch.enabled': True,
         'adventure.times_per_day': 10,

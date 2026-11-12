@@ -738,6 +738,8 @@ def config_summary() -> dict:
                     if stop_h else '不限')],
         ['福袋', f"{'启用' if (cfg.get('gift_bag') or {}).get('enabled', True) else '未启用'}"
                  f" · 每 {(cfg.get('gift_bag') or {}).get('interval_seconds', '-')} 秒扫描"],
+        ['每日福利', f"{'启用' if (tasks.get('daily_gift') or {}).get('enabled', True) else '未启用'}"
+                    ' · 每天衣橱「道具」页领免费礼包 + 看广告礼包'],
         ['结算补贴', '每次打工/雇佣好友结束自动领「看视频 +N」金币补贴'
                      if (sched.get('claim_ad_bonus', True)) else '已关闭'],
         ['踩踩', f"{visit.get('times_per_day', '-')} 次/天 @ {visit.get('start_time', '')}"],
@@ -764,7 +766,12 @@ def config_summary() -> dict:
         'adventure_times': adv.get('times_per_day'),
         'adventure_start': adv.get('start_time'),
         'task_order': [x.strip() for x in str(tasks.get('order') or '').split('>') if x.strip()],
-        'tasks_enabled': _task_enabled_map(tasks, friend_care, gift_bag, hire_friend),
+        'tasks_enabled': {
+            **_task_enabled_map(tasks, friend_care, gift_bag, hire_friend),
+            # 每日福利没有场景级开关，任务级 enabled 即全部；config 里没这段时
+            # 按 runner 的默认值（启用）显示
+            'daily_gift': bool((tasks.get('daily_gift') or {}).get('enabled', True)),
+        },
         'rows': rows,
     }
 
@@ -1330,6 +1337,10 @@ def editable_snapshot() -> dict:
         # 不渲染，只有 order 里有它才算真正启用（设置页开关打开时 apply 会自动追加）
         'touch_enabled': bool((tasks.get('touch') or {}).get('enabled', True))
         and (not task_order_keys or 'touch' in task_order_keys),
+        # 每日福利：同样只有在 tasks.order 里才会被调度器执行（设置页开关打开时
+        # apply 会自动把它补进 order，见 _apply_settings 的 bool 分支）
+        'daily_gift_enabled': bool((tasks.get('daily_gift') or {}).get('enabled', True))
+        and (not task_order_keys or 'daily_gift' in task_order_keys),
         'pk_enabled': bool((tasks.get('pk') or {}).get('enabled', True)),
         'adventure_enabled': bool((tasks.get('adventure') or {}).get('enabled', True)),
         'school_attribute': str(school.get('attribute') or '力量'),
@@ -1471,6 +1482,7 @@ def _apply_settings(updates: dict) -> dict:
         'adventure_enabled': ('tasks.adventure.enabled', 'bool'),
         'visit_enabled': ('tasks.visit.enabled', 'bool'),
         'touch_enabled': ('tasks.touch.enabled', 'bool'),
+        'daily_gift_enabled': ('tasks.daily_gift.enabled', 'bool'),
         'pk_enabled': ('tasks.pk.enabled', 'bool'),
         'work_enabled': ('tasks.work.enabled', 'bool'),
         # 复合任务主键（实际写入见 task_scene_pairs 的双写）
@@ -1581,16 +1593,18 @@ def _apply_settings(updates: dict) -> dict:
             # 复合任务：任务级 + 场景级两个开关同时写，避免另一个残留 false
             for k in task_scene_pairs.get(field, (key,)):
                 S.set_value(data, k, value)
-            # 新任务「摸摸」：开关打开时如果 tasks.order 里没有它，自动追加。
-            # 否则开关写进去了、任务却永远不调度（runner 只按 order 建队列），
-            # 任务列表也看不到——用户会以为开关坏了。
-            if field == 'touch_enabled' and value:
+            # 后加的任务（摸摸 / 每日福利）：开关打开时如果 tasks.order 里没有它，
+            # 自动追加。否则开关写进去了、任务却永远不调度（runner 只按 order
+            # 建队列），任务列表也看不到——用户会以为开关坏了。
+            append_key = {'touch_enabled': 'touch',
+                          'daily_gift_enabled': 'daily_gift'}.get(field)
+            if append_key and value:
                 tasks_map = data.get('tasks')
                 if isinstance(tasks_map, dict):
                     keys = [k.strip() for k in
                             str(tasks_map.get('order') or '').split('>') if k.strip()]
-                    if keys and 'touch' not in keys:
-                        S.set_value(data, 'tasks.order', '>'.join(keys + ['touch']))
+                    if keys and append_key not in keys:
+                        S.set_value(data, 'tasks.order', '>'.join(keys + [append_key]))
             applied[field] = value
             continue
         ok, fixed = S.validate_field(key, value)

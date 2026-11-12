@@ -136,6 +136,7 @@ LABELS: dict[str, str] = {
     'gift_bag_enabled': '启用福袋',
     'gift_bag_range': '福袋时间段',
     'gift_bag_interval': '福袋扫描间隔',
+    'daily_gift_enabled': '启用每日福利',
     'career_watch': '隐藏职业解锁监控',
     'career_stop_study': '解锁后自动停学',
     'career_interval': '职业兜底检查间隔',

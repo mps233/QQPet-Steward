@@ -98,4 +98,6 @@ def test_alt_preset_order_is_valid_and_includes_touch():
     ok, fixed = S.validate_field('tasks.order', ALT_TASK_ORDER)
     assert ok
     assert 'touch' in fixed.split('>')
+    # 后加的任务也要在预设 order 里，否则应用 alt 预设后它会静默停摆
+    assert 'daily_gift' in fixed.split('>')
     assert 'friend_care' not in fixed.split('>')

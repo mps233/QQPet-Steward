@@ -16,6 +16,7 @@ const TASKS = [
   ['adventure', '冒险', 'cap_compass.png'],
   ['care', '护理', 'soap.png'],
   ['gift_bag', '福袋', 'cap_coin.png'],
+  ['daily_gift', '每日福利', 'cap_coin.png'],
   ['visit', '踩踩', 'cap_paw.png'],
   ['touch', '摸摸', 'cap_paw.png'],
   ['pk', 'PK', 'pk_words.png'],
@@ -395,6 +396,7 @@ export function Onboarding({
                   <span><b>{label}</b><small>{
                     key === 'care' ? '补充体力和清洁'
                       : key === 'gift_bag' ? '领取自己和好友的福袋'
+                        : key === 'daily_gift' ? '衣橱道具页领免费礼包和看广告礼包'
                         : key === 'visit' ? `每天 ${data.config.visit_per_day ?? 10} 次`
                           : key === 'touch' ? '只摸有火花的好友'
                           : key === 'pk' ? `每天 ${data.config.pk_per_day ?? 15} 次`

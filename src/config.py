@@ -312,7 +312,8 @@ class CareerConfig:
 # **friend_care 已并入 care**：护理任务每轮检查完自己之后，若好友护理到点就顺路去
 # 一趟（见 scenarios/runner.py 的 _friend_care_round）；它自己的开关/时间段/间隔/
 # 好友名都在 friend_care 段里原样保留，所以"单独开关"照旧生效。
-TASK_KEYS = ('care', 'adventure', 'visit', 'touch', 'pk', 'gift_bag', 'school', 'work')
+TASK_KEYS = ('care', 'daily_gift', 'adventure', 'visit', 'touch', 'pk', 'gift_bag',
+             'school', 'work')
 # 主任务组：冒险/学习/打工互斥（共用"出门-进行中"一条线，不能同时做），
 # 由 TaskQueueRunner 按 tasks.main_order 统一调度。雇好友已并入打工，不再是独立主任务。
 MAIN_TASK_KEYS = ('adventure', 'school', 'work')
@@ -336,7 +337,7 @@ class TaskItemConfig:
 @dataclass
 class TasksConfig:
     # 执行顺序（> 分隔，越靠前越优先）；不在 order 里的任务不调度
-    order: str = "care>gift_bag>visit>touch>pk>school>work>adventure"
+    order: str = "daily_gift>care>gift_bag>visit>touch>pk>school>work>adventure"
     # 主任务组（冒险/学习/打工/雇佣好友，互斥）组内优先级（> 分隔，越靠前越优先）；
     # 没列出的主任务按默认顺序兜底排最后
     main_order: str = "school>hire_friend>adventure>work"
@@ -344,6 +345,8 @@ class TasksConfig:
     # 覆盖各任务的 failure_interval（只保留这一个入口，避免界面改不到/漏改）
     failure_interval: int = 1800
     care: TaskItemConfig = field(default_factory=TaskItemConfig)
+    # 每日福利：衣橱 → 道具 → 免费礼包 + 看广告礼包（每天一次）
+    daily_gift: TaskItemConfig = field(default_factory=TaskItemConfig)
     adventure: TaskItemConfig = field(default_factory=TaskItemConfig)
     visit: TaskItemConfig = field(default_factory=TaskItemConfig)
     touch: TaskItemConfig = field(default_factory=TaskItemConfig)

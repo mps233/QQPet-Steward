@@ -23,6 +23,7 @@ const ICON: Record<string, string> = {
   摸摸: '/qp-icons/official/cap_paw.png',
   PK: '/qp-icons/official/pk_words.png',
   福袋: '/qp-icons/official/cap_coin.png',
+  每日福利: '/qp-icons/official/cap_coin.png',
 }
 /** 等待中/已停止：地球（旧版 的 RUNICON_DEFAULT —— 文件名是 globe 不是 earth） */
 const ICON_IDLE = '/qp-icons/official/globe.png'

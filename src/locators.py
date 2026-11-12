@@ -118,6 +118,25 @@ LOCATORS: dict[str, dict] = {
         'xpath': ['//*[@content-desc="宠物状态"]'],
         'rel': (520, 120),
     },
+    # ---- 衣橱（主页面右上角「装扮」） ----
+    # 主页面右上角黄色衣服按钮（实测 content-desc="装扮"，bounds
+    # [894,108][1020,234] @1080x2412）。点它进衣橱：服饰 / 背景 / 道具。
+    'wardrobe': {'xpath': ['//*[@content-desc="装扮"]']},
+    # 衣橱顶部页签「服饰 / 背景 / 道具」是 canvas 自绘，控件树读不到，只能整屏 OCR。
+    # 道具页签上的红点表示每日福利/看广告礼包还没领（红点不是文字，不依赖它）。
+    'wardrobe_items_tab': {'ocr': ['道具']},
+    # 道具页两张大卡（content-desc 可读，物品名随活动会变，只锚前缀）：
+    #   未领免费 = 「领取 高钙奶 x 1」；未领广告 = 「看视频领取 高钙奶 x 3」
+    #   领取后都会变成「高钙奶 x N，已领取」—— 用这个判断今天领没领过。
+    'daily_gift_free': {'xpath': ['//*[starts-with(@content-desc, "领取 ")]']},
+    'daily_gift_ad': {'xpath': ['//*[contains(@content-desc, "看视频领取")]']},
+    'daily_gift_claimed': {'xpath': ['//*[contains(@content-desc, "已领取")]']},
+    # 激励视频右上角关闭 X（SDK 自带 content-desc，2026-11 实测；
+    # 没有该描述时由 src/ad_bonus.py 退回坐标点击）
+    'ad_close': {'xpath': ['//*[@content-desc="点击退出关闭视频"]']},
+    # 奖励弹层（衣橱每日福利/广告礼包）：全屏可点节点，点任意空白处关闭
+    'reward_popup': {'xpath': ['//*[@content-desc="关闭奖励弹窗"]']},
+
     # 左上返回箭头（位置固定，cache 命中一次后直接复用坐标）
     'back': {
         'cache': True,

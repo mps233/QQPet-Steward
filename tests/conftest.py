@@ -78,6 +78,15 @@ def isolate_runs(tmp_path, monkeypatch):
                 continue
             monkeypatch.setattr(mod, attr, fake_runs / original.name, raising=False)
 
+    # src.progress.log() 是在调用时用模块级 PROJECT_ROOT 拼 runs/logs/ 的
+    # （不是上面的 Path 常量），不重定向的话所有会打日志的测试都会写进真实
+    # runs/logs/<日期>.log —— 排查问题时会把测试日志当成真机运行记录。
+    try:
+        import src.progress as _progress
+        monkeypatch.setattr(_progress, 'PROJECT_ROOT', tmp_path, raising=False)
+    except Exception:                          # noqa: BLE001
+        pass
+
     yield fake_runs
 
 

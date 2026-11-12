@@ -197,8 +197,14 @@ export const GROUPS: Record<string, GroupDef> = {
   social: {
     id: 'social',
     title: '好友互动',
-    desc: '踩踩、摸摸、PK、福袋',
+    desc: '踩踩、摸摸、PK、福袋、每日福利',
     sections: [
+      {
+        title: '每日福利',
+        fields: [
+          { key: 'daily_gift_enabled', label: '每天领衣橱道具', kind: 'bool', tip: '主页面右上角「装扮」→「道具」：领每日福利（免费），并看广告领「看广告礼包」（每天各一次）' },
+        ],
+      },
       {
         title: '踩踩',
         fields: [

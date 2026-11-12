@@ -183,6 +183,7 @@ export interface ConfigSnapshot {
  *  见 src/config.py 的 TASK_KEYS */
 export const TASK_NAME: Record<string, string> = {
   care: '护理',
+  daily_gift: '每日福利',
   school: '学习',
   gift_bag: '福袋',
   adventure: '冒险',
@@ -195,6 +196,7 @@ export const TASK_NAME: Record<string, string> = {
 /** 任务类型标签：「循环」= 按间隔巡检；「每日」= 每天定时；「主线」= 主任务组互斥 */
 export const TASK_GROUP: Record<string, '循环' | '每日' | '主线'> = {
   care: '循环',
+  daily_gift: '每日',
   gift_bag: '循环',
   visit: '每日',
   touch: '每日',
