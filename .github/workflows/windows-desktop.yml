@@ -83,7 +83,7 @@ jobs:
           path: |
             dist/QQPet-Steward_*_windows_x64-setup.exe*
             dist/QQPet-Steward_*_windows_x64-setup.nsis.zip*
-            dist/QQPet-Steward_*_windows_x64-native*
+            dist/QQPet-Steward_*_windows_x64-native.zip*
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
@@ -142,7 +142,7 @@ jobs:
           path: |
             dist/QQPet-Steward_*_windows_x64-setup.exe*
             dist/QQPet-Steward_*_windows_x64-setup.nsis.zip*
-            dist/QQPet-Steward_*_windows_x64-native*
+            dist/QQPet-Steward_*_windows_x64-native.zip*
             build/windows-native-backend-verification.json
             build/windows-installed-backend-verification.json
             build/windows-native-verification.json

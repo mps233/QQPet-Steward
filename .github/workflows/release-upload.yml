@@ -240,7 +240,15 @@ jobs:
                      "--dir", str(downloaded))
                   entries = list(downloaded.rglob("*"))
                   require(all(not path.is_symlink() for path in entries), "Artifact contains an unexpected link")
-                  files = [path for path in entries if path.is_file()]
+                  # build_native.py 会在 dist/ 下保留 `*-native/` 解压目录供原生窗口
+                  # 验收；Windows 工作流早先的 artifact glob 会连目录内容一起带进来。
+                  # 它不是发布资产（发布用同名 .zip），按路径里的 `-native` 目录排除。
+                  files = [
+                      path for path in entries
+                      if path.is_file()
+                      and not any(part.endswith("-native")
+                                  for part in path.relative_to(downloaded).parts[:-1])
+                  ]
                   names = [path.name for path in files]
                   require(len(names) == len(set(names))
                           and set(names) in (base_files | raw_updater, base_files | zipped_updater),
