@@ -13,6 +13,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { applyOptim, effectiveValue, reconcile, rollbackOptim } from '../lib/optimistic'
 import { taskListSnapshot } from '../lib/task-list'
 import { schoolCourseName } from '../lib/school-course'
+import { useWhatsNew } from '../lib/useWhatsNew'
+import { NewChip } from './NewChip'
 import {
   TASK_NAME,
   isLoopTask,
@@ -20,6 +22,7 @@ import {
   type Data,
   type QueueTaskState,
 } from '../api'
+import type { WhatsNewEntry } from '../lib/whats-new'
 
 /** 行右侧状态文字（与 旧版 的 rowOf 一致：只给"有信息量"的几种写字）。
  *  `active` = 这一行就是调度器此刻正在跑的任务 —— 后端 tasks[k].state 只有
@@ -56,6 +59,8 @@ function RowBody({
   onToggle,
   on,
   place,
+  fresh,
+  onDismissNew,
 }: {
   k: string
   t: QueueTaskState | undefined
@@ -69,6 +74,9 @@ function RowBody({
   /** 当前是否启用 —— 由 TaskList 算好（含"刚点下去、请求还没回来"的乐观值） */
   on: boolean
   place?: string
+  /** 这一行是不是这一版新加的任务（NEW 占右侧状态位） */
+  fresh?: WhatsNewEntry
+  onDismissNew: () => void
 }) {
   const isPend = !!pendingKey && k === pendingKey
   const isActive = !!activeKey && k === activeKey
@@ -79,7 +87,12 @@ function RowBody({
       <span className={'mname' + (on ? '' : ' off')}>{TASK_NAME[k] ?? k}</span>
       <span className="mright">
         {place ? <span className="msub" title={place}>{place}</span> : null}
-        {det.text || det.cls === 'done' ? (
+        {/* 新任务：NEW 占用**状态位**而不是挤在任务名后面 ——
+            任务行只有 194px 宽（窄屏 164px），名字后再塞一个胶囊会把右侧
+            "今日结束/等待 00:05" 挤成省略号。点掉 NEW 后状态原地回来。 */}
+        {fresh ? (
+          <NewChip title={fresh.title} onDismiss={onDismissNew} />
+        ) : det.text || det.cls === 'done' ? (
           <span
             className={'mdet' + (det.cls ? ` ${det.cls}` : '')}
             title={det.cls === 'done' ? '今日完成' : det.text}
@@ -132,6 +145,8 @@ function SortableRow(props: {
   onToggle: (k: string, on: boolean) => Promise<unknown>
   on: boolean
   place?: string
+  fresh?: WhatsNewEntry
+  onDismissNew: () => void
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: props.k,
@@ -167,6 +182,8 @@ function StaticRow(props: {
   /** 返回 Promise —— 失败时调用方要回滚乐观值（见 handleToggle），不能丢弃 */
   onToggle: (k: string, on: boolean) => Promise<unknown>
   on: boolean
+  fresh?: WhatsNewEntry
+  onDismissNew: () => void
 }) {
   return (
     <div className={rowClass(props.k, props.t, props.activeKey)} data-k={props.k}>
@@ -213,6 +230,15 @@ export function TaskList({
       data.editable?.school_duration,
     ),
     work: data.config?.work_location?.trim() || '待设置',
+  }
+
+  // 这一版新加的任务：右侧状态位亮 NEW（注册表见 lib/whats-new.ts）。
+  // 版本号来自 /api/data，手机端与源码运行同一套判断。
+  const wn = useWhatsNew(data.app?.version)
+  const newOf = (k: string) => wn.forTask(k)
+  const dismissNew = (k: string) => {
+    const entry = newOf(k)
+    if (entry) wn.dismiss(entry)
   }
 
   // **触摸用 TouchSensor、鼠标用 MouseSensor**（dnd-kit 官方推荐的组合）。
@@ -294,6 +320,8 @@ export function TaskList({
                   nowDate={nowDate}
                   onToggle={handleToggle}
                   on={effectiveOn(k)}
+                  fresh={newOf(k)}
+                  onDismissNew={() => dismissNew(k)}
                 />
               ))}
             </div>
@@ -325,6 +353,8 @@ export function TaskList({
                       onToggle={handleToggle}
                       on={effectiveOn(k)}
                       place={places[k]}
+                      fresh={newOf(k)}
+                      onDismissNew={() => dismissNew(k)}
                     />
                   ))}
                 </div>

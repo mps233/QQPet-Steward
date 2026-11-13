@@ -220,6 +220,16 @@ $PY -m pytest                    # 单元测试（tests/，依赖见 requirement
     `gui.*`（`theme`/`mirror`）是**已移除的桌面 GUI 的遗留死配置**：全仓无消费者，
     改它没有任何效果（保留仅为不让老 config.yaml 报错）。
   - **统一失败重试间隔**：`tasks.failure_interval`（设置页"任务失败重试间隔"，`DEFAULTS`/`validate_field`）是各任务 `failure_interval` 的**唯一入口**——`load_config` 构造完各 `TaskItemConfig` 后用全局值覆盖，改 config.yaml 里各任务单独的 `failure_interval` 无效（config 文件里已删除这些行）。
+- **新功能 NEW 标记**（`web/src/lib/whats-new.ts`）：发版时把用户看得见的新功能登记进
+  `WHATS_NEW`——`since` 是首次出现的版本（与 `desktop/macos/tauri.conf.json` 同号），
+  可选 `settingsGroup`（设置页一级菜单行）/ `settingsSection`（分组内分节标题，必须与
+  `settings-schema.ts` 的 title 逐字一致）/ `task`（总览任务列表的任务键）三个落点。
+  前端拿 `/api/data` 的 `app.version` 判断：`since` 晚于已读版本的条目亮 NEW，点一下 = 已读
+  （`localStorage` 的 `qpet_whatsnew`；本版全部点掉后自动推进已读版本）。**加新功能必须同时
+  升版本号**——同一个版本号里后加的条目，用户已读过这一版就永远不亮；旧条目发过一两版要
+  从数组里删掉，别让新装用户看到半年前的 NEW。任务列表的 NEW 占**右侧状态位**（替换状态
+  气泡，点掉后状态回来），因为任务行只有 194px（窄屏 164px），挤在任务名后面会把"今日结束"
+  这类状态省略成"今日…"。
 - **⚠ 仪表盘由 launchd 托管，别再用 `./dashboard.sh` 长期跑**（2026-10-09 实测死因）：
   `start_new_session=True`（=`setsid`）**只换 POSIX 会话/进程组，不换 macOS 的
   application coalition**。之前仪表盘从 GUI 应用的会话里起，调度器又是它拉起的，

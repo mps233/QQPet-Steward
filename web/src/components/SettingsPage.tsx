@@ -16,6 +16,8 @@ import {
   resolveOpts,
   type FieldDef,
 } from '../lib/settings-schema'
+import { useWhatsNew } from '../lib/useWhatsNew'
+import { NewChip, NewTag } from './NewChip'
 import { Switch } from './form'
 import { NavHead } from './NavHead'
 import { RemoteUpdate } from './RemoteUpdate'
@@ -663,6 +665,9 @@ export function SettingsPage({
     })
   }
 
+  // 「新功能 NEW」标记：注册表见 lib/whats-new.ts（版本号来自 /api/data 的 app.version）
+  const wn = useWhatsNew(version)
+
   const gid = grp ? (GROUPS[grp] ? grp : LEGACY_GROUP_ALIASES[grp] ?? null) : null
   const g = gid ? GROUPS[gid] ?? null : null
 
@@ -692,15 +697,23 @@ export function SettingsPage({
               <section className="set-sec" key={section}>
                 <h3>{section}</h3>
                 <div className="set-card">
-                  {rows.map((it) => (
-                    <button className="set-menu-row" type="button" key={it.id} onClick={() => onOpen(it.id)}>
-                      <span className="set-menu-main">
-                        <span className="set-menu-label">{it.title}</span>
-                        <span className="set-menu-desc">{GROUPS[it.id]?.desc}</span>
-                      </span>
-                      <span className="set-menu-chev" aria-hidden="true">›</span>
-                    </button>
-                  ))}
+                  {rows.map((it) => {
+                    // 分组里有没读的新功能就亮 NEW。这里用不可点的 NewTag：本行本身是
+                    // <button>，再嵌 button 不合法；点进分组后分节标题上的 NEW 才是"已读"入口
+                    const fresh = wn.inGroup(it.id)
+                    return (
+                      <button className="set-menu-row" type="button" key={it.id} onClick={() => onOpen(it.id)}>
+                        <span className="set-menu-main">
+                          <span className="set-menu-label">
+                            {it.title}
+                            {fresh.length ? <NewTag title={fresh.map((e) => e.title).join('；')} /> : null}
+                          </span>
+                          <span className="set-menu-desc">{GROUPS[it.id]?.desc}</span>
+                        </span>
+                        <span className="set-menu-chev" aria-hidden="true">›</span>
+                      </button>
+                    )
+                  })}
                 </div>
               </section>
             )
@@ -737,25 +750,37 @@ export function SettingsPage({
         ) : g.id === 'remote' ? (
           readConnection().server ? null : <HostRemotePanel />
         ) : (
-          g.sections.map((sec) => (
-            <section className="set-sec" key={sec.title}>
-              <h3>{sec.title}</h3>
-              <div className="set-card">
-                {sec.fields.map((f) => (
-                  <Field key={f.key} f={f} editable={editable} onSave={save}
-                    on={on} onToggle={onToggle} pending={pending} />
-                ))}
-                {sec.extra === 'efficiency' ? <EfficiencyTable editable={editable} /> : null}
-                {sec.extra === 'tgbot-status' ? <TgbotStatus editable={editable} /> : null}
-                {sec.notes?.map((n) => (
-                  <div className="set-note" key={n.t}>
-                    <b>{n.t}</b>
-                    <span>{n.b}</span>
-                  </div>
-                ))}
-              </div>
-            </section>
-          ))
+          g.sections.map((sec) => {
+            // 分节标题旁的 NEW：点一下 = 已读，菜单行与任务列表上的标记一起消失
+            const fresh = wn.inSection(g.id, sec.title)
+            return (
+              <section className="set-sec" key={sec.title}>
+                <h3>
+                  {sec.title}
+                  {fresh.length ? (
+                    <NewChip
+                      title={fresh.map((e) => e.title).join('；')}
+                      onDismiss={() => fresh.forEach((e) => wn.dismiss(e))}
+                    />
+                  ) : null}
+                </h3>
+                <div className="set-card">
+                  {sec.fields.map((f) => (
+                    <Field key={f.key} f={f} editable={editable} onSave={save}
+                      on={on} onToggle={onToggle} pending={pending} />
+                  ))}
+                  {sec.extra === 'efficiency' ? <EfficiencyTable editable={editable} /> : null}
+                  {sec.extra === 'tgbot-status' ? <TgbotStatus editable={editable} /> : null}
+                  {sec.notes?.map((n) => (
+                    <div className="set-note" key={n.t}>
+                      <b>{n.t}</b>
+                      <span>{n.b}</span>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )
+          })
         )}
       </div>
       {g.id === 'remote' && readConnection().server ? <RemoteSettingsPanel /> : null}

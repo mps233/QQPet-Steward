@@ -308,3 +308,29 @@
 @media (prefers-reduced-motion: reduce) {
   .set-update-spin { animation-duration: 2.4s; }
 }
+
+/* ── 「新功能」NEW 标记（注册表见 web/src/lib/whats-new.ts） ────────────────
+   三处共用这一枚小胶囊：设置页一级菜单行、二级分节标题、总览任务列表。
+   文件放在 settings.css 是历史位置（全站样式都在 main.tsx 里一次性引入，
+   不在设置页也会生效）；改样式时注意同时看总览页的任务行。
+   `span.newchip`（菜单行，嵌在 <button> 里不可点）与 `button.newchip`
+   （点一下 = 已读）共用外观，只有 cursor 与按压反馈不同。 */
+.newchip {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: none; margin-left: 6px; padding: 0 5px;
+  height: 14px; box-sizing: border-box;
+  border: 0; border-radius: 4px;
+  background: var(--accent, #FF990F); color: #fff;
+  font-family: inherit; font-size: 9px; font-weight: 700;
+  line-height: 14px; letter-spacing: .06em;
+  /* 小字号挂在 12.5~14px 的标题/任务名下：抬 1px 让胶囊中线贴着文字视觉中线 */
+  vertical-align: 1px;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none; -webkit-user-select: none;
+}
+span.newchip { cursor: inherit; }
+button.newchip { cursor: pointer; }
+button.newchip:active { opacity: .7; }
+/* 任务列表：NEW 站在右侧「状态位」里（见 TaskList 的 fresh 分支），
+   与状态气泡同高居中，不再需要标题旁的左边距。 */
+.mright .newchip { margin-left: 0; vertical-align: 0; }
