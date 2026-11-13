@@ -32,6 +32,8 @@ _PATCH_MODULES = (
     'src.status_cache',
     'src.instance',
     'src.hire_quota',
+    # 学习/打工用道具的每日账本 runs/item_usage.json
+    'src.items',
     'src.fatigue',
     'src.notify',
     'src.notification_outbox',

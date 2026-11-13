@@ -70,6 +70,11 @@ DEFAULTS = {
     # 时间段 HH:MM-HH:MM；起止相同（00:00-00:00）= 跨零点 = 全天
     'friend_care.time_range': '00:00-00:00',
     'gift_bag.time_range': '00:00-00:00',
+    # 学习/打工时用道具（衣橱里「使用道具可提升表现」那一栏）：默认关，
+    # 道具不可再生，不该默认替用户烧掉；每次会话只用 1 个，-1 = 用完
+    'items.enabled': False,
+    'items.study_per_day': 1,
+    'items.work_per_day': 1,
     # 每次打工（含雇佣好友打工）结束，在结算页上顺手领「看视频 +N」金币补贴
     'schedule.claim_ad_bonus': True,
     'friend_care.friend_name': '',
@@ -178,7 +183,7 @@ def validate_field(key: str, value):
         except (TypeError, ValueError):
             return False, default
     if key in ('friend_care.enabled', 'hire_friend.enabled', 'employed.enabled',
-               'schedule.claim_ad_bonus',
+               'schedule.claim_ad_bonus', 'items.enabled',
                'pk.helper_fallback', 'work.hire_wait'):
         return (True, value) if isinstance(value, bool) else (False, default)
     if key == 'work.hire_wait_action':
@@ -220,6 +225,12 @@ def validate_field(key: str, value):
         return False, default
     if key in ('care.energy_threshold', 'care.clean_threshold'):
         return (True, value) if 0 <= int(value) <= 100 else (False, default)
+    if key in ('items.study_per_day', 'items.work_per_day'):
+        # 每天用几个：0 = 不用；N = 当天最多 N 个；-1 = 用完（每节课 1 个直到库存空）
+        try:
+            return (True, value) if int(value) >= -1 else (False, default)
+        except (TypeError, ValueError):
+            return False, default
     if key == 'care.exchange_count':
         # 补货数量 1~99（游戏弹窗允许的上限 99）
         try:

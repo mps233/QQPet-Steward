@@ -133,7 +133,7 @@ export const GROUPS: Record<string, GroupDef> = {
   limits: {
     id: 'limits',
     title: '限额与冒险',
-    desc: '每日配额、合计停止点、冒险类型',
+    desc: '每日配额、道具用量、合计停止点、冒险类型',
     sections: [
       {
         title: '冒险',
@@ -149,6 +149,18 @@ export const GROUPS: Record<string, GroupDef> = {
           { key: 'study_quota_hours', label: '今日学习', kind: 'int', unit: '小时', tip: '0 = 今天不学；24 ≈ 不限' },
           { key: 'work_quota_hours', label: '今日打工', kind: 'int', unit: '小时', tip: '0 = 今天不打工；24 ≈ 不限' },
           { key: 'coin_threshold', label: '金币阈值', kind: 'int', unit: '金币', tip: '金币 >= 该值时优先学习，低于则先打工' },
+        ],
+      },
+      {
+        title: '道具',
+        fields: [
+          { key: 'items_enabled', label: '学习/打工用道具', kind: 'bool', tip: '上课、打工开始时自动用衣橱里的道具提升表现。每次课 / 每次打工用 1 个，用的是游戏默认推荐的那个（面板正中），不会动钻石购买入口' },
+          { key: 'items_study_per_day', label: '每天学习用几个', kind: 'int', unit: '个', enabledWhen: 'items_enabled', tip: '0 = 不用；-1 = 用完（不限每天，每节课 1 个，一直上到库存见底）' },
+          { key: 'items_work_per_day', label: '每天打工用几个', kind: 'int', unit: '个', enabledWhen: 'items_enabled', tip: '学习能用的道具和打工能用的道具不一样（面板由游戏按上下文过滤），两边的用量分开算' },
+        ],
+        notes: [
+          { t: '用的是什么', b: '出门页「正在学习 / 正在打工」卡片上的 + → 道具面板 → 点正中的那个道具，库存 -1。面板里「已喝 N/M 杯」会显示这次会话用掉了几杯。' },
+          { t: '不碰什么', b: '钻石购买入口固定绕开：面板右边那个 + 是商店；没有可用道具时（打工的道具要花钻石买）点卡片上的 + 也会直接弹「购买道具」，程序只关掉走人，不点商品也不点购买。库存空了同样自动跳过，不影响上课/打工。' },
         ],
       },
       {

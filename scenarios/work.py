@@ -474,9 +474,12 @@ class WorkScenario(DeviceScenario):
         self._start_work()
         log('已开始雇佣打工（好友家路径），等待结束...')
         if self.defer_wait:
-            self.defer_busy_end('work_in', 'work_end', self._count_work_and_hire,
-                                '雇佣打工', encourage=True)
+            deferred = self.defer_busy_end(
+                'work_in', 'work_end', self._count_work_and_hire,
+                '雇佣打工', encourage=True)
             self.ensure_main_page()
+            if deferred:
+                self.apply_session_items('work')
             return True
         self.wait_work_end()
         today, done, history = load_progress(PROGRESS_FILE)
@@ -920,9 +923,13 @@ class WorkScenario(DeviceScenario):
             if self.defer_wait:
                 # 延时收尾：登记 pending（到点由调度器 finish_pending 收尾计数，
                 # 本地 done 不再自增）后回主页面，本轮直接结束
-                self.defer_busy_end('work_in', 'work_end',
-                                    lambda: count_cross('work'), '打工', encourage=True)
+                deferred = self.defer_busy_end(
+                    'work_in', 'work_end',
+                    lambda: count_cross('work'), '打工', encourage=True)
                 self.ensure_main_page()
+                if deferred:
+                    # 打工已经在跑：用 1 个道具提升这次表现（items.*，失败只记日志）
+                    self.apply_session_items('work')
                 return True
             self.wait_work_end()
             done += 1

@@ -1320,6 +1320,7 @@ def editable_snapshot() -> dict:
     notify = cfg.get('notify') or {}
     hf = cfg.get('hire_friend') or {}
     tgbot = cfg.get('tgbot') or {}
+    items_cfg = cfg.get('items') or {}
     return {
         # 连接层：ADB 路径与设备序列号（设置页「连接手机」卡片；改完需重启调度器）
         'adb_path': str((cfg.get('adb') or {}).get('path') or ''),
@@ -1341,6 +1342,10 @@ def editable_snapshot() -> dict:
         # apply 会自动把它补进 order，见 _apply_settings 的 bool 分支）
         'daily_gift_enabled': bool((tasks.get('daily_gift') or {}).get('enabled', True))
         and (not task_order_keys or 'daily_gift' in task_order_keys),
+        # 学习/打工时用道具（items 段；不属于任务队列，是场景里的动作）
+        'items_enabled': bool(items_cfg.get('enabled', False)),
+        'items_study_per_day': items_cfg.get('study_per_day', 1),
+        'items_work_per_day': items_cfg.get('work_per_day', 1),
         'pk_enabled': bool((tasks.get('pk') or {}).get('enabled', True)),
         'adventure_enabled': bool((tasks.get('adventure') or {}).get('enabled', True)),
         'school_attribute': str(school.get('attribute') or '力量'),
@@ -1483,6 +1488,10 @@ def _apply_settings(updates: dict) -> dict:
         'visit_enabled': ('tasks.visit.enabled', 'bool'),
         'touch_enabled': ('tasks.touch.enabled', 'bool'),
         'daily_gift_enabled': ('tasks.daily_gift.enabled', 'bool'),
+        # 学习/打工时用道具（items 段）
+        'items_enabled': ('items.enabled', 'bool'),
+        'items_study_per_day': ('items.study_per_day', 'int'),
+        'items_work_per_day': ('items.work_per_day', 'int'),
         'pk_enabled': ('tasks.pk.enabled', 'bool'),
         'work_enabled': ('tasks.work.enabled', 'bool'),
         # 复合任务主键（实际写入见 task_scene_pairs 的双写）

@@ -44,13 +44,13 @@ export interface WhatsNewEntry {
 export const BASELINE_VERSION = '0.8.13'
 
 export const WHATS_NEW: readonly WhatsNewEntry[] = [
+  // 0.8.14 的 daily_gift 条目已按纪律下线（发过两版了，新装用户不该看到它）
   {
-    id: 'daily_gift',
-    since: '0.8.14',
-    title: '每日福利：衣橱「道具」页领免费礼包 + 看广告礼包',
-    settingsGroup: 'social',
-    settingsSection: '每日福利',
-    task: 'daily_gift',
+    id: 'items',
+    since: '0.8.16',
+    title: '学习/打工时自动用道具：出门页卡片上的 + → 道具面板，每次会话用 1 个',
+    settingsGroup: 'limits',
+    settingsSection: '道具',
   },
 ]
 

@@ -137,6 +137,25 @@ LOCATORS: dict[str, dict] = {
     # 奖励弹层（衣橱每日福利/广告礼包）：全屏可点节点，点任意空白处关闭
     'reward_popup': {'xpath': ['//*[@content-desc="关闭奖励弹窗"]']},
 
+    # ---- 进行中活动卡片上的「道具」（学习/打工用道具，见 src/items.py）----
+    # 出门页底部「正在学习 / 正在打工」卡片里那个 +（实测 content-desc
+    # prop_card_add，bounds [346,2040][497,2191] @1080x2412）。
+    # **主页面底部的状态卡没有这个 +**，必须先出门。
+    'prop_card_add': {'xpath': ['//*[@content-desc="prop_card_add"]']},
+    # 道具面板右上角关闭 ×
+    'prop_panel_close': {'xpath': ['//*[@content-desc="prop_panel_close"]']},
+    # 「购买道具」面板（钻石买道具）：点 + 时**没有可用道具**会直接弹这个
+    # （打工实测：没有打工道具时点 + 直接进购买页，商品是波波奶茶/元气美式）。
+    # 识别到它只意味着"这次没道具可用" —— 点右上角 × 关掉，绝不能点商品或「购买」。
+    'prop_purchase_close': {'xpath': ['//*[@content-desc="prop_purchase_close"]']},
+    # 面板右侧的「购买道具」入口（钻石买道具）：**只用来断言，绝不点击**。
+    # 真机上误点会弹「购买道具」面板（购买咕噜酸奶 / 购买高钙奶 / 购买），
+    # 所以抠坐标时必须把它排除在道具槽之外。
+    'prop_exchange_add': {'xpath': ['//*[@content-desc="prop_exchange_add"]']},
+    # 道具槽（prop_slot_1 / prop_slot_2 …）：横向 RecyclerView 里一种道具一个槽，
+    # 点居中的那个 = 用它一个。多个槽要一起取，走 items.prop_slots() 直接解析控件树。
+    'prop_slot': {'xpath': ['//*[starts-with(@content-desc, "prop_slot_")]']},
+
     # 左上返回箭头（位置固定，cache 命中一次后直接复用坐标）
     'back': {
         'cache': True,

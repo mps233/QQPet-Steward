@@ -82,6 +82,7 @@ $PY -m pytest                    # 单元测试（tests/，依赖见 requirement
 | `src/tg_bot.py` | **Telegram 控制机器人（项目里唯一的反向通道）**：`src/notify.py` 只做单向推送（程序→你），这里做双向——仪表盘进程里起一个后台线程长轮询 `getUpdates`，把消息解析成**改 config.yaml / 查状态 / 启停调度器**。两条轨道同一个执行器：① 确定性指令（`/help` `/set 字段 值` `/get [字段]` `/status` `/log [N]` `/run` `/halt` `/pause` `/resume`）；② 自然语言（`tgbot.llm_enabled` 打开且配好 OpenAI 兼容接口时走 tool calling，**工具集合与指令完全同一套**，越不出确定性指令的边界）。**三条刻意划死的边界**：① **只认白名单 chat**（`tgbot.allowed_chats`，留空回落 `notify.telegram_chat_id`），非白名单**静默丢弃、不回话**——token 泄露时这是唯一闸门；② **凭据类不可经 TG 修改**（`blocked_reason()`：`tgbot_*` 整段 + `notify.*token/webhook/secret` + `*_set` 状态位），聊记录永久留存且改控制通道自身凭据等于把一次泄露升级成永久接管；③ 不碰设备/场景，只改配置、看状态、开关调度器进程。与 dashboard 靠 `Bridge` 依赖注入解耦（dashboard 是脚本不是包，反向 import 会循环），因此可离线测试。**`/start` 绝不能绑成「启动调度器」**——它是 Telegram 的"开始"按钮，点开机器人就会发，绑了就是误触；启停走 `/run` `/halt`。轮询游标存 `runs/tgbot_state.json`（重启不重放旧消息）；`enabled` 每轮重读，设置页改完立即生效不用重启仪表盘；长轮询 25s 超时是正常现象不当错误记。**TG 改配置必须留审计**：HTTP 那条路的审计写在 `/api/settings` 路由里，TG 经 Bridge 直接调 `apply_settings` 不经过它，所以 dashboard 的 `_tg_apply()` 自己补一笔 audit + 写 `reload.signal` |
 | `src/reward_table.py` | 通知里的**原生表格**：`rich_table()` 生成 Telegram 富消息 HTML（`<table bordered striped>` + `<th>` 表头 + 数字列 `align="right"` 右对齐；右对齐的数字才好逐位比大小，这是表格相对纯文本的核心价值）；`escape()` 把单元格里的 `&`/`<`/`>` 转义 —— **不转义会 400 拒收整条消息**。纯函数、无副作用。（曾试过等宽 `<pre>` 与画图 sendPhoto 两条路：前者被渲染成灰底代码块、后者不是 TG 自己的表格样式，用户均否掉） |
 | `src/daily_summary.py` | 日内收益汇总通知的两条文案（数据全来自**已落盘记录**，不 OCR、不碰设备）：**打工学习日报**（学习+打工当天都跑完时推）+ **冒险日报**（23:59）。**两条口径故意不同**：打工一天只有几次 → 日报用**逐次明细表**，篇章结构由用户钉死为五段——`🐾 <b>日期 打工学习日报</b>` → `今日学习 学分 +N 力量 +N / 魅力 +N / 智力 +N` → 学习表（时间/课程/学分/按需属性列）→ `今日打工 工分 +N 金币 +N` → 打工表（时间/岗位/**雇佣**/金币/工分），**其余文案一律不要**（无时长、无合计行、无平均值）。属性汇总顺序由 `ATTR_SUMMARY_ORDER`（力量/魅力/智力）决定，与表格列顺序（`ATTR_KEYS` = 力量/智力/魅力，解析层字段顺序）**无关**，别混。「雇佣」列见 `_hire_cell`：正向直接显示名字、反向（被别人雇）显示「被XX雇」以标明方向、无雇佣关系显示 `—`；**「看视频补贴」不显示**（用户要求，数据照常落盘、仪表盘收益记录页仍能看到）；**冒险一天几百次**（实测 491 次）→ 日报用**指标表**，**不列逐次**（36% 命中率下列 30 行大半是 `+0`，纯刷屏）。日报指标口径由用户钉死为七项：**总次数 / 金币 / 心情 / 清洁 / 体力 / 命中率 / 平均每次**（命中率只给百分比，**不带「N 次有收益 / M 次空手」括号明细**——用户要求去掉；心情·清洁·体力各占独立一行，值来自 `_adventure_attrs()` 从 settle token 解析的属性收益，实测 436/491 条命中；**一条都没解析出来时显示 `—` 而不是 `+0`**，且这三行始终占位不隐藏）。**两条都不带通知标题**（用户要求）：`report_work_summary` / `report_adventure` 都返回空标题，正文首行已自报家门；各渠道对空标题做了容错——消息正文用 `_join_title()` 不留空行、富消息不产生空 `<b></b>`、桌面通知/OnePush 这类**标题是系统级独立字段**的渠道回落 `_fallback_title()` 到通用名。未解析出的数值显示 `—` 而不是 `0`；明细表超 30 行只列最近 30 条（完整明细看仪表盘）。归属哪天按结算页自带日期 `sig`（跨零点算前一天），与 `dashboard.rewards_data` 同口径 |
+| `src/items.py` | 学习/打工时用道具（「每日福利」领到的道具不主动用就只是躺在衣橱里）：**每次上课 / 每次打工用 1 个**，`items.study_per_day` / `items.work_per_day` 是**当天上限**（`0` = 不用、`N` = 当天最多 N 个、`-1` = 用完 = 每节课 1 个直到库存见底）。入口是**出门页**活动卡片上的 `prop_card_add`（那个 `+`；**主页面底部那张状态卡没有它，必须先出门**）→「道具」面板 → 点**居中**的道具槽。真机结构（2026-11-13 @1080x2412）：`prop_panel_close` 关闭、`prop_slot_N` 一种道具一个槽、右侧 `prop_exchange_add` 是**钻石购买入口（绝不能点，点了弹「购买道具」）**、顶部「已喝 X/Y 杯」是画出来的只能 OCR（Y = 课时分钟数）。**没有可用道具时点 `prop_card_add` 直接弹「购买道具」**（打工实测：没有打工道具 → 进钻石商店，商品波波奶茶/元气美式，每杯 +500 金币），这时只点 `prop_purchase_close` 关掉走人；打工的每日福利不给道具，所以打工侧基本都会走这条跳过路径。账本 `runs/item_usage.json` 跨天自动清零（照 `hire_quota.py` 的写法）。**道具有没有**：打工侧没有道具（每日福利只给学习道具），点 `+` 会直接进「购买道具」钻石商店（`prop_purchase_close`），程序只关掉跳过。**用没生效怎么判断**：「限1杯」的道具本次会话喝过以后再点，游戏只弹「本次学习该道具仅能喝1杯」、`已喝` 数字不变 → 这时**不记账、不重试**，只记一行日志 |
 | `tools/dump_hierarchy.py` | 抓当前屏幕控件树 XML 存到 `xml/page.xml`（校准 locators 的 xpath/content-desc 用；`xml/` 已 git 排除） |
 | `tools/fetch_scrcpy.py` | 从官方 GitHub Release 下载解压 scrcpy（win64）到 `resources/scrcpy-win64/`（不入库，主要提供随包 `adb.exe` 兜底）；`--version` 指定版本、`--force` 强制覆盖。直播已移除，不再由代码自动调用 |
 | `tools/fetch_frida_server.py` | 下载 frida-server 离线包到 `resources/frida-server/`（不入库）；`--version`/`--arch`（可多个）/`--force`，GitHub 直连失败自动试镜像；源码运行 `src/opener.py` 缺失时自动调用 |
@@ -310,6 +311,20 @@ $PY -m pytest                    # 单元测试（tests/，依赖见 requirement
   用 content-desc 完整昵称**精确**去重（防来回切），另有 `MAX_FRIENDS_PER_RUN` 兜底。
   火花 OCR/好友卡定位/切换超时等瞬时问题**抛异常**交给执行器重试，只有确认走完
   （待重燃 / 最后一位 / 本次已摸过）才返回 False。
+- **学习/打工用道具**（`items` 段 + `DeviceScenario.apply_session_items`，见 `src/items.py`）：
+  挂在 `school.py` / `work.py` 的**延时收尾分支**里——`defer_busy_end(...)` 返回 True
+  （课/工确实开起来了）→ `ensure_main_page()` → `apply_session_items('study'|'work')`。
+  legacy 阻塞引擎不接（人停在进行中页面，没机会出门用道具），与福袋同口径。
+  **三条硬规则**：① 只点面板里**居中**的 `prop_slot_*`，右边那个 `prop_exchange_add`
+  是钻石购买入口（点一下会弹「购买道具」），`tests/test_apply_session_items.py` 有用例守着；
+  ② **绝不抛异常**——用道具失败只是少喝一杯，不该让这节课/这次打工失败或走恢复链路，
+  `finally` 里关面板 + 回主页面，整步总预算 `APPLY_ITEMS_TIMEOUT`=30 秒；
+  ③ 用没生效按「已喝 X/Y 杯」有没有涨判断，`Y` 是这次会话上限（= 课时分钟数），
+  「限1杯」的道具再点只会弹提示、数字不变，这种情况**不记账**；
+  ④ 点 `+` 后要同时盯两种面板：`prop_panel_close`（真道具面板）和
+  `prop_purchase_close`（**没有可用道具时直接弹的钻石商店**，打工实测），
+  后者只关掉、绝不点商品/「购买」。
+  `items.enabled` 默认 **false**（道具不可再生，不替用户默认烧掉）。
 - **护理调度**：每次护理检查（`check_and_care`，体力/清洁不足则喂食/洗澡）按
   `care.interval_seconds`（默认 60 秒，距上次检查起算，`care_due()`）节流，
   两种引擎共用（legacy 主循环每轮开头、队列引擎 care 任务）；场景上次检查时间

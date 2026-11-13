@@ -9,6 +9,7 @@ import time
 from datetime import datetime, timedelta
 from typing import Callable
 
+from . import items
 from .ad_bonus import claim_ad_bonus
 from .config import find_adb, load_config
 from .locators import LOCATORS, ocr_screen
@@ -1032,6 +1033,115 @@ class DeviceScenario:
             clicked += 1
             time.sleep(0.1)  # 点击间隔（快速连点）
         log(f'鼓励宠物: 快速点击 {clicked}/{times} 次')
+
+    # 用道具这一步的总预算（秒）。上课/打工刚开始就做，离 pending 收尾还很久，
+    # 这点时间顶不到调度器的收尾窗口；超时就放弃本次使用，绝不拖住主流程。
+    APPLY_ITEMS_TIMEOUT = 30
+
+    def _wait_prop(self, finder, deadline: float, timeout: float):
+        """在 deadline 内轮询 finder()，找到就返回，超时返回 None。"""
+        end = min(deadline, time.monotonic() + timeout)
+        while time.monotonic() < end:
+            hit = finder()
+            if hit:
+                return hit
+            time.sleep(0.6)
+        return None
+
+    def apply_session_items(self, kind: str) -> bool:
+        """上课/打工开始后，用 1 个道具提升这次的表现（见 src/items.py）。
+
+        kind: 'study' | 'work'（学习/打工能用的道具不一样，面板由游戏自己按上下文
+        过滤，账也分开记）。
+
+        入口是**出门页**活动卡片上的 `prop_card_add`（那个 +）——主页面底部那张
+        状态卡没有它，所以要先出门；用完关面板、回主页面。
+
+        **这个方法绝不抛异常**：调用方紧接着就要把 pending 交给调度器收尾，
+        用道具失败只该少喝一杯奶，不该让这一节课/这次打工失败或走恢复链路。
+        真机上会出问题的点都做了兜底：卡片没有 +（打工卡片可能压根没有道具位）、
+        面板打不开、面板里没有槽位、点完"已喝"没变化（库存空了/点偏了）。
+        """
+        cfg = self.cfg.items
+        ok, why = items.can_use(cfg, kind)
+        if not ok:
+            log(f'道具: {why}，本次不用')
+            return False
+        label = items.KIND_NAMES.get(kind, kind)
+        deadline = time.monotonic() + self.APPLY_ITEMS_TIMEOUT
+        try:
+            self.ensure_main_page()
+            self.leave_home()
+            plus = self._wait_prop(lambda: self.see('prop_card_add'), deadline, 8)
+            if not plus:
+                log(f'道具: {label}卡片上没有「+」（这个活动可能不支持道具），跳过')
+                return False
+            log(f'道具: 点「+」打开道具面板 ({plus[0]}, {plus[1]})')
+            self.click(plus[0], plus[1])
+
+            def _opened():
+                if self.see('prop_panel_close'):
+                    return 'panel'
+                if self.see('prop_purchase_close'):
+                    return 'purchase'
+                return None
+
+            opened = self._wait_prop(_opened, deadline, 6)
+            if opened == 'purchase':
+                # **没有可用道具时点「+」会直接弹「购买道具」**（打工实测：没有打工
+                # 道具时进的是钻石商店，商品是波波奶茶/元气美式）。这里只关掉走人，
+                # 绝不点商品、更不点「购买」。
+                log(f'道具: {label}没有可用道具（点「+」直接进了购买页），关掉跳过')
+                return False
+            if not opened:
+                log('道具: 面板没打开，跳过本次')
+                return False
+            before = items.parse_progress([t for t, *_ in ocr_screen(self.screen())])
+            slot = items.pick_slot(self.dev.hierarchy(), self.dev.window_size()[0])
+            if not slot:
+                log('道具: 面板里没有可用道具（库存空了？），跳过本次')
+                return False
+            # 只点居中的那个槽 —— 右侧的 prop_exchange_add 是钻石购买入口，绝不碰
+            log(f'道具: 点道具槽 {slot["desc"]} ({slot["cx"]}, {slot["cy"]})'
+                + (f'，本次已用 {before[0]}/{before[1]}' if before else ''))
+            self.click(slot['cx'], slot['cy'])
+            time.sleep(1.2)
+            after = items.parse_progress([t for t, *_ in ocr_screen(self.screen())])
+            if before and after:
+                if after[0] <= before[0]:
+                    # 「限1杯」的道具在本次会话喝过以后再点，游戏只弹一句
+                    # 「本次学习该道具仅能喝1杯」（2026-11-13 真机实测），数字不变。
+                    # 所以这条不是错误，只是这一次点空了。
+                    log(f'道具: 点完「已喝」没变化（{before[0]} → {after[0]}）：'
+                        '这个道具本次会话已经用过（限1杯）或库存空了，跳过')
+                    return False
+                log(f'道具: 使用成功，本次会话已用 {after[0]}/{after[1]}')
+            else:
+                # OCR 没读到位数不影响“点下去就生效”这个事实：按用掉记，
+                # 日志里标出来便于事后核对（多记一个的代价远小于每天重试）
+                log('道具: 未能核对「已喝 N/M」，按已使用记账')
+            items.record_use(kind, slot['desc'])
+            _day, counts = items.load_usage()
+            limit = items.daily_limit(cfg, kind)
+            log(f'道具: 今天{label}已用 {counts.get(kind, 0)} 个'
+                + (f'（上限 {limit}）' if limit > 0 else '（用完为止）'))
+            return True
+        except Exception as e:  # noqa: BLE001 - 用道具失败绝不影响主任务
+            log(f'道具: 使用失败（不影响{label}）: {e}')
+            return False
+        finally:
+            try:
+                # 道具面板（prop_panel_close）或误入的购买页（prop_purchase_close）都要关
+                close = self.see('prop_panel_close') or self.see('prop_purchase_close')
+                if close:
+                    self.click(close[0], close[1])
+                    time.sleep(0.8)
+            except Exception:  # noqa: BLE001 - 收尾识别失败不挡返回
+                pass
+            try:
+                self.ensure_main_page()
+            except Exception as e:  # noqa: BLE001 - 交给调度器的回主页面逻辑
+                log(f'道具: 收尾回主页面失败（不影响主任务）: {e}')
 
     def finish_pending(self) -> bool:
         """pending 到点收尾：回主页面出门，结算页（学习"教师评语"/打工"打工总结"

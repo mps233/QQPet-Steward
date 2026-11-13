@@ -293,6 +293,25 @@ class GiftBagConfig:
 
 
 @dataclass
+class ItemsConfig:
+    """学习/打工开始时自动用道具（衣橱里「使用道具可提升表现」那一栏）。
+
+    每次上课 / 每次打工各用 **1 个**（游戏按课时给上限，如 45 分钟课 45 杯；
+    这里只点 1 下，不刷满）。`*_per_day` 是**当天上限**：
+      N  = 当天最多 N 个，用满就停
+      -1 = 用完：不限每天，每节课/每次打工各 1 个，直到库存见底
+      0  = 不用（等同总开关关掉，但保留逐项关闭的能力）
+    """
+
+    # 总开关：默认关 —— 道具是不可再生资源，默认不该替用户烧掉
+    enabled: bool = False
+    # 每天学习最多用几个（-1 = 用完）
+    study_per_day: int = 1
+    # 每天打工最多用几个（-1 = 用完）
+    work_per_day: int = 1
+
+
+@dataclass
 class CareerConfig:
     # 隐藏职业解锁哨兵：每节课结算后读职业树，监控目标职业线（默认三条隐藏线）
     # 是否解锁；解锁时记录事件并（可选）自动停止学习
@@ -481,6 +500,7 @@ class Config:
     pk: PkConfig = field(default_factory=PkConfig)
     friend_care: FriendCareConfig = field(default_factory=FriendCareConfig)
     gift_bag: GiftBagConfig = field(default_factory=GiftBagConfig)
+    items: ItemsConfig = field(default_factory=ItemsConfig)
     hire_friend: HireFriendConfig = field(default_factory=HireFriendConfig)
     employed: EmployedConfig = field(default_factory=EmployedConfig)
     career: CareerConfig = field(default_factory=CareerConfig)
@@ -590,6 +610,9 @@ def load_config(config_path: str | Path | None = None) -> Config:
         pk=PkConfig(**raw.get("pk", {})),
         friend_care=FriendCareConfig(**raw.get("friend_care", {})),
         gift_bag=GiftBagConfig(**raw.get("gift_bag", {})),
+        # 只认已知字段：老 config.yaml 没有 items 段时全走默认值
+        items=ItemsConfig(**{k: v for k, v in (raw.get("items", {}) or {}).items()
+                             if k in ItemsConfig.__dataclass_fields__}),
         hire_friend=HireFriendConfig(**_hire_friend_raw(raw)),
         employed=EmployedConfig(**raw.get("employed", {})),
         career=CareerConfig(**{k: v for k, v in (raw.get("career", {}) or {}).items()

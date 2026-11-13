@@ -935,6 +935,8 @@ class Runner:
             scen.cfg.recover.method = cfg.recover.method
             scen.cfg.recover.emulator_restart_cmd = cfg.recover.emulator_restart_cmd
             scen.cfg.emulator = cfg.emulator
+            # 学习/打工用道具（items 段）整体替换：开关与每日额度下一轮即生效
+            scen.cfg.items = cfg.items
         # 好友护理/好友雇佣配置整体替换（启用开关/时间段/好友名称/方式/次数下一轮即生效）
         self.friend_care.cfg.friend_care = cfg.friend_care
         self.gift_bag.cfg.gift_bag = cfg.gift_bag

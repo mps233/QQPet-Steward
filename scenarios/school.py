@@ -515,9 +515,13 @@ class SchoolScenario(DeviceScenario):
             # 延时收尾：进行中登记 pending（到点由调度器 finish_pending 收尾）或
             # 已结束原地收尾，然后回主页面；计数统一走 on_finish（count_cross），
             # 本地 learned 不再自增，防止重复计数
-            self.defer_busy_end('school_in', 'school_end',
-                                lambda: count_cross('school'), '上课', encourage=True)
+            deferred = self.defer_busy_end(
+                'school_in', 'school_end',
+                lambda: count_cross('school'), '上课', encourage=True)
             self.ensure_main_page()
+            if deferred:
+                # 课上起来了：用 1 个道具提升这次表现（items.*，失败只记日志）
+                self.apply_session_items('study')
             return False
         return self.wait_class_end()
 
